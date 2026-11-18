@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.tenant.mapper.PlatformAnalyticsMapper">
+
+    <!-- 租户总览：平台数据页顶部那几张卡 -->
+    <!-- "付费租户"的口径：挂了套餐且套餐不是免费版（免费版算试用，不算付费）。
+         免费版 ID 由计费库的初始化脚本固定（billing_db_billing.sql：940000000000000000 FREE），
+         这里当常量传进来——tenant-service 不跨库读计费表。 -->
+    <select id="selectTenantOverview" resultType="java.util.Map">
+        SELECT COUNT(1)                                                        AS total,
+               COUNT(1) FILTER (WHERE t.status = 1)                            AS active,
+               COUNT(1) FILTER (WHERE t.status = 2)                            AS frozen,
+               COUNT(1) FILTER (WHERE t.status = 3)                            AS expired,
+               COUNT(1) FILTER (WHERE t.status = 4)                            AS cancelled,
+               COUNT(1) FILTER (WHERE t.isolation_mode &lt;&gt; 1)                  AS isolated,
+               COUNT(1) FILTER (WHERE t.plan_id IS NOT NULL
+                                  AND t.plan_id &lt;&gt; #{freePlanId})                AS paid,
+               COUNT(1) FILTER (WHERE date_trunc('month', t.create_time)
+                                  = date_trunc('month', CURRENT_DATE))         AS new_this_month
+          FROM tenant t
+         WHERE t.is_deleted = FALSE
+    </select>
+
+    <!-- 本月用量：网关按天上报的请求 / 会话 / AI 调用（跨租户求和，只出总数）
+
+         必须 join tenant 只算"真实租户"：网关把平台自身的调用也记了一条 PLATFORM 日用量，
+         它不是任何租户，混进来就会出现"顶部合计 4359、租户列表加起来 3593"这种对不上账。 -->
+    <select id="selectMonthUsage" resultType="java.util.Map">
+        SELECT COALESCE(SUM(u.request_count), 0)   AS requests,
+               COALESCE(SUM(u.rejected_count), 0)  AS rejected,
+               COALESCE(SUM(u.session_count), 0)   AS sessions,
+               COALESCE(SUM(u.ai_call_count), 0)   AS ai_calls
+          FROM tenant_usage_daily u
+          JOIN tenant t ON t.tenant_code = u.tenant_code AND t.is_deleted = FALSE
+         WHERE u.stat_date &gt;= date_trunc('month', CURRENT_DATE)::date
+    </select>
+
+    <!-- 近 N 个月新增租户：按开通时间（tenant.create_time）分月 -->
+    <select id="selectTenantGrowth" resultType="java.util.Map">
+        SELECT to_char(date_trunc('month', t.create_time), 'YYYY-MM') AS month,
+               COUNT(1)                                              AS new_tenants
+          FROM tenant t
+         WHERE t.is_deleted = FALSE
+           AND t.create_time &gt;= date_trunc('month', CURRENT_DATE) - make_interval(months =&gt; #{months} - 1)
+         GROUP BY date_trunc('month', t.create_time)
+         ORDER BY date_trunc('month', t.create_time)
+    </select>
+
+    <!-- 套餐分布：当前挂着多少租户（plan_id 为空 = 还没开套餐） -->
+    <select id="selectPlanDistribution" resultType="java.util.Map">
+        SELECT t.plan_id        AS plan_id,
+               COUNT(1)         AS tenant_count
+          FROM tenant t
+         WHERE t.is_deleted = FALSE
+         GROUP BY t.plan_id
+         ORDER BY tenant_count DESC, t.plan_id
+    </select>
+
+    <select id="selectStatusDistribution" resultType="java.util.Map">
+        SELECT t.status   AS status,
+               COUNT(1)   AS tenant_count
+          FROM tenant t
+         WHERE t.is_deleted = FALSE
+         GROUP BY t.status
+         ORDER BY t.status
+    </select>
+
+    <!-- 本月用量 Top：企业名 + 本月请求/会话，平台只看聚合量 -->
+    <select id="selectTopTenants" resultType="java.util.Map">
+        SELECT t.tenant_code    AS tenant_code,
+               e.company_name   AS company_name,
+               t.status         AS status,
+               t.plan_id        AS plan_id,
+               COALESCE(SUM(u.request_count), 0) AS month_requests,
+               COALESCE(SUM(u.session_count), 0) AS month_sessions
+          FROM tenant t
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+          LEFT JOIN tenant_usage_daily u
+                 ON u.tenant_code = t.tenant_code
+                AND u.stat_date &gt;= date_trunc('month', CURRENT_DATE)::date
+         WHERE t.is_deleted = FALSE
+         GROUP BY t.tenant_code, e.company_name, t.status, t.plan_id, t.create_time
+         ORDER BY month_requests DESC, t.create_time DESC
+         LIMIT #{limit}
+    </select>
+
+    <!-- 租户列表：与租户管理页同源，多两列本月用量（经营视角） -->
+    <sql id="tenantFilters">
+        t.is_deleted = FALSE
+        <if test="status != null">
+            AND t.status = #{status}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (e.company_name ILIKE '%' || #{keyword} || '%'
+                 OR t.tenant_code ILIKE '%' || #{keyword} || '%')
+        </if>
+    </sql>
+
+    <select id="selectTenantPage" resultType="java.util.Map">
+        SELECT t.tenant_code    AS tenant_code,
+               e.company_name   AS company_name,
+               e.industry       AS industry,
+               t.plan_id        AS plan_id,
+               t.status         AS status,
+               t.expire_time    AS expire_time,
+               t.create_time    AS create_time,
+               COALESCE(SUM(u.request_count), 0) AS month_requests,
+               COALESCE(SUM(u.session_count), 0) AS month_sessions,
+               MAX(u.stat_date)                  AS last_active_date
+          FROM tenant t
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+          LEFT JOIN tenant_usage_daily u
+                 ON u.tenant_code = t.tenant_code
+                AND u.stat_date &gt;= date_trunc('month', CURRENT_DATE)::date
+         WHERE
+        <include refid="tenantFilters"/>
+         GROUP BY t.tenant_code, e.company_name, e.industry, t.plan_id, t.status,
+                  t.expire_time, t.create_time
+         ORDER BY t.create_time DESC, t.tenant_code
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countTenantPage" resultType="long">
+        SELECT COUNT(1)
+          FROM tenant t
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+         WHERE
+        <include refid="tenantFilters"/>
+    </select>
+</mapper>

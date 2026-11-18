@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.tenant.mapper.TenantIsolationMapper">
+
+    <!-- 列表：企业 + 配额 + 今日用量 + 升级/安全事件计数，一次查完 -->
+    <select id="selectTenantList" resultType="java.util.Map">
+        SELECT t.tenant_code      AS tenant_code,
+               t.status           AS status,
+               t.isolation_mode   AS isolation_mode,
+               t.schema_name      AS schema_name,
+               t.db_version       AS db_version,
+               t.upgraded_at      AS upgraded_at,
+               t.expire_time      AS expire_time,
+               t.create_time      AS create_time,
+               e.company_name     AS company_name,
+               e.industry         AS industry,
+               COALESCE(q.qps_limit, 0)           AS qps_limit,
+               COALESCE(q.daily_request_limit, 0) AS daily_request_limit,
+               COALESCE(q.enabled, FALSE)         AS quota_enabled,
+               COALESCE(u.request_count, 0)       AS today_requests,
+               COALESCE(u.rejected_count, 0)      AS today_rejected,
+               (SELECT COUNT(1) FROM tenant_schema_upgrade s
+                 WHERE s.tenant_code = t.tenant_code)                       AS upgrade_count,
+               (SELECT MAX(s.started_at) FROM tenant_schema_upgrade s
+                 WHERE s.tenant_code = t.tenant_code AND s.status = 2)      AS last_upgrade_at,
+               (SELECT COUNT(1) FROM tenant_security_event v
+                 WHERE v.tenant_code = t.tenant_code
+                   AND v.event_time &gt;= CURRENT_DATE)                       AS today_security_events
+          FROM tenant t
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+          LEFT JOIN tenant_quota q ON q.tenant_code = t.tenant_code AND q.is_deleted = FALSE
+          LEFT JOIN tenant_usage_daily u ON u.tenant_code = t.tenant_code AND u.stat_date = CURRENT_DATE
+         WHERE t.is_deleted = FALSE
+        <if test="status != null">
+           AND t.status = #{status}
+        </if>
+        <if test="isolationMode != null">
+           AND t.isolation_mode = #{isolationMode}
+        </if>
+        <if test="keyword != null and keyword != ''">
+           AND (e.company_name ILIKE '%' || #{keyword} || '%'
+                OR t.tenant_code ILIKE '%' || #{keyword} || '%')
+        </if>
+         ORDER BY t.create_time DESC, t.id DESC
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countTenantList" resultType="long">
+        SELECT COUNT(1)
+          FROM tenant t
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+         WHERE t.is_deleted = FALSE
+        <if test="status != null">
+           AND t.status = #{status}
+        </if>
+        <if test="isolationMode != null">
+           AND t.isolation_mode = #{isolationMode}
+        </if>
+        <if test="keyword != null and keyword != ''">
+           AND (e.company_name ILIKE '%' || #{keyword} || '%'
+                OR t.tenant_code ILIKE '%' || #{keyword} || '%')
+        </if>
+    </select>
+
+    <!-- 概览：平台侧顶部 6 张卡（含"库版本落后"与"今日被限流"） -->
+    <select id="selectOverview" resultType="java.util.Map">
+        SELECT COUNT(1)                                                        AS total,
+               COUNT(1) FILTER (WHERE t.status = 1)                            AS active,
+               COUNT(1) FILTER (WHERE t.isolation_mode &lt;&gt; 1)                  AS dedicated,
+               COUNT(1) FILTER (WHERE t.status = 2)                            AS frozen,
+               COUNT(1) FILTER (WHERE t.db_version &lt; #{latestVersion})          AS version_behind,
+               COALESCE(SUM(u.rejected_count), 0)                              AS today_rejected
+          FROM tenant t
+          LEFT JOIN tenant_usage_daily u
+                 ON u.tenant_code = t.tenant_code AND u.stat_date = CURRENT_DATE
+         WHERE t.is_deleted = FALSE
+    </select>
+
+    <!-- 租户目录：编码 → 企业名称。平台侧需要"跨租户列出数据"的页面（收款流水等）用它做映射。
+         只两列、不分页：企业上千家也就几百行，比翻页拉全量简单得多。 -->
+    <select id="selectTenantNames" resultType="java.util.Map">
+        SELECT t.tenant_code          AS tenant_code,
+               e.company_name         AS company_name
+          FROM tenant t
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+         WHERE t.is_deleted = FALSE
+         ORDER BY t.tenant_code
+    </select>
+
+    <select id="selectTenantDetail" resultType="java.util.Map">
+        SELECT t.tenant_code      AS tenant_code,
+               t.status           AS status,
+               t.isolation_mode   AS isolation_mode,
+               t.schema_name      AS schema_name,
+               t.db_version       AS db_version,
+               t.upgraded_at      AS upgraded_at,
+               t.expire_time      AS expire_time,
+               t.create_time      AS create_time,
+               e.company_name     AS company_name,
+               e.industry         AS industry,
+               e.license_no       AS license_no,
+               e.legal_person     AS legal_person,
+               e.contact_name     AS contact_name,
+               COALESCE(q.qps_limit, 0)            AS qps_limit,
+               COALESCE(q.daily_request_limit, 0)  AS daily_request_limit,
+               COALESCE(q.daily_session_limit, 0)  AS daily_session_limit,
+               COALESCE(q.ai_daily_limit, 0)       AS ai_daily_limit,
+               COALESCE(q.enabled, FALSE)          AS quota_enabled,
+               q.remark                            AS quota_remark,
+               COALESCE(u.request_count, 0)        AS today_requests,
+               COALESCE(u.rejected_count, 0)       AS today_rejected,
+               COALESCE(u.session_count, 0)        AS today_sessions,
+               COALESCE(u.ai_call_count, 0)        AS today_ai_calls
+          FROM tenant t
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+          LEFT JOIN tenant_quota q ON q.tenant_code = t.tenant_code AND q.is_deleted = FALSE
+          LEFT JOIN tenant_usage_daily u ON u.tenant_code = t.tenant_code AND u.stat_date = CURRENT_DATE
+         WHERE t.is_deleted = FALSE
+           AND t.tenant_code = #{tenantCode}
+    </select>
+
+    <select id="selectUpgradeHistory" resultType="java.util.Map">
+        SELECT s.id, s.target_schema, s.from_version, s.to_version, s.status,
+               s.script_count, s.applied_scripts, s.message, s.duration_ms,
+               s.operator_name, s.started_at, s.finished_at
+          FROM tenant_schema_upgrade s
+         WHERE s.tenant_code = #{tenantCode}
+         ORDER BY s.started_at DESC, s.id DESC
+         LIMIT #{limit}
+    </select>
+
+    <select id="selectSecurityEvents" resultType="java.util.Map">
+        SELECT v.id, v.tenant_code, v.event_type, v.detail, v.request_uri,
+               v.request_method, v.client_ip, v.token_tenant, v.operator_name, v.event_time
+          FROM tenant_security_event v
+         WHERE 1 = 1
+        <if test="tenantCode != null and tenantCode != ''">
+           AND v.tenant_code = #{tenantCode}
+        </if>
+         ORDER BY v.event_time DESC, v.id DESC
+         LIMIT #{limit}
+    </select>
+
+    <!-- 网关用量上报：同一天累加；唯一键 (tenant_code, stat_date) 保证不会写重 -->
+    <insert id="upsertUsage">
+        INSERT INTO tenant_usage_daily (id, tenant_code, stat_date, request_count,
+                                        rejected_count, session_count, ai_call_count, update_time)
+        VALUES (#{id}, #{tenantCode}, #{statDate}, #{requestCount},
+                #{rejectedCount}, #{sessionCount}, #{aiCallCount}, CURRENT_TIMESTAMP)
+        ON CONFLICT (tenant_code, stat_date) DO UPDATE
+           SET request_count  = tenant_usage_daily.request_count + EXCLUDED.request_count,
+               rejected_count = tenant_usage_daily.rejected_count + EXCLUDED.rejected_count,
+               session_count  = tenant_usage_daily.session_count + EXCLUDED.session_count,
+               ai_call_count  = tenant_usage_daily.ai_call_count + EXCLUDED.ai_call_count,
+               update_time    = CURRENT_TIMESTAMP
+    </insert>
+
+</mapper>

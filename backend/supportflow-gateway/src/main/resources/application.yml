@@ -1,0 +1,80 @@
+server:
+  port: ${SUPPORTFLOW_GATEWAY_PORT:9090}
+
+spring:
+  application:
+    name: supportflow-gateway
+
+  # 强制使用 Reactive 容器（Netty），避免与 MVC 容器冲突
+  main:
+    web-application-type: reactive
+
+  cloud:
+    gateway:
+      server:
+        webflux:
+          # 声明式路由：按前缀转发到各业务服务（生产可替换为注册中心 lb://service-id）
+          routes:
+            - id: supportflow-user-service
+              uri: ${SUPPORTFLOW_USER_SERVICE_URL:http://127.0.0.1:9091}
+              predicates:
+                - Path=/api/user/**
+            - id: supportflow-tenant-service
+              uri: ${SUPPORTFLOW_TENANT_SERVICE_URL:http://127.0.0.1:9092}
+              predicates:
+                - Path=/api/tenant/**
+            # 平台侧接口（目前是"支持工单"）：也是 customer-service 提供的，
+            # 但按"平台视角"单独开一条前缀，方便以后给平台接口统一加鉴权/限流
+            - id: supportflow-platform-api
+              uri: ${SUPPORTFLOW_CUSTOMER_SERVICE_URL:http://127.0.0.1:9093}
+              predicates:
+                - Path=/api/platform/**
+            - id: supportflow-customer-service
+              uri: ${SUPPORTFLOW_CUSTOMER_SERVICE_URL:http://127.0.0.1:9093}
+              predicates:
+                - Path=/api/customer/**
+            # 开放 API：企业自有系统用 X-Api-Key 调用（鉴权在 customer-service 里按密钥换租户）
+            - id: supportflow-open-api
+              uri: ${SUPPORTFLOW_CUSTOMER_SERVICE_URL:http://127.0.0.1:9093}
+              predicates:
+                - Path=/api/open/**
+            - id: supportflow-billing-service
+              uri: ${SUPPORTFLOW_BILLING_SERVICE_URL:http://127.0.0.1:9094}
+              predicates:
+                - Path=/api/billing/**
+            - id: supportflow-ops-service
+              uri: ${SUPPORTFLOW_OPS_SERVICE_URL:http://127.0.0.1:9095}
+              predicates:
+                - Path=/api/ops/**
+            - id: supportflow-ai-service
+              uri: ${SUPPORTFLOW_AI_SERVICE_URL:http://127.0.0.1:9100}
+              predicates:
+                - Path=/api/ai/**
+            # 实时网关的 HTTP 接口（在线状态对账）；WebSocket 直接连 ws://host:9096/ws/realtime
+            - id: supportflow-realtime-service
+              uri: ${SUPPORTFLOW_REALTIME_SERVICE_URL:http://127.0.0.1:9096}
+              predicates:
+                - Path=/api/realtime/**
+
+# 租户级隔离与限流（网关是执行点：验身份 → 认租户 → 限流）
+supportflow:
+  gateway:
+    tenant-guard:
+      # 开关：关掉只剩"认证 + 租户头校验"，限流不生效
+      rate-limit-enabled: ${SUPPORTFLOW_TENANT_RATE_LIMIT_ENABLED:true}
+      # 拉不到租户配额时的兜底 QPS（tenant-service 挂了也不能失去保护）
+      default-qps: ${SUPPORTFLOW_TENANT_DEFAULT_QPS:20}
+      # 配额缓存（秒）：平台改限额后最迟这么久生效
+      quota-cache-seconds: 30
+      # 用量上报间隔（秒）
+      usage-report-seconds: 5
+      # tenant-service 内部接口
+      tenant-service-url: ${SUPPORTFLOW_TENANT_SERVICE_URL:http://127.0.0.1:9092}
+      # JWT 签名密钥：必须与 user-service 一致（网关要验签取 tnt 声明）
+      jwt-secret: ${SUPPORTFLOW_JWT_SECRET}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway

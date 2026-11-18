@@ -1,0 +1,33 @@
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+!frontend/.env.development
+*.pem
+*.key
+*.p12
+*.jks
+
+# Generated files and local state
+target/
+node_modules/
+dist/
+*.tsbuildinfo
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.local/
+*.log
+
+# Local research and optional legacy test-account seeding
+/docs/upstream.md
+/docs/upstream-study.md
+/ai-service/scripts/seed-test-accounts.py
+
+# Editor and system files
+.idea/
+.run/
+*.iml
+.DS_Store
+Thumbs.db

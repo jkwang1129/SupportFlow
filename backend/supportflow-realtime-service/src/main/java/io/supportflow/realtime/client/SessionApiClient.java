@@ -1,0 +1,219 @@
+package io.supportflow.realtime.client;
+
+import io.supportflow.common.api.ApiResponse;
+import io.supportflow.common.exception.BizException;
+import io.supportflow.realtime.dto.AgentLoadView;
+import io.supportflow.realtime.dto.MessageView;
+import io.supportflow.realtime.dto.SessionInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * customer-service 内部接口客户端：会话查询、消息落库、坐席接入、结束会话。
+ *
+ * <p>实时网关只做"连接与转发"，业务数据一律交给 customer-service 落库，
+ * 保证一个库只有一个写入口。</p>
+ */
+@Component
+public class SessionApiClient {
+
+    private static final Logger log = LoggerFactory.getLogger(SessionApiClient.class);
+
+    private final RestClient restClient;
+
+    public SessionApiClient(@Value("${supportflow.customer.internal-base-url}") String baseUrl) {
+        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+    }
+
+                public SessionInfo requireSession(String tenantCode, String sessionNo) {
+        ApiResponse<SessionInfo> response = restClient.get()
+                .uri(uriBuilder -> uriBuilder.path("/api/customer/internal/sessions/{sessionNo}")
+                        .queryParam("tenantCode", tenantCode)
+                        .build(sessionNo))
+                .retrieve()
+                .body(new ParameterizedTypeReference<ApiResponse<SessionInfo>>() {
+                });
+        return unwrap(response);
+    }
+
+    public List<MessageView> history(String tenantCode, String sessionNo, Long beforeId, int limit, boolean agentView) {
+        ApiResponse<List<MessageView>> response = restClient.get()
+                .uri(uriBuilder -> {
+                    uriBuilder.path("/api/customer/internal/sessions/{sessionNo}/messages")
+                            .queryParam("tenantCode", tenantCode)
+                            .queryParam("limit", limit)
+                            .queryParam("agentView", agentView);
+                    if (beforeId != null) {
+                        uriBuilder.queryParam("beforeId", beforeId);
+                    }
+                    return uriBuilder.build(sessionNo);
+                })
+                .retrieve()
+                .body(new ParameterizedTypeReference<ApiResponse<List<MessageView>>>() {
+                });
+        return unwrap(response);
+    }
+
+    public MessageView appendMessage(
+            String tenantCode,
+            String sessionNo,
+            int senderType,
+            Long senderId,
+            int msgType,
+            String content,
+            int visibleTo,
+            String clientMsgNo
+    ) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("tenantCode", tenantCode);
+        body.put("senderType", senderType);
+        body.put("senderId", senderId == null ? 0L : senderId);
+        body.put("msgType", msgType);
+        body.put("content", content);
+        body.put("visibleTo", visibleTo);
+        if (clientMsgNo != null && !clientMsgNo.isBlank()) {
+            body.put("clientMsgNo", clientMsgNo);
+        }
+        // 这一跳是"实时网关 → customer-service"，跨了服务边界：
+        // 客户消息到底有没有送到落库那一侧，就看这条日志和它下面成功/失败的那条
+        long started = System.currentTimeMillis();
+        log.debug("调用客户服务落库 tenant={} session={} senderType={} clientMsgNo={}",
+                tenantCode, sessionNo, senderType, clientMsgNo);
+        try {
+            ApiResponse<MessageView> response = restClient.post()
+                    .uri("/api/customer/internal/sessions/{sessionNo}/messages", sessionNo)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(body)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<ApiResponse<MessageView>>() {
+                    });
+            MessageView saved = unwrap(response);
+            log.info("落库完成 session={} msgNo={} seq={} senderType={} cost={}ms",
+                    sessionNo, saved == null ? "-" : saved.msgNo(),
+                    saved == null ? null : saved.seq(), senderType,
+                    System.currentTimeMillis() - started);
+            return saved;
+        } catch (Exception e) {
+            // 失败一定要在这里记下来：上层只会回一句"服务处理失败"给客户端，
+            // 真正的原因（会话不存在 / 会话已结束 / 客户服务没起）都在这个异常里
+            log.error("落库失败 session={} senderType={} clientMsgNo={} cost={}ms error={}",
+                    sessionNo, senderType, clientMsgNo,
+                    System.currentTimeMillis() - started, e.getMessage());
+            throw e;
+        }
+    }
+
+    public SessionInfo assignAgent(String tenantCode, String sessionNo, long agentId) {
+        return claim(tenantCode, sessionNo, agentId);
+    }
+
+    /**
+     * 坐席长连接上下线：customer-service 据此更新"这个人现在能不能接单"，
+     * 在线时顺带把积压的排队会话分一次（智能路由）。
+     */
+    public void markAgentConnection(String tenantCode, long agentId, boolean connected) {
+        ApiResponse<Void> response = restClient.post()
+                .uri("/api/customer/internal/agent/connection")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("tenantCode", tenantCode, "agentId", agentId, "connected", connected))
+                .retrieve()
+                .body(new ParameterizedTypeReference<ApiResponse<Void>>() {
+                });
+        unwrap(response);
+    }
+
+    public SessionInfo claim(String tenantCode, String sessionNo, long agentId) {
+        ApiResponse<SessionInfo> response = restClient.post()
+                .uri("/api/customer/internal/sessions/{sessionNo}/claim", sessionNo)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("tenantCode", tenantCode, "agentId", agentId))
+                .retrieve()
+                .body(new ParameterizedTypeReference<ApiResponse<SessionInfo>>() {
+                });
+        return unwrap(response);
+    }
+
+    public SessionInfo release(String tenantCode, String sessionNo, long agentId) {
+        ApiResponse<SessionInfo> response = restClient.post()
+                .uri("/api/customer/internal/sessions/{sessionNo}/release", sessionNo)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("tenantCode", tenantCode, "agentId", agentId))
+                .retrieve()
+                .body(new ParameterizedTypeReference<ApiResponse<SessionInfo>>() {
+                });
+        return unwrap(response);
+    }
+
+    public SessionInfo transfer(
+            String tenantCode,
+            String sessionNo,
+            Long fromAgentId,
+            long toAgentId,
+            String remark
+    ) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("tenantCode", tenantCode);
+        body.put("fromAgentId", fromAgentId == null ? 0L : fromAgentId);
+        body.put("toAgentId", toAgentId);
+        if (remark != null && !remark.isBlank()) {
+            body.put("remark", remark);
+        }
+        ApiResponse<SessionInfo> response = restClient.post()
+                .uri("/api/customer/internal/sessions/{sessionNo}/transfer", sessionNo)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(new ParameterizedTypeReference<ApiResponse<SessionInfo>>() {
+                });
+        return unwrap(response);
+    }
+
+    public SessionInfo close(String tenantCode, String sessionNo, Long operatorId, String remark) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("tenantCode", tenantCode);
+        if (operatorId != null) {
+            body.put("operatorId", operatorId);
+        }
+        if (remark != null && !remark.isBlank()) {
+            body.put("remark", remark);
+        }
+        ApiResponse<SessionInfo> response = restClient.post()
+                .uri("/api/customer/internal/sessions/{sessionNo}/close", sessionNo)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(new ParameterizedTypeReference<ApiResponse<SessionInfo>>() {
+                });
+        return unwrap(response);
+    }
+
+    public List<AgentLoadView> workload(String tenantCode) {
+        ApiResponse<List<AgentLoadView>> response = restClient.get()
+                .uri(uriBuilder -> uriBuilder.path("/api/customer/internal/sessions/workload")
+                        .queryParam("tenantCode", tenantCode)
+                        .build())
+                .retrieve()
+                .body(new ParameterizedTypeReference<ApiResponse<List<AgentLoadView>>>() {
+                });
+        return unwrap(response);
+    }
+
+    private static <T> T unwrap(ApiResponse<T> response) {
+        if (response == null || response.code() != 0) {
+            String message = response == null ? "customer-service 无响应" : response.message();
+            int code = response == null ? 50000 : response.code();
+            log.warn("customer-service 内部调用失败 code={} message={}", code, message);
+            throw new BizException(code, message == null ? "会话服务暂不可用" : message);
+        }
+        return response.data();
+    }
+}

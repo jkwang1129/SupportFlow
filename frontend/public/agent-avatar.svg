@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="人工客服">
+  <defs>
+    <!-- 人工客服：靛蓝渐变（比机器人更"实"，表示背后是真人） -->
+    <linearGradient id="agentBg" x1="14" y1="8" x2="84" y2="90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="0.55" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <linearGradient id="agentSheen" x1="20" y1="6" x2="58" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <circle cx="48" cy="48" r="48" fill="url(#agentBg)"/>
+  <circle cx="48" cy="48" r="48" fill="url(#agentSheen)"/>
+  <circle cx="48" cy="48" r="46.5" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="3"/>
+
+  <!-- 人物剪影：头 + 肩（与客户头像同一造型，靠配色区分） -->
+  <circle cx="48" cy="38" r="13" fill="#ffffff"/>
+  <path d="M23 79.5a25 25 0 0 1 50 0z" fill="#ffffff"/>
+</svg>

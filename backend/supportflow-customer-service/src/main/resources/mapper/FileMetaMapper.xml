@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.customer.mapper.FileMetaMapper">
+
+    <!-- 该租户已占用存储（字节）。计费用的「存储量」口径：文件大小合计，不区分业务类型。
+         显式带 tenant_code 条件：即使 RLS 上下文没设（调度线程），也只统计这一家。 -->
+    <select id="sumSizeByTenant" resultType="long">
+        SELECT COALESCE(SUM(file_size), 0)
+          FROM file_meta
+         WHERE is_deleted = FALSE
+           AND tenant_code = #{tenantCode}
+    </select>
+
+</mapper>

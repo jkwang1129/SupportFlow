@@ -1,0 +1,44 @@
+server:
+  port: 9095
+
+spring:
+  application:
+    name: supportflow-ops-service
+  datasource:
+    url: jdbc:postgresql://${SUPPORTFLOW_DB_HOST:127.0.0.1}:${SUPPORTFLOW_DB_PORT:5432}/${SUPPORTFLOW_OPS_DB:ops_db}
+    username: ${SUPPORTFLOW_DB_USER:supportflow}
+    password: ${SUPPORTFLOW_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+
+supportflow:
+  id:
+    worker-id: ${SUPPORTFLOW_WORKER_ID:5}
+  auth:
+    # JWT 签名密钥：与 user-service 一致，审计日志页据此判断是不是平台账号
+    jwt-secret: ${SUPPORTFLOW_JWT_SECRET}
+  customer:
+    # customer-service 内部接口地址：平台公告发布后广播到全部租户的通知中心
+    internal-base-url: ${SUPPORTFLOW_CUSTOMER_INTERNAL_URL:http://127.0.0.1:9093}
+  ai:
+    # AI 服务内部接口地址：平台「AI 监控」的调用量与成本（ai_usage_record 在 ai_db）
+    internal-base-url: ${SUPPORTFLOW_AI_INTERNAL_URL:http://127.0.0.1:9100}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: input

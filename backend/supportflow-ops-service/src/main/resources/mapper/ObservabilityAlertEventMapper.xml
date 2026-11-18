@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.ops.mapper.ObservabilityAlertEventMapper">
+
+    <!-- 筛选条件：列表与计数共用，口径必须一致 -->
+    <sql id="eventFilters">
+        1 = 1
+        <if test="handleStatus != null">
+            AND ev.handle_status = #{handleStatus}
+        </if>
+        <if test="level != null">
+            AND ev.level = #{level}
+        </if>
+        <if test="tenantCode != null and tenantCode != ''">
+            AND ev.tenant_code ILIKE '%' || #{tenantCode} || '%'
+        </if>
+    </sql>
+
+    <select id="countEvents" resultType="long">
+        SELECT COUNT(1) FROM observability_alert_event ev
+         WHERE <include refid="eventFilters"/>
+    </select>
+
+    <!-- 列名用带引号的驼峰别名：Map 返回给前端直接就是 ruleName / handleStatus。
+         企业名不在这里 join：tenant / enterprise 两张表在 tenant_db，ops_db 里没有，
+         页面按租户编号映射企业名（平台页面本来就有租户下拉）。 -->
+    <select id="selectEvents" resultType="java.util.Map">
+        SELECT CAST(ev.id AS VARCHAR)                              AS "id",
+               CAST(ev.rule_id AS VARCHAR)                          AS "ruleId",
+               ev.rule_name                                         AS "ruleName",
+               ev.metric                                            AS "metric",
+               ev.level                                             AS "level",
+               ev.tenant_code                                       AS "tenantCode",
+               ev.metric_value                                      AS "metricValue",
+               ev.threshold                                         AS "threshold",
+               ev.window_days                                       AS "windowDays",
+               to_char(ev.stat_date, 'YYYY-MM-DD')                  AS "statDate",
+               ev.detail                                            AS "detail",
+               ev.handle_status                                     AS "handleStatus",
+               ev.handle_remark                                     AS "handleRemark",
+               ev.handler_name                                      AS "handlerName",
+               to_char(ev.handle_time, 'YYYY-MM-DD HH24:MI:SS')     AS "handleTime",
+               ev.notified                                          AS "notified",
+               to_char(ev.event_time, 'YYYY-MM-DD HH24:MI:SS')      AS "eventTime"
+          FROM observability_alert_event ev
+         WHERE <include refid="eventFilters"/>
+         ORDER BY (ev.handle_status = 1) DESC, ev.level DESC, ev.event_time DESC, ev.id DESC
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="selectOverview" resultType="java.util.Map">
+        SELECT COUNT(1)                                              AS total,
+               COUNT(1) FILTER (WHERE handle_status = 1)             AS pending,
+               COUNT(1) FILTER (WHERE level = 3)                     AS critical,
+               COUNT(1) FILTER (WHERE level = 2)                     AS warning,
+               COUNT(1) FILTER (WHERE event_time >= CURRENT_DATE)    AS today
+          FROM observability_alert_event
+    </select>
+
+    <update id="handle">
+        UPDATE observability_alert_event
+           SET handle_status = #{status},
+               handle_remark = #{remark},
+               handler_name = #{handler},
+               handle_time = CURRENT_TIMESTAMP,
+               update_time = CURRENT_TIMESTAMP
+         WHERE id = #{id}
+    </update>
+
+    <update id="markNotified">
+        UPDATE observability_alert_event
+           SET notified = TRUE, update_time = CURRENT_TIMESTAMP
+         WHERE id = #{id}
+    </update>
+
+    <!-- 幂等落库：同规则同租户同天唯一索引兜底，重复直接跳过（不抛异常、不脏事务） -->
+    <insert id="insertIgnore">
+        INSERT INTO observability_alert_event (id, rule_id, rule_name, metric, level, tenant_code,
+                                              metric_value, threshold, window_days, stat_date, detail,
+                                              handle_status, notified, event_time, create_time, update_time)
+        VALUES (#{event.id}, #{event.ruleId}, #{event.ruleName}, #{event.metric}, #{event.level},
+                #{event.tenantCode}, #{event.metricValue}, #{event.threshold}, #{event.windowDays},
+                #{event.statDate}, #{event.detail}, #{event.handleStatus}, #{event.notified},
+                #{event.eventTime}, #{event.createTime}, #{event.updateTime})
+        ON CONFLICT DO NOTHING
+    </insert>
+</mapper>

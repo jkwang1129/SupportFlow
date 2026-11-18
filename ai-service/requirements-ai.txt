@@ -1,0 +1,37 @@
+# -*- coding: utf-8 -*-
+# =====================================================================
+# supportflow-ai 的可选依赖（AI 能力）
+#   pip 不在 PATH 上，用项目自带的：./.venv/bin/pip install -r requirements-ai.txt
+#   国内网络慢：加 -i https://pypi.tuna.tsinghua.edu.cn/simple
+# =====================================================================
+
+# ---------- 知识库真正必需的（第 20 篇）----------
+# 读文件用 SimpleDirectoryReader、切块用 SentenceSplitter、向量化分流走 OpenAIEmbedding
+llama-index>=0.11
+# Reader 实现：docx / pdf / md 等格式的解析器都在这
+llama-index-readers-file>=0.4
+# OpenAI 系模型的向量化（千问这类非官方模型名走项目自己的客户端，见 llama_engine.py）
+llama-index-embeddings-openai>=0.3
+# 中文 PDF 多为 CID 编码字体，内置兜底解析读不出来，只有 pypdf 能读
+pypdf>=5
+
+# ---------- 知识库的间接依赖 ----------
+# LlamaIndex 的 DocxReader 内部依赖它；缺了传 Word 会报 "docx2txt is required"
+docx2txt>=0.8
+
+# ---------- RAG 编排必需（第 21 篇）----------
+# 知识问答的"检索 → 判断 → 改写重检 → 生成 → 校验引用"用它的 StateGraph 编排；
+# 没装也能跑（退化成线性实现），但就看不到编排过程了
+langgraph>=0.2
+
+# ---------- AI 客服大脑（第 22 篇）----------
+# 意图 → 情绪 →（该转就转）→ 检索 → 回答 这条带分支的链路，用的还是上面这个 langgraph；
+# 意图/情绪同时有"规则版"实现（关键词 + 语料片段匹配），所以**这一篇没有新增依赖**：
+# 没装 langgraph 走线性实现，没配模型密钥走规则判断，功能不缺席，只是效果打折。
+
+# ---------- 预留给后续章节（当前代码还没用到）----------
+langchain>=0.3
+langchain-openai>=0.2
+openai>=1.40
+redis>=5
+kafka-python>=2.2

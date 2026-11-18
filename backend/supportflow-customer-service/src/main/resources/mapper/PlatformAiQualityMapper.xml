@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.customer.mapper.PlatformAiQualityMapper">
+
+    <!-- 质检总览：近 N 天的 AI 质检任务。
+         ai_score 为空的是"还没跑出结果"的任务，算平均分时要排除掉，
+         否则会把一批 NULL 当成 0 分，看着像质量突然崩了。 -->
+    <select id="selectQaOverview" resultType="java.util.Map">
+        SELECT COUNT(1)                                                        AS tasks,
+               COUNT(1) FILTER (WHERE t.ai_score IS NOT NULL)                   AS scored_tasks,
+               COALESCE(ROUND(AVG(t.ai_score) FILTER (WHERE t.ai_score IS NOT NULL), 2), 0)
+                                                                               AS avg_ai_score,
+               COUNT(1) FILTER (WHERE t.risk_level = 3)                        AS high_risk,
+               COUNT(1) FILTER (WHERE t.risk_level = 2)                        AS mid_risk,
+               COUNT(1) FILTER (WHERE t.risk_level = 1)                        AS low_risk,
+               COUNT(1) FILTER (WHERE t.status = 3)                            AS reviewed
+          FROM qa_task t
+         WHERE t.is_deleted = FALSE
+           AND t.create_time &gt;= CURRENT_DATE - make_interval(days =&gt; #{days} - 1)
+    </select>
+
+    <!-- 实时预警总览：边聊边检拦下来的问题 -->
+    <select id="selectAlertOverview" resultType="java.util.Map">
+        SELECT COUNT(1)                                          AS alerts,
+               COUNT(1) FILTER (WHERE a.severity = 3)            AS severe,
+               COUNT(1) FILTER (WHERE a.severity = 2)            AS warning,
+               COUNT(1) FILTER (WHERE a.status = 1)              AS pending,
+               COUNT(DISTINCT a.tenant_code)                     AS tenants
+          FROM qa_alert a
+         WHERE a.is_deleted = FALSE
+           AND a.create_time &gt;= CURRENT_DATE - make_interval(days =&gt; #{days} - 1)
+    </select>
+
+    <select id="selectAlertDaily" resultType="java.util.Map">
+        SELECT to_char(a.create_time::date, 'YYYY-MM-DD')        AS stat_date,
+               COUNT(1)                                          AS alerts,
+               COUNT(1) FILTER (WHERE a.severity = 3)            AS severe
+          FROM qa_alert a
+         WHERE a.is_deleted = FALSE
+           AND a.create_time &gt;= CURRENT_DATE - make_interval(days =&gt; #{days} - 1)
+         GROUP BY a.create_time::date
+         ORDER BY a.create_time::date
+    </select>
+
+    <!-- 命中规则 Top：培训与规则调优的风向标 -->
+    <select id="selectTopRules" resultType="java.util.Map">
+        SELECT a.rule_name                                       AS rule_name,
+               a.rule_type                                       AS rule_type,
+               COUNT(1)                                          AS alerts,
+               COUNT(1) FILTER (WHERE a.severity = 3)            AS severe,
+               MAX(a.create_time)                                AS last_hit_time
+          FROM qa_alert a
+         WHERE a.is_deleted = FALSE
+           AND a.create_time &gt;= CURRENT_DATE - make_interval(days =&gt; #{days} - 1)
+         GROUP BY a.rule_name, a.rule_type
+         ORDER BY alerts DESC, rule_name
+         LIMIT #{limit}
+    </select>
+</mapper>

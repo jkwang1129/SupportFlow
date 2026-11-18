@@ -1,0 +1,50 @@
+server:
+  port: 9092
+
+spring:
+  application:
+    name: supportflow-tenant-service
+  datasource:
+    url: jdbc:postgresql://${SUPPORTFLOW_DB_HOST:127.0.0.1}:${SUPPORTFLOW_DB_PORT:5432}/${SUPPORTFLOW_TENANT_DB:tenant_db}
+    username: ${SUPPORTFLOW_DB_USER:supportflow}
+    password: ${SUPPORTFLOW_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+
+supportflow:
+  id:
+    worker-id: ${SUPPORTFLOW_WORKER_ID:2}
+  auth:
+    # JWT 签名密钥：与 user-service 保持一致，生产必须通过环境变量覆盖
+    jwt-secret: ${SUPPORTFLOW_JWT_SECRET}
+  user:
+    # user-service 内部接口地址（审核通过后回填 sys_user.tenant_code）
+    internal-base-url: ${SUPPORTFLOW_USER_INTERNAL_URL:http://127.0.0.1:9091}
+  customer:
+    # customer-service 内部接口地址：租户库升级由数据面执行（脚本副本、SchemaGuard 在那边）
+    internal-base-url: ${SUPPORTFLOW_CUSTOMER_INTERNAL_URL:http://127.0.0.1:9093}
+  billing:
+    # billing-service 内部接口地址：企业审核通过后给租户开免费版试用（套餐与配额只有 billing 知道）
+    internal-base-url: ${SUPPORTFLOW_BILLING_INTERNAL_URL:http://127.0.0.1:9094}
+  ai:
+    # AI 服务内部接口地址：租户 AI 配额要拿"今日真实调用次数"（ai_usage_record 在 ai_db，归 AI 服务）
+    internal-base-url: ${SUPPORTFLOW_AI_INTERNAL_URL:http://127.0.0.1:9100}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: input

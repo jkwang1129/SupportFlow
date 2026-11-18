@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.tenant.mapper.CustomerSuccessMapper">
+
+    <!-- 健康度的原料：一个租户一行。
+
+         为什么把"近 30 天 / 前后 7 天 / 活跃天数"都在 SQL 里算：这些指标口径要一次说清，
+         散在 Java 里反复查库既慢又容易口径不一致。
+
+         活跃天数 = 有上报记录的天数（网关每天上报一次，没上报说明这天没人用）。
+         趋势 = 最近 7 天请求量 vs 前 7 天请求量，涨了说明越用越顺，掉了是流失前兆。 -->
+    <sql id="healthColumns">
+        t.tenant_code                                   AS tenant_code,
+        e.company_name                                  AS company_name,
+        e.industry                                      AS industry,
+        t.plan_id                                       AS plan_id,
+        t.status                                        AS tenant_status,
+        t.isolation_mode                                AS isolation_mode,
+        t.expire_time                                   AS expire_time,
+        t.create_time                                   AS create_time,
+        COALESCE(q.daily_request_limit, 0)              AS daily_request_limit,
+        COALESCE(q.ai_daily_limit, 0)                   AS ai_daily_limit,
+        COALESCE(SUM(u.request_count) FILTER (WHERE u.stat_date &gt;= CURRENT_DATE - 29), 0) AS requests_30d,
+        COALESCE(SUM(u.session_count) FILTER (WHERE u.stat_date &gt;= CURRENT_DATE - 29), 0) AS sessions_30d,
+        COALESCE(SUM(u.ai_call_count) FILTER (WHERE u.stat_date &gt;= CURRENT_DATE - 29), 0) AS ai_calls_30d,
+        COUNT(DISTINCT u.stat_date) FILTER (WHERE u.stat_date &gt;= CURRENT_DATE - 29)        AS active_days_30d,
+        COALESCE(SUM(u.request_count) FILTER (WHERE u.stat_date &gt;= CURRENT_DATE - 6), 0)   AS requests_last7,
+        COALESCE(SUM(u.request_count) FILTER (
+            WHERE u.stat_date &gt;= CURRENT_DATE - 13 AND u.stat_date &lt; CURRENT_DATE - 6), 0) AS requests_prev7,
+        MAX(u.stat_date)                                AS last_active_date
+    </sql>
+
+    <select id="selectTenantHealth" resultType="java.util.Map">
+        SELECT
+        <include refid="healthColumns"/>
+          FROM tenant t
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+          LEFT JOIN tenant_quota q ON q.tenant_code = t.tenant_code AND q.is_deleted = FALSE
+          LEFT JOIN tenant_usage_daily u
+                 ON u.tenant_code = t.tenant_code
+                AND u.stat_date &gt;= CURRENT_DATE - 29
+         WHERE t.is_deleted = FALSE
+         GROUP BY t.tenant_code, e.company_name, e.industry, t.plan_id, t.status,
+                  t.isolation_mode, t.expire_time, t.create_time, q.daily_request_limit, q.ai_daily_limit
+         ORDER BY t.expire_time NULLS LAST, t.create_time
+    </select>
+
+    <select id="selectTenantHealthDetail" resultType="java.util.Map">
+        SELECT
+        <include refid="healthColumns"/>
+          FROM tenant t
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+          LEFT JOIN tenant_quota q ON q.tenant_code = t.tenant_code AND q.is_deleted = FALSE
+          LEFT JOIN tenant_usage_daily u
+                 ON u.tenant_code = t.tenant_code
+                AND u.stat_date &gt;= CURRENT_DATE - 29
+         WHERE t.is_deleted = FALSE AND t.tenant_code = #{tenantCode}
+         GROUP BY t.tenant_code, e.company_name, e.industry, t.plan_id, t.status,
+                  t.isolation_mode, t.expire_time, t.create_time, q.daily_request_limit, q.ai_daily_limit
+    </select>
+</mapper>

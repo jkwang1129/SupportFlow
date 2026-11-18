@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SupportFlow 智能客服 · 企业级 AI 客服平台</title>
+  <meta name="description" content="SupportFlow 智能客服：大模型多轮对话、全渠道接入、企业知识库、全量 AI 质检与工单闭环，AI 知识问答、实时接待与工单协作。" />
+  <meta name="keywords" content="智能客服,AI客服,在线客服系统,客服机器人,全渠道客服,AI质检,知识库,工单系统" />
+  <meta name="theme-color" content="#2563eb" />
+  <link rel="icon" href="assets/supportflow-mark.svg" type="image/svg+xml" />
+  <meta property="og:title" content="SupportFlow 智能客服 · 企业级 AI 客服平台" />
+  <meta property="og:description" content="AI 知识问答、实时接待与工单协作。" />
+  <meta property="og:type" content="website" />
+  <!-- 后端 API 前缀：构建时用 SUPPORTFLOW_API_BASE 覆盖（默认同域 /api，生产由 CDN/网关反代） -->
+  <meta name="supportflow-api-base" content="/api" />
+  <link rel="stylesheet" href="assets/css/site.css" />
+  <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "SupportFlow 智能客服",
+      "applicationCategory": "BusinessApplication",
+      "operatingSystem": "Web",
+      "description": "企业级 AI 客服平台：大模型多轮对话、全渠道接入、知识库与质检闭环。",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "CNY" }
+    }
+  </script>
+</head>
+<body>
+
+<!-- ── 顶部导航 ───────────────────────────────────────────── -->
+<nav class="nav" id="nav">
+  <div class="nav-inner">
+    <a class="brand" href="#top">
+      <img class="mark" src="assets/supportflow-mark.svg" alt="" width="34" height="34" />
+      <span class="brand-name">SupportFlow 智能客服</span>
+    </a>
+    <div class="nav-links">
+      <a href="#features">产品功能</a>
+      <a href="#product">产品演示</a>
+      <a href="#demo">实时体验</a>
+      <a href="#solutions">解决方案</a>
+      <a href="#cases">客户案例</a>
+      <a href="#pricing">定价</a>
+      <a href="#faq">常见问题</a>
+    </div>
+    <div class="nav-cta">
+      <a class="login" href="#" data-app-link="/login">登录</a>
+      <a class="btn btn-primary btn-sm" href="#" data-app-link="/register">免费试用</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ── 首屏 Hero ──────────────────────────────────────────── -->
+<section class="hero" id="top">
+  <span class="orb o1"></span>
+  <span class="orb o2"></span>
+  <div class="container hero-grid">
+    <div>
+      <span class="badge"><span class="new">NEW</span> <span data-cfg="hero.badge">多轮对话 · 企业知识库 · 会话质检</span></span>
+      <h1>
+        <span data-cfg="hero.title1">让 AI 处理重复咨询，</span><br />
+        <span class="grad" data-cfg="hero.titleGrad">让人工专注复杂问题</span>
+      </h1>
+      <p class="sub" data-cfg="hero.sub">
+        SupportFlow 智能客服是一套企业级 AI 客服平台：机器人 7×24 自动接待、全渠道统一接入、知识库与质检闭环，
+        支持知识问答、人工接待与后续工单处理。
+      </p>
+      <div class="ctas">
+        <a class="btn btn-primary btn-lg" href="#" data-app-link="/register" data-cfg="hero.cta1">免费试用 14 天</a>
+        <a class="btn btn-outline btn-lg" href="#demo" data-cfg="hero.cta2">查看产品演示</a>
+      </div>
+      <div class="note" data-cfg="hero.note">无需信用卡 · 全功能体验 · 30 分钟完成接入</div>
+      <div class="note">以下为演示数据</div>
+      <div class="stats" id="hero-stats">
+        <div><b data-cfg="hero.stats.0.v">300+</b><span data-cfg="hero.stats.0.l">服务企业</span></div>
+        <div><b data-cfg="hero.stats.1.v">71.4%</b><span data-cfg="hero.stats.1.l">机器人解决率</span></div>
+        <div><b data-cfg="hero.stats.2.v">20s</b><span data-cfg="hero.stats.2.l">平均首响</span></div>
+        <div><b data-cfg="hero.stats.3.v">99.9%</b><span data-cfg="hero.stats.3.l">SLA 保障</span></div>
+      </div>
+    </div>
+
+    <!-- 产品截图（纯 HTML/CSS 手绘：不依赖任何图片资源，任何 CDN 都不会缺图） -->
+    <div class="hero-mock" aria-hidden="true">
+      <div class="mock-app">
+        <div class="mock-top"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i><span class="mock-title">在线客服工作台</span></div>
+        <div class="mock-body">
+          <div class="mock-list">
+            <div class="mock-item"><span class="av" style="background:linear-gradient(135deg,#ec4899,#f43f5e)">刘</span><div><div class="nm">刘雅静</div><div class="pr">微信 · 排队 42s</div></div></div>
+            <div class="mock-item active"><span class="av" style="background:linear-gradient(135deg,#3b82f6,#0ea5e9)">张</span><div><div class="nm">张梦琪</div><div class="pr">App · 接待中</div></div></div>
+            <div class="mock-item"><span class="av" style="background:linear-gradient(135deg,#3b82f6,#06b6d4)">王</span><div><div class="nm">王浩宇</div><div class="pr">网站 · 机器人</div></div></div>
+            <div class="mock-item"><span class="av" style="background:linear-gradient(135deg,#10b981,#34d399)">陈</span><div><div class="nm">陈博文</div><div class="pr">网站 · 排队 3m</div></div></div>
+          </div>
+          <div class="mock-chat">
+            <div class="mock-bubble in">请问会员积分月底会清零吗？</div>
+            <div class="mock-bubble out">您好，积分有效期为 24 个月，不会清零，可以放心攒～</div>
+            <div class="mock-bubble kb"><b>📚 知识推荐</b><br>铂金会员积分有效期与兑换规则 · 采纳率 95.1%</div>
+            <div class="mock-bubble in">太好了，那咖啡机要多少积分？</div>
+            <div class="mock-input">输入回复内容… Enter 发送</div>
+          </div>
+        </div>
+      </div>
+      <div class="float-card f1"><div class="fc"><span class="dot-green"></span><div><b>97%</b>客户满意度</div></div></div>
+      <div class="float-card f2"><div class="fc"><span class="dot-green"></span><div><b>1.9s</b>机器人平均应答</div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 信任 Logo 墙（文案与品牌名来自官网配置 trust.*） ───── -->
+<div class="logos">
+  <div class="container">
+    <div class="l" data-cfg="trust.line">演示企业</div>
+    <div class="row" id="trust-brands">
+      <span>云智科技</span><span>芯动智能</span><span>启辰信息</span><span>星辉传媒</span><span>恒信网络</span><span>创联智能</span>
+    </div>
+  </div>
+</div>
+
+<!-- ── 产品功能 ──────────────────────────────────────────── -->
+<section class="container sec" id="features">
+  <div class="sec-head reveal">
+    <div class="tag">PRODUCT FEATURES</div>
+    <h2 data-cfg="features.head">一站式 AI 客服，开箱即用</h2>
+    <p data-cfg="features.sub">从客户咨询到服务复盘，全链路智能化，无需开发经验也能快速上线</p>
+  </div>
+  <div class="bento">
+    <div class="bento-card dark span2 reveal">
+      <span class="ic" style="background:linear-gradient(135deg,#3b82f6,#0ea5e9)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="8" width="14" height="11" rx="3"/><circle cx="9.5" cy="13.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="14.5" cy="13.5" r="1.1" fill="currentColor" stroke="none"/></svg></span>
+      <h3 data-cfg="features.items.0.t">大模型智能机器人</h3>
+      <p data-cfg="features.items.0.d">意图识别 + 多轮对话 + 知识检索 + 情绪安抚 + 自动转人工一体；答不上来会诚实兜底并转人工，绝不编答案。</p>
+      <a class="more" href="#demo">体验机器人对话 →</a>
+    </div>
+    <div class="bento-card reveal">
+      <span class="ic" style="background:linear-gradient(135deg,#3b82f6,#2563eb)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a13.5 13.5 0 0 1 0 18M12 3a13.5 13.5 0 0 0 0 18"/></svg></span>
+      <h3 data-cfg="features.items.1.t">全渠道统一接入</h3>
+      <p data-cfg="features.items.1.d">网站、微信、小程序、App、400 热线、邮件，一处配置全端生效。</p>
+      <a class="more" href="#demo">六大渠道演示 →</a>
+    </div>
+    <div class="bento-card reveal">
+      <span class="ic" style="background:linear-gradient(135deg,#10b981,#059669)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V3H6.5A2.5 2.5 0 0 0 4 5.5z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/></svg></span>
+      <h3 data-cfg="features.items.2.t">企业知识库</h3>
+      <p data-cfg="features.items.2.d">文档解析、切块与向量检索，AI 自动命中知识并给出引用，采纳率实时可追踪。</p>
+    </div>
+    <div class="bento-card reveal">
+      <span class="ic" style="background:linear-gradient(135deg,#f59e0b,#ea580c)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.5 8-10V5l-8-3-8 3v7c0 6.5 8 10 8 10z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg></span>
+      <h3 data-cfg="features.items.3.t">全量 AI 质检</h3>
+      <p data-cfg="features.items.3.d">会话自动初检 + 规则引擎 + 人工复核，边聊边检还能实时预警违规话术。</p>
+    </div>
+    <div class="bento-card reveal">
+      <span class="ic" style="background:linear-gradient(135deg,#ec4899,#db2777)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16v3a2 2 0 0 0 0 4v3H4v-3a2 2 0 0 0 0-4z"/><path d="M10 7v10"/></svg></span>
+      <h3 data-cfg="features.items.4.t">工单跨部门协作</h3>
+      <p data-cfg="features.items.4.d">两段 SLA 自动计时、超时升级，复杂诉求全程可追踪。</p>
+    </div>
+    <div class="bento-card reveal">
+      <span class="ic" style="background:linear-gradient(135deg,#06b6d4,#0891b2)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6" rx="1"/><rect x="12" y="8" width="3" height="10" rx="1"/><rect x="17" y="5" width="3" height="13" rx="1"/></svg></span>
+      <h3 data-cfg="features.items.5.t">多维数据洞察</h3>
+      <p data-cfg="features.items.5.d">会话、渠道、坐席、满意度报表，高频问题一键下钻。</p>
+    </div>
+  </div>
+</section>
+
+<!-- ── 工作台展示（深色） ────────────────────────────────── -->
+<section class="showcase" id="product">
+  <div class="container showcase-grid">
+    <div class="reveal">
+      <div class="tag" data-cfg="showcase.tag">ALL-IN-ONE WORKSPACE</div>
+      <h2 data-cfg="showcase.title">一个工作台，接待全渠道客户</h2>
+      <p data-cfg="showcase.desc">
+        坐席不再切换多个系统：客户 360° 画像、AI 知识推荐、快捷话术、工单流转尽在眼前，接起即服务。
+      </p>
+      <ul>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span data-cfg="showcase.points.0">客户 360° 档案与历史会话自动带出</span></li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span data-cfg="showcase.points.1">AI 实时推荐知识库话术，一键插入发送</span></li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span data-cfg="showcase.points.2">多坐席协同：转接、协助、内部备注一条链路</span></li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg><span data-cfg="showcase.points.3">多技能组智能路由，VIP 客户优先接入</span></li>
+      </ul>
+      <div class="ctas">
+        <a class="btn btn-primary" href="#" data-app-link="/workspace">进入客服工作台</a>
+        <a class="btn btn-ghost-dark" href="#demo">看实时对话演示</a>
+      </div>
+    </div>
+    <div class="ws-mock reveal" aria-hidden="true">
+      <div class="head"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <div class="cols">
+        <div class="col">
+          <div class="ws-item"><span class="av" style="background:linear-gradient(135deg,#ec4899,#f43f5e)">刘</span><div>刘雅静<div style="font-size:10px;opacity:.6">微信 · 42s</div></div></div>
+          <div class="ws-item active"><span class="av" style="background:linear-gradient(135deg,#3b82f6,#0ea5e9)">张</span><div>张梦琪<div style="font-size:10px;opacity:.6">App · 接待中</div></div></div>
+          <div class="ws-item"><span class="av" style="background:linear-gradient(135deg,#3b82f6,#06b6d4)">王</span><div>王浩宇<div style="font-size:10px;opacity:.6">网站 · 机器人</div></div></div>
+          <div class="ws-item"><span class="av" style="background:linear-gradient(135deg,#10b981,#34d399)">陈</span><div>陈博文<div style="font-size:10px;opacity:.6">网站 · 3m</div></div></div>
+        </div>
+        <div class="col">
+          <div style="display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600">张梦琪<span style="margin-left:auto;font-size:10px;color:rgba(255,255,255,.5)">陈思远 接待中</span></div>
+          <div class="b in">洗衣机安装后一直有异响，我要今天上门处理</div>
+          <div class="b out">非常抱歉给您带来困扰，我马上为您登记上门服务（预计 4 小时内联系）</div>
+          <div class="b warn">⚠️ 实时质检预警 · 情绪安抚话术缺失，建议先共情再给方案</div>
+          <div class="b out">已转派「售后处理」技能组，工单 TK-260828-014 已创建，SLA 剩余 1 小时 42 分</div>
+          <div class="ws-input">输入回复内容… Enter 发送</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 实时演示（内嵌访客端客服窗口 demo.html） ───────────── -->
+<section class="container sec" id="demo">
+  <div class="sec-head reveal">
+    <div class="tag">LIVE DEMO</div>
+    <h2 data-cfg="demo.head">点开即用，真实可交互</h2>
+    <p data-cfg="demo.sub">右侧就是客户真实看到的客服组件，试试向机器人提问，或回复「转人工」查看人工接入与满意度评价</p>
+  </div>
+  <div class="demo-panel reveal">
+    <div class="frame">
+      <iframe src="demo.html" title="SupportFlow 智能客服 · 产品实时演示" loading="lazy"></iframe>
+    </div>
+  </div>
+  <div class="demo-cta reveal">
+    <a class="btn btn-primary btn-lg" href="#" data-app-link="/channels">在控制台配置我的渠道</a>
+    <a class="btn btn-outline btn-lg" href="demo.html" target="_blank" rel="noopener">新窗口打开演示</a>
+  </div>
+</section>
+
+<!-- ── 行业方案 ──────────────────────────────────────────── -->
+<section id="solutions" style="background:var(--bg-2);padding:104px 0">
+  <div class="container">
+    <div class="sec-head reveal">
+      <div class="tag">SOLUTIONS</div>
+      <h2 data-cfg="solutions.head">覆盖主流行业场景</h2>
+      <p data-cfg="solutions.sub">沉淀行业最佳实践，开箱即用，快速落地</p>
+    </div>
+    <div class="sol-grid">
+      <div class="sol-card reveal">
+        <div class="sol-media" style="background:linear-gradient(135deg,#fde8d7,#f59e0b)">
+          <div class="se" style="background:linear-gradient(135deg,#f59e0b,#ea580c)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg></div>
+        </div>
+        <h4 data-cfg="solutions.items.0.t">电商零售</h4>
+        <p data-cfg="solutions.items.0.d">大促高并发接待、物流售后自动化、会员关怀与召回</p>
+        <span class="sol-kpi">机器人解决率 71%+ · 首响 20 秒内</span>
+      </div>
+      <div class="sol-card reveal">
+        <div class="sol-media" style="background:linear-gradient(135deg,#dbeafe,#3b82f6)">
+          <div class="se" style="background:linear-gradient(135deg,#3b82f6,#2563eb)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 9h20M12 5V3M7 9v8m5-8v8m5-8v8"/><path d="M4 9v10h16V9"/><path d="M9 13h6"/></svg></div>
+        </div>
+        <h4 data-cfg="solutions.items.1.t">教育培训</h4>
+        <p data-cfg="solutions.items.1.d">课程咨询转化、排课改期、投诉安抚与续费跟进</p>
+        <span class="sol-kpi">咨询转化率提升 30%</span>
+      </div>
+      <div class="sol-card reveal">
+        <div class="sol-media" style="background:linear-gradient(135deg,#d1fae5,#10b981)">
+          <div class="se" style="background:linear-gradient(135deg,#10b981,#059669)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><path d="M1 10h22"/></svg></div>
+        </div>
+        <h4 data-cfg="solutions.items.2.t">金融保险</h4>
+        <p data-cfg="solutions.items.2.d">合规质检、敏感信息保护、跨部门工单协同</p>
+        <span class="sol-kpi">质检覆盖率 100%</span>
+      </div>
+      <div class="sol-card reveal">
+        <div class="sol-media" style="background:linear-gradient(135deg,#e0f2fe,#0ea5e9)">
+          <div class="se" style="background:linear-gradient(135deg,#2563eb,#0ea5e9)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg></div>
+        </div>
+        <h4 data-cfg="solutions.items.3.t">企业服务</h4>
+        <p data-cfg="solutions.items.3.d">多品牌多技能组、SLA 服务保障、租户数据隔离</p>
+        <span class="sol-kpi">工单超时率下降 60%</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 客户案例 ──────────────────────────────────────────── -->
+<section class="container sec" id="cases">
+  <div class="sec-head reveal">
+    <div class="tag">CUSTOMERS</div>
+    <h2 data-cfg="cases.head">客服场景示例</h2>
+    <p data-cfg="cases.sub">通过示例了解接待、分流和质检在业务中的用法。</p>
+  </div>
+  <div class="case-grid">
+    <div class="case-card reveal">
+      <div class="stars">★★★★★</div>
+      <div class="quote" data-cfg="cases.items.0.quote">“接入机器人后 70% 的重复咨询被自动解决，客服团队终于能把精力放在真正重要的客户身上。”</div>
+      <div class="who"><span class="av" style="background:linear-gradient(135deg,#3b82f6,#06b6d4)">杭</span><div><b data-cfg="cases.items.0.company">杭州云智网络科技</b><span data-cfg="cases.items.0.role">客户成功负责人 · 企业版</span></div></div>
+    </div>
+    <div class="case-card reveal">
+      <div class="stars">★★★★★</div>
+      <div class="quote" data-cfg="cases.items.1.quote">“大促期间单日会话 3 万+ 零积压，机器人与人工无缝协同，满意度反而提升了 4 个点。”</div>
+      <div class="who"><span class="av" style="background:linear-gradient(135deg,#f59e0b,#ea580c)">深</span><div><b data-cfg="cases.items.1.company">深圳芯动科技</b><span data-cfg="cases.items.1.role">客服总监 · 企业版</span></div></div>
+    </div>
+    <div class="case-card reveal">
+      <div class="stars">★★★★★</div>
+      <div class="quote" data-cfg="cases.items.2.quote">“全量 AI 质检帮我们发现了大量话术合规隐患，培训闭环落地后投诉率下降 32%。”</div>
+      <div class="who"><span class="av" style="background:linear-gradient(135deg,#0ea5e9,#38bdf8)">上</span><div><b data-cfg="cases.items.2.company">上海启辰信息</b><span data-cfg="cases.items.2.role">运营负责人 · 专业版</span></div></div>
+    </div>
+  </div>
+</section>
+
+<div class="statband">
+  <div class="container" style="text-align:center;margin-bottom:12px">示例运营指标</div>
+  <div class="container grid">
+    <div class="reveal"><b><span data-cfg="statband.0.v">300</span><em data-cfg="statband.0.s">+</em></b><span data-cfg="statband.0.l">服务企业</span></div>
+    <div class="reveal"><b><span data-cfg="statband.1.v">1.2</span><em data-cfg="statband.1.s">亿</em></b><span data-cfg="statband.1.l">年服务会话</span></div>
+    <div class="reveal"><b><span data-cfg="statband.2.v">60</span><em data-cfg="statband.2.s">%</em></b><span data-cfg="statband.2.l">平均成本降低</span></div>
+    <div class="reveal"><b><span data-cfg="statband.3.v">97</span><em data-cfg="statband.3.s">%</em></b><span data-cfg="statband.3.l">客户满意度</span></div>
+  </div>
+</div>
+
+<!-- ── 定价（价格来自后端 /api/billing/public/plans，失败用配置/静态兜底） ── -->
+<section class="container sec" id="pricing">
+  <div class="sec-head reveal">
+    <div class="tag">PRICING</div>
+    <h2 data-cfg="pricing.head">简单透明的定价</h2>
+    <p data-cfg="pricing.sub">按需选择，随时升级，无隐藏费用</p>
+  </div>
+  <div class="price-toggle reveal">
+    <button class="pt-btn active" data-cycle="year" type="button">年付</button>
+    <button class="pt-btn" data-cycle="month" type="button">月付</button>
+    <span class="pt-save" data-cfg="pricing.saveNote">年付省 2 个月</span>
+  </div>
+  <!-- 静态兜底：与 plan 表 seed 一致，保证「后端没起 / 爬虫抓取」时也能看到价格 -->
+  <div class="price-grid" id="price-grid">
+    <div class="plan" data-plan-code="FREE">
+      <h4>免费版</h4>
+      <div class="desc">注册即试用，额度用完再升级</div>
+      <div class="price free"><span data-price-val>免费</span></div>
+      <ul>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>500 次/月机器人会话</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>2 个渠道 · 3 个坐席</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>100 次/月 AI 调用</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>1 GB 知识库存储</li>
+      </ul>
+      <a class="btn btn-outline btn-block" href="#" data-app-link="/register">免费开始</a>
+    </div>
+    <div class="plan" data-plan-code="STANDARD">
+      <h4>标准版</h4>
+      <div class="desc">小微团队日常客服</div>
+      <div class="price" data-price-y="¥5,980" data-price-m="¥598"><span data-price-val>¥5,980</span><small>/年</small></div>
+      <ul>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>5,000 次/月机器人会话</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>2 个渠道 · 5 个坐席</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>10 GB 存储 · 500 次 AI 调用</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>工单中心与客户 360</li>
+      </ul>
+      <a class="btn btn-outline btn-block" href="#" data-app-link="/register">选择标准版</a>
+    </div>
+    <div class="plan hot" data-plan-code="PROFESSIONAL">
+      <div class="rib">最受欢迎</div>
+      <h4>专业版</h4>
+      <div class="desc">成长型客服团队标配</div>
+      <div class="price" data-price-y="¥19,800" data-price-m="¥1,980"><span data-price-val>¥19,800</span><small>/年</small></div>
+      <ul>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>30,000 次/月机器人会话</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>全渠道 · 20 个坐席</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>全量 AI 质检 · 50 GB 存储</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>超量按 ¥9.9/千次计费</li>
+      </ul>
+      <a class="btn btn-primary btn-block" href="#" data-app-link="/register">立即开通</a>
+    </div>
+    <div class="plan" data-plan-code="ENTERPRISE">
+      <h4>企业版</h4>
+      <div class="desc">规模化与高合规场景</div>
+      <div class="price" data-price-y="¥59,800" data-price-m="¥5,980"><span data-price-val>¥59,800</span><small>/年</small></div>
+      <ul>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>200,000 次/月机器人会话</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>全渠道 · 100 个坐席 · 500 GB</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>全量质检 + 视觉识别（图片判读）</li>
+        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>独立库 / 私有化部署 · 专属客户成功</li>
+      </ul>
+      <a class="btn btn-outline btn-block" href="#" data-app-link="/register">联系我们</a>
+    </div>
+  </div>
+  <p class="price-note">* 价格取自后台「套餐」实时数据（未开通后端时展示内置兜底价），最终以控制台下单页为准。</p>
+</section>
+
+<!-- ── 常见问题 ──────────────────────────────────────────── -->
+<section class="container sec" id="faq">
+  <div class="sec-head reveal">
+    <div class="tag">FAQ</div>
+    <h2 data-cfg="faq.head">常见问题</h2>
+  </div>
+  <div class="faq reveal" id="faq-list">
+    <div class="faq-item">
+      <div class="faq-q">免费试用需要准备什么？<span class="pm">＋</span></div>
+      <div class="faq-a">注册企业账号并完善企业信息，通过审核后即可开通免费版试用，支持全功能体验，无需绑定支付方式。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">接入需要开发吗？<span class="pm">＋</span></div>
+      <div class="faq-a">网站渠道只需一行 SDK 代码；微信、小程序、App 等渠道提供接入文档与示例，通常 30 分钟内完成联调上线。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">数据安全如何保障？<span class="pm">＋</span></div>
+      <div class="faq-a">全链路加密传输与存储，等保三级与 GDPR 合规，租户数据行级隔离（数据库 RLS 兜底），支持私有化部署与专属密钥。</div>
+    </div>
+    <div class="faq-item">
+      <div class="faq-q">支持哪些支付和发票方式？<span class="pm">＋</span></div>
+      <div class="faq-a">支持支付宝、微信在线支付与对公转账，可开具增值税电子/专用发票，支付后可在「我的订单」自助申请。</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── 底部 CTA ──────────────────────────────────────────── -->
+<section class="container sec">
+  <div class="cta reveal">
+    <h2 data-cfg="cta.title">开始打造您的智能客服团队</h2>
+    <p data-cfg="cta.desc">免费试用，无需信用卡，随时升级或退出</p>
+    <div class="row">
+      <a class="btn btn-light btn-lg" href="#" data-app-link="/register" data-cfg="cta.btn1">免费试用</a>
+      <a class="btn btn-ghost-dark btn-lg" href="#demo" data-cfg="cta.btn2">查看产品演示</a>
+    </div>
+  </div>
+</section>
+
+<!-- ── 页脚 ──────────────────────────────────────────────── -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="brand">
+        <div class="fbrand">
+          <span class="mark">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </span>
+          <span class="brand-name">SupportFlow 智能客服</span>
+        </div>
+        <p data-cfg="footer.slogan">企业级 AI 客服平台，让 AI 接管重复咨询，让客服创造价值</p>
+      </div>
+      <div>
+        <h5>产品</h5>
+        <a href="#features">产品功能</a>
+        <a href="#product">产品演示</a>
+        <a href="#demo">实时体验</a>
+        <a href="#pricing">定价</a>
+        <a href="#" data-app-link="/register">免费试用</a>
+      </div>
+      <div>
+        <h5>资源</h5>
+        <a href="demo.html">访客端客服组件</a>
+        <a href="#faq">常见问题</a>
+        <a href="legal.html?t=terms">服务条款</a>
+        <a href="legal.html?t=privacy">隐私政策</a>
+      </div>
+      <div>
+        <h5>订阅产品动态</h5>
+        <p class="muted">获取新功能与行业洞察</p>
+        <form class="newsletter" id="subscribe-form" novalidate>
+          <input type="email" name="email" placeholder="输入工作邮箱" aria-label="工作邮箱" required />
+          <button class="btn btn-primary btn-sm" type="submit">订阅</button>
+        </form>
+      </div>
+    </div>
+    <div class="copy">
+      <span data-cfg="footer.copyright">© 2026 SupportFlow 智能客服 · 保留所有权利</span>
+      <span><span data-cfg="footer.icp">SupportFlow 项目演示</span> · <a href="legal.html?t=privacy">隐私政策</a> · <a href="legal.html?t=terms">服务条款</a></span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/js/site.js" defer></script>
+</body>
+</html>

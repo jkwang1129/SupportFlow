@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.tenant.mapper.AiQuotaMapper">
+
+    <!-- 配额视图：限额（tenant_quota）+ 企业名（enterprise）+ 租户状态（tenant）
+         用量不在这里查：真实调用次数在 AI 服务的 ai_usage_record 里，由它提供内部接口 -->
+    <select id="selectQuotaView" resultType="java.util.Map">
+        SELECT q.tenant_code                    AS tenant_code,
+               e.company_name                   AS company_name,
+               t.status                         AS tenant_status,
+               COALESCE(q.ai_daily_limit, 0)    AS ai_daily_limit,
+               COALESCE(q.daily_request_limit, 0) AS daily_request_limit,
+               COALESCE(q.enabled, FALSE)       AS quota_enabled
+          FROM tenant_quota q
+          LEFT JOIN tenant t ON t.tenant_code = q.tenant_code AND t.is_deleted = FALSE
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+         WHERE q.is_deleted = FALSE
+         ORDER BY q.ai_daily_limit DESC, q.tenant_code
+    </select>
+</mapper>

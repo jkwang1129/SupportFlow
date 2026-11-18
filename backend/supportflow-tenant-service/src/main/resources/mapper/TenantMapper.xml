@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.tenant.mapper.TenantMapper">
+
+    <!-- 查询指定日期前缀下最新租户编码（含逻辑删除，避免编码复用冲突） -->
+    <select id="findLatestCodeByDatePrefix" resultType="java.lang.String">
+        SELECT tenant_code
+          FROM tenant
+         WHERE tenant_code LIKE CONCAT(#{datePrefix}, '%')
+         ORDER BY tenant_code DESC
+         LIMIT 1
+    </select>
+
+</mapper>

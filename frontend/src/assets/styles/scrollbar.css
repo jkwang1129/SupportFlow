@@ -1,0 +1,79 @@
+/**
+ * 滚动条规范（聊天窗口 / 会话列表 / 侧边菜单统一用它）
+ *
+ * 大厂聊天窗口的滚动条长这样，而不是浏览器默认那条灰槽：
+ *   1. 细（6px 药丸），圆角，两侧留白 —— 用 border + background-clip 做"浮起的药丸"；
+ *   2. 轨道完全透明，平时几乎看不见，鼠标进入区域才变清楚，按住拖动更深；
+ *   3. 正在滚动时（.is-scrolling，由 useScrollFade 加）滑块再明显一档 ——
+ *      "用时出现、闲时隐去"，不跟内容抢注意力；
+ *   4. 预留滚动条位置（scrollbar-gutter: stable），消息一多不会左右抖一下；
+ *   5. overscroll-behavior: contain —— 滚到底不再把整页带着滚（聊天窗口该有的手感）；
+ *   6. Firefox 不认 ::-webkit-* 伪元素，用 scrollbar-width/color 给一档静态值兜底。
+ */
+
+.pro-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.3) transparent;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+
+.pro-scroll::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.pro-scroll::-webkit-scrollbar-track,
+.pro-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 3px 透明边框 + content-box 裁切：轨道 12px，看得见的只有中间 6px 药丸 */
+.pro-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(100, 116, 139, 0.18);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  transition: background-color 0.18s ease;
+}
+
+.pro-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(100, 116, 139, 0.34);
+}
+
+.pro-scroll.is-scrolling::-webkit-scrollbar-thumb {
+  background-color: rgba(100, 116, 139, 0.42);
+}
+
+.pro-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(71, 85, 105, 0.52);
+}
+
+.pro-scroll::-webkit-scrollbar-thumb:active {
+  background-color: rgba(51, 65, 85, 0.62);
+}
+
+/* 深色底（侧边菜单）用同一套结构，只换配色 */
+.pro-scroll--dark {
+  scrollbar-color: rgba(148, 163, 184, 0.3) transparent;
+}
+
+.pro-scroll--dark::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.22);
+}
+
+.pro-scroll--dark:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.42);
+}
+
+.pro-scroll--dark.is-scrolling::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.5);
+}
+
+.pro-scroll--dark::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(186, 200, 220, 0.6);
+}
+
+.pro-scroll--dark::-webkit-scrollbar-thumb:active {
+  background-color: rgba(203, 213, 225, 0.7);
+}

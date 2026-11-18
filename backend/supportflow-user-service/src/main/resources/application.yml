@@ -1,0 +1,72 @@
+server:
+  port: 9091
+
+spring:
+  application:
+    name: supportflow-user-service
+  datasource:
+    url: jdbc:postgresql://${SUPPORTFLOW_DB_HOST:127.0.0.1}:${SUPPORTFLOW_DB_PORT:5432}/${SUPPORTFLOW_USER_DB:user_db}
+    username: ${SUPPORTFLOW_DB_USER:supportflow}
+    password: ${SUPPORTFLOW_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+
+supportflow:
+  id:
+    worker-id: ${SUPPORTFLOW_WORKER_ID:1}
+  auth:
+    # JWT 签名密钥：生产环境必须通过环境变量覆盖，长度不小于 32 字节
+    jwt-secret: ${SUPPORTFLOW_JWT_SECRET}
+    # token 有效期（秒），默认 12 小时。
+    # 为什么不是 2 小时：坐席是在工作台里连着干活一整天（长连接 + 会话接待），
+    # 2 小时一过，长连接重连会被判"令牌无效或已过期"，而页面上看起来还登录着——
+    # 表现就是"后台登录没失效，但消息收不到了"。访客令牌本来就是 12 小时，两边对齐。
+    # 更彻底的做法是接入 refresh token 静默续期（令牌短期 + 定期换新），后面单独讲。
+    jwt-expire-seconds: ${SUPPORTFLOW_JWT_EXPIRE_SECONDS:43200}
+    # 验证码调试模式：仅本地联调时返回明文 code，生产必须置 false
+    captcha-debug: ${SUPPORTFLOW_CAPTCHA_DEBUG:true}
+    # 忘记密码验证码调试模式：默认关闭，仅在本地未配置 SMTP 需联调时用环境变量置 true
+    reset-code-debug: ${SUPPORTFLOW_RESET_CODE_DEBUG:false}
+    # 登录双因素验证码调试模式：默认关闭。开启后登录响应里会带 debugCode（明文验证码），
+    # 仅用于"本地没配 SMTP"时联调双因素链路，**生产必须保持 false**。
+    two-factor-code-debug: ${SUPPORTFLOW_TWO_FACTOR_CODE_DEBUG:false}
+    # 注册验证码调试模式：默认关闭。开启后 /auth/register/code 会带回 debugCode，
+    # 仅用于"本地没配 SMTP"时联调注册双重验证，**生产必须保持 false**。
+    register-code-debug: ${SUPPORTFLOW_REGISTER_CODE_DEBUG:false}
+  tenant:
+    # 租户服务内部接口地址（企业资料落库）
+    internal-base-url: ${SUPPORTFLOW_TENANT_INTERNAL_URL:http://127.0.0.1:9092}
+  ops:
+    # 运营服务内部接口地址：登录策略（失败锁定 / IP 白名单 / 双因素）从「安全中心」读
+    internal-base-url: ${SUPPORTFLOW_OPS_INTERNAL_URL:http://127.0.0.1:9095}
+  mail:
+    # 留空表示自动判断：配置了 MAIL_HOST/MAIL_USERNAME/MAIL_PASSWORD 即启用，否则跳过
+    enabled: ${SUPPORTFLOW_MAIL_ENABLED:}
+    host: ${MAIL_HOST:smtp.163.com}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    from-name: SupportFlow 智能客服
+    from-address: ${MAIL_USERNAME:}
+  member-invite:
+    # 邮件中的邀请链接前缀（本地开发为 Vite 地址，生产为客服控制台域名）
+    frontend-url: ${SUPPORTFLOW_MEMBER_FRONTEND_URL:http://localhost:5173}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: input

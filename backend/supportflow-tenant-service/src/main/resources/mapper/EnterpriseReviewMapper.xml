@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.tenant.mapper.EnterpriseReviewMapper">
+
+    <!-- 查询企业最新一条审核记录 -->
+    <select id="findLatestByEnterpriseId" resultType="io.supportflow.tenant.entity.EnterpriseReview">
+        SELECT id, enterprise_id, apply_no, version_no, applicant_id,
+               company_name, industry, scale, contact_name, contact_phone,
+               contact_email, license_no, register_address, legal_person,
+               license_file_id, status, reviewer_id, review_time, reject_reason,
+               submit_time, create_time, update_time, creator, editor, is_deleted
+          FROM enterprise_review
+         WHERE enterprise_id = #{enterpriseId} AND is_deleted = FALSE
+         ORDER BY version_no DESC
+         LIMIT 1
+    </select>
+
+    <!-- 查询企业当前申请版本号（不存在时为 1） -->
+    <select id="nextVersionNo" resultType="int">
+        SELECT COALESCE(MAX(version_no), 0) + 1
+          FROM enterprise_review
+         WHERE enterprise_id = #{enterpriseId} AND is_deleted = FALSE
+    </select>
+
+    <!-- 企业审核台分页查询 -->
+    <select id="selectReviewAdminPage" resultType="io.supportflow.tenant.admin.dto.ReviewPageVO">
+        SELECT CAST(r.id AS VARCHAR) AS id,
+               CAST(r.enterprise_id AS VARCHAR) AS enterprise_id,
+               e.enterprise_code,
+               e.tenant_code,
+               r.apply_no,
+               r.version_no,
+               CAST(r.applicant_id AS VARCHAR) AS applicant_id,
+               r.company_name,
+               r.industry,
+               r.scale,
+               r.contact_name,
+               r.contact_phone,
+               r.contact_email,
+               r.license_no,
+               r.register_address,
+               r.legal_person,
+               CAST(r.license_file_id AS VARCHAR) AS license_file_id,
+               r.status,
+               r.reject_reason,
+               CAST(r.reviewer_id AS VARCHAR) AS reviewer_id,
+               r.review_time,
+               r.submit_time,
+               e.status AS enterprise_status
+          FROM enterprise_review r
+          JOIN enterprise e ON e.id = r.enterprise_id AND e.is_deleted = FALSE
+         WHERE r.is_deleted = FALSE
+           <if test="status != null">
+               AND r.status = #{status}
+           </if>
+           <if test="keyword != null and keyword != ''">
+               AND (r.company_name LIKE CONCAT('%', #{keyword}, '%')
+                    OR r.apply_no LIKE CONCAT('%', #{keyword}, '%')
+                    OR r.contact_name LIKE CONCAT('%', #{keyword}, '%'))
+           </if>
+         ORDER BY r.submit_time DESC, r.id DESC
+    </select>
+
+</mapper>

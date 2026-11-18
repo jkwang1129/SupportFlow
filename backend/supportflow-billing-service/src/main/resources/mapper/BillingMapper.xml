@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.billing.mapper.BillingMapper">
+
+    <!-- 按天累加：唯一键 (tenant_code, stat_date) 保证重复上报只是累加 -->
+    <insert id="upsertUsage">
+        INSERT INTO billing_usage_daily (id, tenant_code, stat_date, sessions, messages,
+                                         ai_calls, seats, storage_gb, create_time, update_time)
+        VALUES (#{id}, #{tenantCode}, #{statDate}, #{sessions}, #{messages},
+                #{aiCalls}, #{seats}, #{storageGb}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT (tenant_code, stat_date) DO UPDATE
+           SET sessions   = billing_usage_daily.sessions + EXCLUDED.sessions,
+               messages   = billing_usage_daily.messages + EXCLUDED.messages,
+               ai_calls   = billing_usage_daily.ai_calls + EXCLUDED.ai_calls,
+               seats      = GREATEST(billing_usage_daily.seats, EXCLUDED.seats),
+               storage_gb = GREATEST(billing_usage_daily.storage_gb, EXCLUDED.storage_gb),
+               update_time = CURRENT_TIMESTAMP
+    </insert>
+
+    <!-- 账期合计：sessions/messages/ai_calls 求和，seats 取峰值、storage 取峰值 -->
+    <select id="sumUsage" resultType="java.util.Map">
+        SELECT COALESCE(SUM(u.sessions), 0)    AS sessions,
+               COALESCE(SUM(u.messages), 0)    AS messages,
+               COALESCE(SUM(u.ai_calls), 0)    AS ai_calls,
+               COALESCE(MAX(u.seats), 0)       AS seats,
+               COALESCE(MAX(u.storage_gb), 0)  AS storage_gb,
+               COUNT(1)                        AS days
+          FROM billing_usage_daily u
+         WHERE u.tenant_code = #{tenantCode}
+           AND u.stat_date &gt;= #{from}
+           AND u.stat_date &lt;= #{to}
+    </select>
+
+    <select id="selectUsageDaily" resultType="java.util.Map">
+        SELECT u.stat_date AS stat_date, u.sessions, u.messages, u.ai_calls, u.seats, u.storage_gb
+          FROM billing_usage_daily u
+         WHERE u.tenant_code = #{tenantCode}
+           AND u.stat_date &gt;= #{from}
+           AND u.stat_date &lt;= #{to}
+         ORDER BY u.stat_date
+    </select>
+
+    <select id="latestSeats" resultType="java.lang.Integer">
+        SELECT u.seats
+          FROM billing_usage_daily u
+         WHERE u.tenant_code = #{tenantCode}
+         ORDER BY u.stat_date DESC
+         LIMIT 1
+    </select>
+
+    <select id="selectStatements" resultType="io.supportflow.billing.entity.BillingStatement">
+        SELECT * FROM billing_statement s
+         WHERE s.is_deleted = FALSE
+        <if test="tenantCode != null and tenantCode != ''">
+           AND s.tenant_code = #{tenantCode}
+        </if>
+        <if test="cycleKey != null and cycleKey != ''">
+           AND s.cycle_key = #{cycleKey}
+        </if>
+        <if test="status != null">
+           AND s.status = #{status}
+        </if>
+         ORDER BY s.cycle_key DESC, s.id DESC
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countStatements" resultType="long">
+        SELECT COUNT(1) FROM billing_statement s
+         WHERE s.is_deleted = FALSE
+        <if test="tenantCode != null and tenantCode != ''">
+           AND s.tenant_code = #{tenantCode}
+        </if>
+        <if test="cycleKey != null and cycleKey != ''">
+           AND s.cycle_key = #{cycleKey}
+        </if>
+        <if test="status != null">
+           AND s.status = #{status}
+        </if>
+    </select>
+
+    <select id="selectStatementOverview" resultType="java.util.Map">
+        SELECT COUNT(1)                                                  AS statements,
+               COALESCE(SUM(s.total_amount), 0)                          AS total_amount,
+               COALESCE(SUM(s.total_amount) FILTER (WHERE s.status = 2), 0) AS settled_amount,
+               COALESCE(SUM(s.total_amount) FILTER (WHERE s.status = 1), 0) AS pending_amount,
+               COUNT(1) FILTER (WHERE s.status = 3)                      AS overdue_count
+          FROM billing_statement s
+         WHERE s.is_deleted = FALSE
+           AND s.cycle_key = #{cycleKey}
+    </select>
+
+    <!-- 本账期真实收到的钱：按**支付时间**落在账期内的已支付订单汇总。
+         （订单状态 2 = 已支付；预付费走订单，账期账单只承载后付费的超量费） -->
+    <select id="selectPaymentOverview" resultType="java.util.Map">
+        SELECT COUNT(1)                          AS paid_orders,
+               COALESCE(SUM(o.amount), 0)        AS paid_amount
+          FROM billing_order o
+         WHERE o.is_deleted = FALSE
+           AND o.status = 2
+           AND o.pay_time IS NOT NULL
+           AND to_char(o.pay_time, 'YYYY-MM') = #{cycleKey}
+    </select>
+
+    <!-- ============ 订单 / 收款流水 ============
+         列表、计数、金额合计共用这一段过滤条件：口径必须一致，
+         否则会出现"列表 3 条、合计按 5 条算"这种对不上账的情况。
+         cycleKey 按**支付时间**所在月份筛（不是下单时间）。 -->
+    <sql id="orderFilters">
+        o.is_deleted = FALSE
+        <if test="tenantCode != null and tenantCode != ''">
+            AND o.tenant_code = #{tenantCode}
+        </if>
+        <if test="status != null">
+            AND o.status = #{status}
+        </if>
+        <if test="planId != null">
+            AND o.plan_id = #{planId}
+        </if>
+        <if test="payCycle != null">
+            AND o.cycle = #{payCycle}
+        </if>
+        <if test="payMethod != null">
+            AND o.pay_method = #{payMethod}
+        </if>
+        <if test="cycleKey != null and cycleKey != ''">
+            AND to_char(o.pay_time, 'YYYY-MM') = #{cycleKey}
+        </if>
+        <if test="payFrom != null and payFrom != ''">
+            AND o.pay_time &gt;= #{payFrom}::timestamp
+        </if>
+        <if test="payTo != null and payTo != ''">
+            AND o.pay_time &lt; (#{payTo}::timestamp + INTERVAL '1 day')
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (o.order_no ILIKE '%' || #{keyword} || '%'
+                 OR o.tenant_code ILIKE '%' || #{keyword} || '%')
+        </if>
+    </sql>
+
+    <!-- 收款流水列表：按支付时间倒序（没支付的排最后，它们是待付款单） -->
+    <select id="selectOrders" resultType="io.supportflow.billing.entity.BillingOrder">
+        SELECT * FROM billing_order o
+         WHERE <include refid="orderFilters"/>
+         ORDER BY o.pay_time DESC NULLS LAST, o.id DESC
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countOrders" resultType="long">
+        SELECT COUNT(1) FROM billing_order o
+         WHERE <include refid="orderFilters"/>
+    </select>
+
+    <select id="sumOrders" resultType="java.math.BigDecimal">
+        SELECT COALESCE(SUM(o.amount), 0) FROM billing_order o
+         WHERE <include refid="orderFilters"/>
+    </select>
+
+    <select id="selectPlanDistribution" resultType="java.util.Map">
+        SELECT COALESCE(s.plan_name, '未开通套餐') AS name,
+               COUNT(1)                           AS cnt,
+               COALESCE(SUM(s.total_amount), 0)   AS amount
+          FROM billing_statement s
+         WHERE s.is_deleted = FALSE
+           AND s.cycle_key = #{cycleKey}
+         GROUP BY 1
+         ORDER BY cnt DESC
+    </select>
+
+    <select id="selectPlans" resultType="io.supportflow.billing.entity.Plan">
+        SELECT * FROM plan p
+         WHERE p.is_deleted = FALSE AND p.is_enabled = TRUE
+         ORDER BY p.price_monthly
+    </select>
+
+</mapper>

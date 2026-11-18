@@ -1,0 +1,119 @@
+server:
+  port: 9093
+
+spring:
+  application:
+    name: supportflow-customer-service
+  servlet:
+    multipart:
+      # 上传类接口（聊天图片 / 机器人头像 / 知识库文档 / 营业执照）统一放到 10MB。
+      # Spring 默认只有 1MB——真实图片一超就被容器层挡掉，报的还是 MaxUploadSizeExceededException，
+      # 看不出"是哪张图太大"；这里放宽后用各接口自己的校验给出可读提示（头像 2MB、聊天图片可配）。
+      max-file-size: ${SUPPORTFLOW_UPLOAD_MAX_FILE:10MB}
+      max-request-size: ${SUPPORTFLOW_UPLOAD_MAX_REQUEST:12MB}
+  datasource:
+    url: jdbc:postgresql://${SUPPORTFLOW_DB_HOST:127.0.0.1}:${SUPPORTFLOW_DB_PORT:5432}/${SUPPORTFLOW_CUSTOMER_DB:customer_db}
+    username: ${SUPPORTFLOW_DB_USER:supportflow}
+    password: ${SUPPORTFLOW_DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+
+supportflow:
+  wechat:
+    # 微信开放接口地址：默认官方地址；自检时指向本地假微信服务器，验证"请求体怎么拼、错误码怎么翻译"
+    api-base: ${SUPPORTFLOW_WECHAT_API_BASE:https://api.weixin.qq.com}
+  mail:
+    # 邮件工单「方案A：平台直连企业邮箱」的收信参数按**渠道**配置
+    # （控制台「渠道接入 → 邮件工单 → 原生接入配置」里的 IMAP 各项），每个租户配自己的邮箱、互不影响。
+    # 这里只留部署级的轮询节奏。
+    inbound:
+      # 轮询间隔（毫秒），默认 60 秒
+      interval-ms: ${SUPPORTFLOW_MAIL_INBOUND_INTERVAL_MS:60000}
+      # 单个渠道单次最多处理多少封（防止首次接入时把历史未读一次性拉爆）
+      max-per-round: ${SUPPORTFLOW_MAIL_INBOUND_MAX:20}
+
+  auth:
+    jwt-secret: ${SUPPORTFLOW_JWT_SECRET}
+  tenant:
+    # 行级安全兜底：每次借出数据库连接时把当前登录租户写进 app.tenant_code，
+    # 配合 schema/customer_db_rls.sql 的 RLS 策略（漏写 WHERE tenant_code 也查不到别人的数据）。
+    # 关掉它系统照常运行，但就只剩"应用层自觉过滤"这一道防线了。
+    rls-enabled: ${SUPPORTFLOW_TENANT_RLS_ENABLED:true}
+  user:
+    internal-base-url: ${SUPPORTFLOW_USER_INTERNAL_URL:http://127.0.0.1:9091}
+  ops:
+    # ops-service 内部接口地址：导出审批（申请 / 校验 / 下载前消费）与开放 API 密钥校验
+    # 都走它。与 user / billing 两处保持同一套写法，本地起临时实例时可以直接用环境变量指过去。
+    internal-base-url: ${SUPPORTFLOW_OPS_INTERNAL_URL:http://127.0.0.1:9095}
+  billing:
+    # billing-service 内部接口地址：会话 / 消息 / AI 调用 / 席位 / 存储 这些业务用量报给它计费
+    internal-base-url: ${SUPPORTFLOW_BILLING_INTERNAL_URL:http://127.0.0.1:9094}
+    # 用量上报周期（毫秒）：增量在内存里累计，默认 1 分钟报一次
+    usage-report-ms: ${SUPPORTFLOW_USAGE_REPORT_MS:60000}
+  file:
+    storage:
+      # 平台所有附件统一上传到 RustFS（MinIO / S3 兼容），不再支持本地磁盘存储
+      rustfs:
+        # 与企业知识库项目共用同一套 RustFS（配置口径保持一致）
+        endpoint: ${SUPPORTFLOW_RUSTFS_ENDPOINT:127.0.0.1}
+        port: ${SUPPORTFLOW_RUSTFS_PORT:9000}
+        access-key: ${SUPPORTFLOW_RUSTFS_ACCESS_KEY:SUPPORTFLOWLOCAL}
+        secret-key: ${SUPPORTFLOW_RUSTFS_SECRET_KEY:supportflow-local-storage}
+        bucket: ${SUPPORTFLOW_RUSTFS_BUCKET:supportflow}
+        secure: ${SUPPORTFLOW_RUSTFS_SECURE:false}
+        connect-timeout: ${SUPPORTFLOW_RUSTFS_CONNECT_TIMEOUT:30000}
+        read-timeout: ${SUPPORTFLOW_RUSTFS_READ_TIMEOUT:60000}
+        write-timeout: ${SUPPORTFLOW_RUSTFS_WRITE_TIMEOUT:60000}
+        max-connections: ${SUPPORTFLOW_RUSTFS_MAX_CONNECTIONS:50}
+      max-size: ${SUPPORTFLOW_FILE_MAX_SIZE:10485760}
+  ai:
+    # supportflow-ai AI 服务地址（质检初检由 Python AI 中心执行）
+    qa-base-url: ${SUPPORTFLOW_AI_QA_URL:http://127.0.0.1:9100}
+    # 知识库（解析 / 切块 / 向量化 / 检索）也在 supportflow-ai 里，默认同一个地址
+    kb-base-url: ${SUPPORTFLOW_AI_KB_URL:http://127.0.0.1:9100}
+    # AI 客服大脑（意图识别 / 情绪识别 / 多轮对话 / 转人工决策）也在 supportflow-ai 里
+    bot-base-url: ${SUPPORTFLOW_AI_BOT_URL:http://127.0.0.1:9100}
+    # 图片识别（OCR / 截图判读，走千问 VL）也在 supportflow-ai 里
+    vision-base-url: ${SUPPORTFLOW_AI_VISION_URL:http://127.0.0.1:9100}
+    # 视觉识别比文本慢：要传图、要"看图说话"，超时给宽一点
+    vision-timeout-seconds: ${SUPPORTFLOW_AI_VISION_TIMEOUT:90}
+    # 语音识别 / 语音合成（阿里云 NLS，收口在 supportflow-ai）也在同一个服务里：
+    # 录音转写走 ASR、IVR 播报音频走 TTS
+    speech-base-url: ${SUPPORTFLOW_AI_SPEECH_URL:http://127.0.0.1:9100}
+    # 录音转写要下载 + 上传，超时比文本宽一点；太慢的任务会异步失败并写明原因
+    speech-timeout-seconds: ${SUPPORTFLOW_AI_SPEECH_TIMEOUT:60}
+    # 单条录音最大多少 MB：超过就不下载（话务侧偶尔会推几十分钟的整通录音）
+    speech-max-audio-mb: ${SUPPORTFLOW_AI_SPEECH_MAX_AUDIO_MB:10}
+    # 大脑一次要"识别 + 检索 + 生成"，比单次问答慢，超时给宽一点
+    bot-timeout-seconds: ${SUPPORTFLOW_AI_BOT_TIMEOUT:60}
+    # 是否打印 AI 调用的完整入参/出参（排障用；生产环境可置 false 降低日志量）
+    log-payload: ${SUPPORTFLOW_AI_LOG_PAYLOAD:false}
+  bot:
+    # 机器人总开关：关掉就退回老流程（访客进线直接进人工队列）
+    enabled: ${SUPPORTFLOW_BOT_ENABLED:true}
+    # 是否由机器人首轮接待（关闭=进线直接排队等人工，但客户主动问时仍可用知识助手）
+    reception-enabled: ${SUPPORTFLOW_BOT_RECEPTION_ENABLED:true}
+    # 问答时召回的知识切片条数
+    top-k: ${SUPPORTFLOW_BOT_TOP_K:5}
+  chat:
+    # 客户发的聊天图片大小上限（MB）：图片会先压缩再送视觉模型，这里只挡"离谱的大文件"
+    image-max-mb: ${SUPPORTFLOW_CHAT_IMAGE_MAX_MB:8}
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    banner: false
+    db-config:
+      id-type: input
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

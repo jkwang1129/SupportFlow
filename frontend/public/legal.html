@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>服务协议 · SupportFlow 智能客服</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-strong: #1d4ed8;
+            --primary-soft: #eff6ff;
+            --text-1: #0f172a;
+            --text-2: #475569;
+            --text-3: #94a3b8;
+            --border: #e6e8ef;
+            --bg: #f5f6f8;
+        }
+        * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; }
+        body {
+            font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text-1);
+            line-height: 1.8;
+            font-size: 14px;
+            -webkit-font-smoothing: antialiased;
+        }
+        .lg-top {
+            position: sticky; top: 0; z-index: 20;
+            height: 60px;
+            display: flex; align-items: center; gap: 18px;
+            padding: 0 28px;
+            background: rgba(255,255,255,.94);
+            backdrop-filter: blur(10px);
+            border-bottom: 1px solid var(--border);
+        }
+        .lg-brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; color: var(--text-1); }
+        .lg-mark {
+            width: 28px; height: 28px; border-radius: 8px;
+            background: linear-gradient(135deg, #1d4ed8, #38bdf8);
+            color: #fff; font-size: 13px; font-weight: 800;
+            display: inline-flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 12px rgba(37,99,235,.25);
+        }
+        .lg-nav { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+        .lg-nav a, .lg-back {
+            color: var(--text-2); text-decoration: none; font-size: 13px;
+            padding: 7px 12px; border-radius: 8px; transition: all .18s;
+            border: none; background: none; cursor: pointer; font-family: inherit;
+        }
+        .lg-nav a:hover, .lg-back:hover { background: var(--primary-soft); color: var(--primary); }
+        .lg-nav a.active { color: var(--primary); font-weight: 600; }
+        .lg-wrap { max-width: 860px; margin: 0 auto; padding: 28px 22px 70px; }
+        .lg-paper {
+            background: #fff; border: 1px solid var(--border); border-radius: 16px;
+            box-shadow: 0 18px 50px rgba(15,23,42,.06); padding: 40px 52px;
+        }
+        .doc-head { border-bottom: 2px solid var(--primary); padding-bottom: 20px; margin-bottom: 26px; }
+        .doc-title { font-size: 26px; font-weight: 800; color: var(--text-1); margin: 0; }
+        .doc-meta { font-size: 12.5px; color: var(--text-3); margin-top: 10px; }
+        h2 {
+            font-size: 18px; font-weight: 700; color: var(--primary-strong);
+            margin: 34px 0 12px; padding-left: 12px; border-left: 4px solid var(--primary);
+        }
+        h3 { font-size: 15px; font-weight: 600; color: var(--text-1); margin: 22px 0 8px; }
+        p { color: var(--text-2); margin: 10px 0; text-align: justify; }
+        ul, ol { padding-left: 24px; color: var(--text-2); margin: 8px 0; }
+        li { margin: 6px 0; }
+        .block-tip {
+            background: var(--primary-soft); border: 1px solid #dbeafe; border-radius: 10px;
+            color: var(--text-2); padding: 12px 16px; font-size: 13px; margin: 16px 0;
+        }
+        .doc-foot { margin-top: 30px; padding-top: 18px; border-top: 1px dashed var(--border); font-size: 12.5px; color: var(--text-3); }
+        .lg-footer {
+            text-align: center; color: var(--text-3); font-size: 12px;
+            padding: 22px 20px 40px;
+        }
+        .lg-footer a { color: var(--primary); text-decoration: none; }
+        @media (max-width: 720px) {
+            .lg-paper { padding: 26px 20px; }
+            .lg-top { padding: 0 14px; gap: 10px; }
+            .lg-nav a { padding: 6px 8px; }
+        }
+    </style>
+</head>
+<body>
+<header class="lg-top">
+    <div class="lg-brand"><span class="lg-mark">云</span>SupportFlow 智能客服</div>
+    <nav class="lg-nav">
+        <a id="nav-terms" href="legal.html?t=terms">服务协议</a>
+        <a id="nav-privacy" href="legal.html?t=privacy">隐私政策</a>
+        <button class="lg-back" onclick="goBack()">← 返回</button>
+    </nav>
+</header>
+
+<main class="lg-wrap">
+    <!-- ============ 服务协议 ============ -->
+    <article class="lg-paper" id="doc-terms">
+        <div class="doc-head">
+            <h1 class="doc-title">SupportFlow 智能客服平台服务协议（演示）</h1>
+            <div class="doc-meta">版本号：V1.0.0　|　生效日期：2026 年 9 月 1 日　|　适用主体：SupportFlow 智能客服平台（以下简称“本平台”或“SupportFlow”）</div>
+        </div>
+        <div class="block-tip">欢迎使用SupportFlow 智能客服。请在使用本服务前仔细阅读本协议全部内容，特别是以加粗形式展示的条款。您点击“同意并提交”或开始使用本服务，即视为您已阅读、理解并同意受本协议约束。</div>
+
+        <h2>一、定义</h2>
+        <p>1.1 <b>本平台</b>：指由SupportFlow 运营的、面向企业客户提供智能客服 SaaS 服务的软件即服务平台，包括管理后台、客服工作台、渠道接入组件、机器人服务、知识库、质检与数据分析等功能。</p>
+        <p>1.2 <b>企业用户</b>：指通过注册并经审核开通的企事业单位及其他组织（含其授权管理员与坐席成员），以下简称“您”或“企业”。</p>
+        <p>1.3 <b>终端用户</b>：指通过网站、小程序、App、公众号等渠道向企业咨询的最终消费者。</p>
+        <p>1.4 <b>服务数据</b>：指企业及终端用户在使用服务过程中产生的会话记录、客户信息、知识文档、质检结果、统计报表等数据。</p>
+
+        <h2>二、服务内容</h2>
+        <p>2.1 SupportFlow 为企业提供多渠道接入、智能机器人问答、人工坐席工作台、知识库管理、会话质检、客户与工单管理、统计分析与开放接口等在线服务，具体以您订购的版本与页面展示的功能为准。</p>
+        <p>2.2 本平台可能根据业务发展调整或新增功能。对于涉及核心功能下线或重大变更的，本平台将通过站内通知、邮件等合理方式提前告知。</p>
+        <p>2.3 大模型问答、语义识别等 AI 输出结果仅为辅助建议，不构成对最终结果的承诺。企业应对 AI 生成内容的准确性进行必要核验，并对其在业务场景中的使用承担相应责任。</p>
+
+        <h2>三、账号注册与企业开通</h2>
+        <p>3.1 企业申请开通服务时，应提供真实、准确、完整的企业信息与管理员信息，包括企业名称、统一社会信用代码、营业执照、注册地址、法定代表人及联系方式等。</p>
+        <p>3.2 企业提交资料后，本平台将进行实名与资质审核。审核通过后为企业开通独立的数据空间与租户环境；审核未通过的，企业可依据驳回原因修改后重新提交。</p>
+        <p>3.3 企业应对其账号下的全部行为负责，包括管理员账号分配、坐席成员管理、密码与密钥保管。因企业保管不善导致账号或渠道密钥泄露的，由企业自行承担责任。</p>
+        <p>3.4 企业账号仅供企业内部人员使用，不得转让、出借、出租或用于与本平台无关的用途。</p>
+
+        <h2>四、数据归属与多租户隔离</h2>
+        <p>4.1 企业上传、录入或通过本服务生成的企业业务数据，其知识产权及合法权益归企业所有；本平台仅在提供服务所必需的范围内处理上述数据。</p>
+        <p>4.2 本平台采用多租户架构，通过租户标识、权限控制、数据隔离策略等手段确保不同企业的数据相互隔离。未经企业授权，本平台不会在租户之间共享业务数据。</p>
+        <p>4.3 企业不得利用本服务收集、处理法律法规禁止的信息，不得将本服务用于侵犯第三方合法权益的活动。</p>
+
+        <h2>五、费用与订单</h2>
+        <p>5.1 本服务分为免费版与付费企业版，具体版本权益、计费方式与价格以订购页面及订单信息为准。</p>
+        <p>5.2 付费服务自订单支付并开通之日起计算有效期。有效期届满前，企业可选择续费；逾期未续费的，本平台有权按约定暂停或终止付费功能。</p>
+        <p>5.3 企业如需变更版本或增购坐席、存储等资源，可通过订单流程完成，差价及费用按实际订购结算。</p>
+
+        <h2>六、使用规范与禁止事项</h2>
+        <p>6.1 企业承诺遵守法律法规及本协议，正当使用本平台，不得从事下列行为：</p>
+        <ul>
+            <li>利用本服务实施或协助实施欺诈、赌博、色情、传销等违法犯罪活动；</li>
+            <li>传输、存储违法信息，或未经授权收集、处理个人信息；</li>
+            <li>对平台系统进行反向工程、破解、攻击或干扰，包括但不限于注入、扫描、越权访问；</li>
+            <li>未经许可抓取、爬取、批量复制平台数据；</li>
+            <li>将本服务转售、转租或提供给非授权主体使用；</li>
+            <li>其他违反法律法规或损害平台及第三方合法权益的行为。</li>
+        </ul>
+        <p>6.2 企业发现其账号下存在上述行为的，应及时制止并采取补救措施；情节严重的，本平台有权暂停服务并依法向有关部门报告。</p>
+
+        <h2>七、知识产权</h2>
+        <p>7.1 本平台及其软件、界面、商标、文档等相关的知识产权归本平台或相应权利人所有。</p>
+        <p>7.2 企业授予本平台一项非独占、可随服务存续的许可，用于为提供服务之目的处理、存储及展示企业上传的资料；本协议终止后，该许可随之终止。</p>
+
+        <h2>八、个人信息的保护</h2>
+        <p>8.1 本平台处理企业及终端用户个人信息时将遵守《中华人民共和国个人信息保护法》等法律法规，具体处理规则详见《隐私政策》。</p>
+        <p>8.2 企业作为个人信息处理者或受托处理者，应确保其信息收集与使用具有合法基础，并配合终端用户行使个人信息相关权利。</p>
+
+        <h2>九、服务可用性与责任限制</h2>
+        <p>9.1 本平台将尽商业上合理的努力保障服务稳定运行，但不对因不可抗力、第三方网络故障、企业自身设备或配置原因导致的服务中断承担责任。</p>
+        <p>9.2 在法律允许的最大范围内，本平台因本协议或服务产生的累计赔偿责任不超过企业近十二个月实际支付的服务费用总额。</p>
+        <p>9.3 本平台不对 AI 生成内容的准确性、完整性作任何明示或默示保证；企业应结合业务场景自行判断。</p>
+
+        <h2>十、协议变更与终止</h2>
+        <p>10.1 本平台可根据法律法规或业务变化修改本协议，修改后将通过页面公告或站内通知等方式告知。若您不同意修改后的协议，应停止使用本服务；继续使用视为接受修改。</p>
+        <p>10.2 出现下列情形时，本平台有权终止服务并删除或按约定处理相关数据：企业严重违反本协议、存在违法行为、未按期支付费用且经催告仍未支付等。</p>
+        <p>10.3 服务终止后，企业可在约定期限内导出自身业务数据；逾期未导出的，本平台将按数据保留策略处理。</p>
+
+        <h2>十一、适用法律与争议解决</h2>
+        <p>11.1 本协议的订立、效力、解释与争议解决均适用中华人民共和国法律。</p>
+        <p>11.2 因本协议产生的争议，双方应友好协商解决；协商不成的，任何一方可向本平台运营主体所在地有管辖权的人民法院提起诉讼。</p>
+
+        <h2>十二、联系我们</h2>
+        <p>如您对本协议有任何疑问，可通过以下方式联系我们：<br>
+            官方邮箱：legal@supportflow.example.com<br>
+            服务时间：工作日 9:00 - 18:00（北京时间）</p>
+
+        <div class="doc-foot">© 2026 SupportFlow 智能客服平台 保留所有权利。本文档为产品演示版本，正式上线前请补充实际运营主体资质信息并经法务审核。</div>
+    </article>
+
+    <!-- ============ 隐私政策 ============ -->
+    <article class="lg-paper" id="doc-privacy" hidden>
+        <div class="doc-head">
+            <h1 class="doc-title">SupportFlow 智能客服平台隐私政策（演示）</h1>
+            <div class="doc-meta">版本号：V1.0.0　|　更新日期：2026 年 9 月 1 日　|　生效日期：2026 年 9 月 1 日</div>
+        </div>
+        <div class="block-tip">本政策适用于SupportFlow 智能客服平台向企业客户提供的全部服务。我们深知个人信息对您的重要性，将严格按照法律法规要求，采取相应安全保护措施保护您的个人信息。</div>
+
+        <h2>一、我们收集的信息</h2>
+        <p>1.1 在您注册账号、开通服务或使用产品过程中，我们可能收集以下信息：</p>
+        <ul>
+            <li><b>账号信息</b>：企业名称、管理员姓名、手机号、邮箱、密码密文、用户编号等；</li>
+            <li><b>企业资质信息</b>：统一社会信用代码、营业执照、注册地址、法定代表人信息等，仅用于实名审核与合规管理；</li>
+            <li><b>服务数据</b>：会话记录、客户资料、工单、知识库文档、质检记录等由企业或终端用户在业务过程中产生的数据；</li>
+            <li><b>日志与设备信息</b>：访问时间、操作日志、IP 地址、设备类型、浏览器信息等，用于安全审计与服务优化。</li>
+        </ul>
+        <p>1.2 您理解并同意，企业通过本平台自行配置客服机器人、知识库等内容时，应确保处理个人信息具备合法基础，并已履行告知同意义务。</p>
+
+        <h2>二、我们如何使用信息</h2>
+        <p>2.1 我们仅在下列目的范围内使用所收集的信息：</p>
+        <ul>
+            <li>创建与管理账号、完成企业审核与租户开通；</li>
+            <li>提供客服会话、机器人应答、知识检索、质检分析等核心功能；</li>
+            <li>保障账号与系统安全，监测、防范网络攻击与异常访问；</li>
+            <li>提供账单、发票、续费与售后服务；</li>
+            <li>在取得单独同意的前提下开展个性化推荐或产品调研。</li>
+        </ul>
+        <p>2.2 我们不会将个人信息用于与本政策未载明的其他用途，除非事先取得您的单独同意或法律另有规定。</p>
+
+        <h2>三、Cookie 与本地存储</h2>
+        <p>3.1 为保障登录状态与基本功能，我们使用 Cookie 或浏览器本地存储保存会话令牌、界面偏好等信息。</p>
+        <p>3.2 您可以清除或禁用 Cookie，但可能导致部分功能无法正常使用。</p>
+
+        <h2>四、信息的共享与委托处理</h2>
+        <p>4.1 我们不会出售您的个人信息。</p>
+        <p>4.2 为实现服务所必需，我们可能委托云服务商、短信与邮件服务商等第三方处理部分信息。我们会与其签署数据处理协议，并通过合同约束其仅在授权范围内处理。</p>
+        <p>4.3 在下列情形下，我们可能依法对外提供信息：取得您的单独同意；根据法律法规或有权机关要求；为维护您或他人的合法权益所必需；企业合并、分立、收购等情形下的依法转移。</p>
+
+        <h2>五、信息的存储</h2>
+        <p>5.1 我们存储在中国境内的服务器上。未经您的单独同意或具备法律允许的其他合法基础，我们不会将个人信息传输至境外。</p>
+        <p>5.2 我们仅在实现处理目的所必需的期限内保留个人信息，法律法规另有规定的除外。服务终止后，企业可在导出期内导出业务数据，导出期结束后将按策略删除或匿名化处理。</p>
+
+        <h2>六、数据安全措施</h2>
+        <p>6.1 我们采用以下技术与管理措施保护个人信息：</p>
+        <ul>
+            <li>传输层加密（TLS）与敏感字段加密存储；</li>
+            <li>基于多租户的数据隔离与最小权限访问控制；</li>
+            <li>操作审计日志与异常行为监控；</li>
+            <li>定期数据备份、应急预案与安全演练；</li>
+            <li>对可能接触个人信息的员工进行权限管控与保密约束。</li>
+        </ul>
+        <p>6.2 如不幸发生个人信息安全事件，我们将按照法律法规要求及时告知您，并向有关主管部门报告。</p>
+
+        <h2>七、您的权利</h2>
+        <p>7.1 依据法律法规，您可以对您的个人信息行使以下权利：</p>
+        <ul>
+            <li><b>查询与访问</b>：通过个人中心查看账号资料；</li>
+            <li><b>更正与补充</b>：修改企业资料、联系方式等不准确或不完整的信息；</li>
+            <li><b>删除</b>：在符合法定条件时申请删除相关信息；</li>
+            <li><b>撤回同意</b>：撤回您此前作出的授权，撤回不影响撤回前处理的合法性；</li>
+            <li><b>注销账号</b>：通过企业注销流程终止服务并处理数据；</li>
+            <li><b>投诉举报</b>：向监管机构投诉或举报。</li>
+        </ul>
+        <p>7.2 如您是终端用户，需要行使上述权利，请联系为您提供服务的对应企业，或通过本政策联系方式联系我们协助转达。</p>
+
+        <h2>八、未成年人保护</h2>
+        <p>8.1 本平台面向企业客户提供服务，不面向未成年人。如您为未成年人，请在监护人指导下使用，并由监护人同意相关处理活动。</p>
+        <p>8.2 如我们发现在未事先获得监护人同意的情况下收集了未成年人个人信息，将设法尽快删除。</p>
+
+        <h2>九、政策更新</h2>
+        <p>9.1 我们可能适时修订本政策。重大变更将通过页面公告、站内通知等方式显著提示。</p>
+        <p>9.2 修订后的政策自发布或提示的生效日期起适用。您继续使用服务即视为接受修订后的政策。</p>
+
+        <h2>十、联系我们</h2>
+        <p>如您对本政策或个人信息保护有任何疑问、意见或建议，可通过以下方式联系我们：<br>
+            官方邮箱：privacy@supportflow.example.com<br>
+            服务时间：工作日 9:00 - 18:00（北京时间）<br>
+            我们将在收到请求后十五个工作日内回复。</p>
+
+        <div class="doc-foot">© 2026 SupportFlow 智能客服平台 保留所有权利。本文档为产品演示版本，正式上线前请补充实际运营主体资质信息并经法务审核。</div>
+    </article>
+</main>
+
+<footer class="lg-footer">
+    © 2026 SupportFlow 智能客服平台 · <a href="legal.html?t=terms">服务协议</a> · <a href="legal.html?t=privacy">隐私政策</a>
+</footer>
+
+<script>
+    function currentDoc() {
+        const t = new URLSearchParams(location.search).get('t');
+        return t === 'privacy' ? 'privacy' : 'terms';
+    }
+    function render() {
+        const doc = currentDoc();
+        const terms = document.getElementById('doc-terms');
+        const privacy = document.getElementById('doc-privacy');
+        const navTerms = document.getElementById('nav-terms');
+        const navPrivacy = document.getElementById('nav-privacy');
+        if (doc === 'privacy') {
+            terms.hidden = true;
+            privacy.hidden = false;
+            navTerms.classList.remove('active');
+            navPrivacy.classList.add('active');
+            document.title = '隐私政策 · SupportFlow 智能客服';
+        } else {
+            terms.hidden = false;
+            privacy.hidden = true;
+            navTerms.classList.add('active');
+            navPrivacy.classList.remove('active');
+            document.title = '服务协议 · SupportFlow 智能客服';
+        }
+    }
+    function goBack() {
+        if (history.length > 1) {
+            history.back();
+        } else {
+            location.href = location.protocol === 'file:' ? 'official.html' : '/register';
+        }
+    }
+    render();
+</script>
+</body>
+</html>

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.tenant.mapper.SecurityEventMapper">
+
+    <select id="selectEvents" resultType="java.util.Map">
+        SELECT ev.id, ev.tenant_code, ev.event_type, ev.detail, ev.request_uri, ev.request_method,
+               ev.client_ip, ev.token_tenant, ev.operator_name, ev.event_time,
+               ev.handle_status, ev.handle_remark, ev.handler_name, ev.handle_time,
+               e.company_name
+          FROM tenant_security_event ev
+          LEFT JOIN tenant t ON t.tenant_code = ev.tenant_code AND t.is_deleted = FALSE
+          LEFT JOIN enterprise e ON e.id = t.enterprise_id AND e.is_deleted = FALSE
+         WHERE 1 = 1
+        <if test="eventType != null">
+           AND ev.event_type = #{eventType}
+        </if>
+        <if test="handleStatus != null">
+           AND ev.handle_status = #{handleStatus}
+        </if>
+        <if test="tenantCode != null and tenantCode != ''">
+           AND ev.tenant_code ILIKE '%' || #{tenantCode} || '%'
+        </if>
+         ORDER BY ev.event_time DESC, ev.id DESC
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countEvents" resultType="long">
+        SELECT COUNT(1) FROM tenant_security_event ev WHERE 1 = 1
+        <if test="eventType != null">
+           AND ev.event_type = #{eventType}
+        </if>
+        <if test="handleStatus != null">
+           AND ev.handle_status = #{handleStatus}
+        </if>
+        <if test="tenantCode != null and tenantCode != ''">
+           AND ev.tenant_code ILIKE '%' || #{tenantCode} || '%'
+        </if>
+    </select>
+
+    <select id="selectOverview" resultType="java.util.Map">
+        SELECT COUNT(1) AS total,
+               COUNT(1) FILTER (WHERE handle_status = 1) AS pending,
+               COUNT(1) FILTER (WHERE event_time &gt;= CURRENT_DATE) AS today,
+               COUNT(1) FILTER (WHERE event_time &gt;= CURRENT_DATE - 6) AS last7,
+               COUNT(1) FILTER (WHERE event_type = 1) AS type1,
+               COUNT(1) FILTER (WHERE event_type = 2) AS type2,
+               COUNT(1) FILTER (WHERE event_type = 3) AS type3,
+               COUNT(1) FILTER (WHERE event_type = 4) AS type4
+          FROM tenant_security_event
+    </select>
+
+    <select id="selectDaily" resultType="java.util.Map">
+        SELECT to_char(event_time::date, 'YYYY-MM-DD') AS stat_date,
+               COUNT(1) AS events
+          FROM tenant_security_event
+         WHERE event_time &gt;= CURRENT_DATE - (#{days} - 1)
+         GROUP BY event_time::date
+         ORDER BY event_time::date
+    </select>
+
+    <update id="handle">
+        UPDATE tenant_security_event
+           SET handle_status = #{status},
+               handle_remark = #{remark},
+               handler_name = #{handler},
+               handle_time = CURRENT_TIMESTAMP
+         WHERE id = #{id}
+    </update>
+</mapper>

@@ -1,0 +1,1709 @@
+<template>
+  <div class="visitor-page" :class="{ 'is-embed': isEmbed }">
+    <div class="visitor-card">
+      <!-- 顶部 -->
+      <div class="v-head">
+        <div class="v-brand">
+          <!-- 访客端窗口头部的标用租户自己的头像：客户的浏览器里不该出现平台 logo -->
+          <img class="v-logo" :src="botAvatarUrl" :alt="botName" />
+          <div>
+            <div class="v-title">在线客服</div>
+            <div class="v-sub">
+              <span class="dot" :class="stateClass" />
+              {{ stateText }}
+            </div>
+          </div>
+        </div>
+        <div class="v-session">{{ sessionNo || '' }}</div>
+      </div>
+
+      <!-- 未配置渠道密钥 -->
+      <div v-if="errorText" class="v-error">
+        <el-icon :size="30"><WarningFilled /></el-icon>
+        <p>{{ errorText }}</p>
+        <span>{{ errorHint || '请在地址后带上渠道应用标识，例如：/visitor?appId=你的渠道密钥' }}</span>
+      </div>
+
+      <template v-else>
+        <!-- 消息区 -->
+        <div ref="scrollRef" class="v-body pro-scroll" @scroll.passive="onScroll">
+          <div v-if="connecting" class="v-tip">
+            <el-icon class="is-loading" :size="16"><Loading /></el-icon>
+            正在接入客服…
+          </div>
+          <div v-else-if="!messages.length" class="v-tip">已经接通，直接把问题发给我们吧～</div>
+          <template v-for="(msg, index) in messages" :key="msg.msgId">
+            <!-- 时间分割：和上一条隔得久（或第一条）才显示一次，不再每条都挂时间 -->
+            <div v-if="showTimeDivider(index)" class="v-divider">{{ dividerText(msg.sendTime) }}</div>
+
+            <!-- 系统提示：居中灰胶囊，没有头像也没有气泡（"已接入智能客服"这类） -->
+            <div v-if="msg.senderType === 4" class="v-system">{{ msg.content }}</div>
+
+            <div v-else class="v-row" :class="msgRowClass(msg)">
+              <!-- 头像：机器人用品牌标识，人工客服用工单耳机图标，自己用中性圆形 -->
+              <div v-if="msg.senderType === 1" class="v-avatar v-avatar-self">我</div>
+              <img v-else-if="msg.senderType === 2" class="v-avatar v-avatar-agent"
+                   src="/agent-avatar.svg" alt="客服" />
+              <img v-else class="v-avatar v-avatar-bot" :src="botAvatarUrl" :alt="botName" />
+
+              <div class="v-main">
+                <div v-if="msg.senderType !== 1 && senderText(msg)" class="v-meta">{{ senderText(msg) }}</div>
+                <div
+                  class="v-bubble"
+                  :class="{ 'is-pending': msg.pending, 'is-failed': msg.failed, 'is-image': !!imageOf(msg) }"
+                >
+                  <!-- 图片消息：先随图说的那句话，再一排缩略图（最多 3 张），点开在本窗口弹层里看大图 -->
+                  <template v-if="imagesOf(msg).length">
+                    <div v-if="imageOf(msg)?.text" class="v-image-text">{{ imageOf(msg)?.text }}</div>
+                    <div class="v-images" :class="{ 'is-multi': imagesOf(msg).length > 1 }">
+                      <button
+                        v-for="(image, index) in imagesOf(msg)"
+                        :key="image.fileId || image.url || index"
+                        type="button"
+                        class="v-image"
+                        :title="image.name || '查看大图'"
+                        @click="openImage(image)"
+                      >
+                        <img :src="image.url" :alt="image.name || '图片'" loading="lazy" />
+                      </button>
+                    </div>
+                  </template>
+                  <!-- 卡片消息：正文 + 可点动作（比如"转人工客服"）。点了才转，不替客户做主 -->
+                  <template v-else-if="cardOf(msg)">
+                    <div class="v-content">{{ cardOf(msg)?.text }}</div>
+                    <div v-if="cardOf(msg)?.actions?.length" class="v-actions">
+                      <el-button
+                        v-for="action in cardOf(msg)?.actions"
+                        :key="action.type"
+                        size="small"
+                        type="primary"
+                        plain
+                        @click="onCardAction(action)"
+                      >
+                        {{ action.label }}
+                      </el-button>
+                    </div>
+                  </template>
+                  <div v-else class="v-content">{{ msg.content }}</div>
+                  <!-- 时间：鼠标悬停时才显示（触屏常驻），平时的阅读节奏更干净 -->
+                  <div class="v-time">
+                    <template v-if="msg.pending">
+                      {{ connected ? '发送中…' : '已排队，连接恢复后自动发出…' }}
+                    </template>
+                    <template v-else-if="msg.failed">
+                      <span>发送失败（消息已保留，恢复后自动补发）</span>
+                      <el-button link type="primary" size="small" @click="resend(msg)">立即重发</el-button>
+                    </template>
+                    <template v-else>{{ msgTime(msg.sendTime) }}</template>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 复制按钮：鼠标移到这条消息上才出现，放在气泡外侧不挡正文 -->
+              <button class="v-copy" type="button" title="复制这条消息" @click="copyMessage(msg)">
+                <el-icon :size="13"><CopyDocument /></el-icon>
+              </button>
+            </div>
+          </template>
+
+          <!-- 自己翻上去看记录时，新消息不硬拽，只提示一下 -->
+          <button v-if="hasNewBelow" class="v-new" type="button" @click="jumpToBottom">
+            有新消息 ↓
+          </button>
+
+          <!-- 正在输入：紧跟在最后一条消息下面，客户一眼能看到"有人正在回我" -->
+          <div v-if="botTyping" class="v-row is-other">
+            <img v-if="typingWho === 'AGENT'" class="v-avatar v-avatar-agent"
+                 src="/agent-avatar.svg" alt="客服" />
+            <img v-else class="v-avatar v-avatar-bot" :src="botAvatarUrl" :alt="botName" />
+            <div class="v-main">
+              <div class="v-meta">{{ typingWho === 'AGENT' ? '在线客服' : botName }}</div>
+              <div class="v-bubble v-typing">
+                <div class="v-typing-dots"><i /><i /><i /></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 输入区 -->
+        <div class="v-input">
+          <!-- 待发送的图片：先选图（这时就上传好），文字和图片一起点"发送"才发出去，最多 3 张 -->
+          <div v-if="pendingImages.length" class="vi-attach">
+            <div v-for="item in pendingImages" :key="item.previewUrl" class="vi-attach-item">
+              <div class="vi-attach-thumb">
+                <img :src="item.previewUrl" :alt="item.name" />
+                <div v-if="!item.uploaded" class="vi-attach-mask">
+                  <el-icon class="is-loading" :size="15"><Loading /></el-icon>
+                </div>
+                <button
+                  class="vi-attach-remove"
+                  type="button"
+                  :title="item.uploaded ? '移除这张图片' : '取消这张图片'"
+                  @click="removePendingImage(item)"
+                >
+                  <el-icon :size="11"><Close /></el-icon>
+                </button>
+              </div>
+              <div class="vi-attach-name">{{ item.name }}</div>
+            </div>
+            <div class="vi-attach-hint">
+              {{ uploading ? '图片上传中…' : attachHint }}
+            </div>
+          </div>
+          <el-input
+            v-model="draft"
+            type="textarea"
+            :rows="2"
+            resize="none"
+            maxlength="1000"
+            :disabled="sessionClosed"
+            :placeholder="sessionClosed ? '本次咨询已结束，如需继续请点右下角重新发起' : '请输入你想咨询的问题，Enter 发送'"
+            @keydown.enter.exact.prevent="send"
+          />
+        <div class="vi-actions">
+            <div class="vi-left">
+              <input
+                ref="fileRef"
+                class="vi-file"
+                type="file"
+                multiple
+                accept="image/png,image/jpeg,image/webp,image/gif,image/bmp"
+                @change="onPickImage"
+              />
+              <el-button
+                size="small"
+                :disabled="sessionClosed || !sessionOpened || !canPickMore"
+                :title="canPickMore
+                  ? `发送截图或照片（一条消息最多 ${MAX_IMAGES_PER_MESSAGE} 张）`
+                  : `一条消息最多 ${MAX_IMAGES_PER_MESSAGE} 张图片，先发出去或移除一张`"
+                @click="pickImage"
+              >
+                <el-icon :size="14"><Picture /></el-icon>
+                <span class="vi-btn-text">图片</span>
+              </el-button>
+            </div>
+            <span class="vi-tip">{{ connectionTip }}</span>
+            <el-button v-if="sessionClosed" @click="restart">重新发起咨询</el-button>
+            <el-button
+              v-else
+              type="primary"
+              :loading="sending"
+              :disabled="!sessionOpened || uploading"
+              @click="send"
+            >
+              发送
+            </el-button>
+          </div>
+          <!-- 会话结束后请客户给个分：满意度是客户 360 画像里的"口碑"来源 -->
+          <div v-if="sessionClosed && !csatDone" class="csat-box">
+            <div class="csat-title">本次服务还满意吗？</div>
+            <el-rate v-model="csatScore" :max="5" show-score score-template="{value} 分" />
+            <el-input
+              v-model="csatFeedback"
+              class="csat-input"
+              maxlength="200"
+              show-word-limit
+              placeholder="补充一句（可选）"
+            />
+            <el-button type="primary" size="small" :loading="csatSending" :disabled="!csatScore" @click="submitCsat">
+              提交评价
+            </el-button>
+          </div>
+          <div v-else-if="sessionClosed && csatDone" class="csat-box done">
+            感谢评价！你的评分已记录，我们会持续改进。
+          </div>
+        </div>
+      </template>
+    </div>
+
+    <!-- 图片预览：就在这个窗口里弹一层，右上角有关闭（也支持点遮罩、按 Esc 关） -->
+    <el-image-viewer
+      v-if="previewOpen"
+      :url-list="previewUrls"
+      :initial-index="previewIndex"
+      :hide-on-click-modal="true"
+      teleported
+      @close="previewOpen = false"
+    />
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Close, CopyDocument, Loading, Picture, WarningFilled } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { errorMessage } from '../../utils/message'
+import {
+  imagesOf,
+  listSessionMessages,
+  messageTextOf,
+  openVisitorSession,
+  parseImageContent,
+  submitSessionCsat,
+  uploadChatImage,
+  type ChatImageItem,
+  type ChatImageUploadResult,
+  type SessionMessageItem,
+} from '../../api/customer/session'
+import { RealtimeClient, type RealtimeMessage, type RealtimeState } from '../../utils/realtime'
+import { copyText } from '../../utils/clipboard'
+import { useChatScroll } from '../../utils/chatScroll'
+import { useScrollFade } from '../../composables/useScrollFade'
+
+const route = useRoute()
+const router = useRouter()
+
+/** 被 widget.js 嵌进 iframe 时用紧凑布局（去掉大背景和外边距） */
+const isEmbed = computed(() => String(route.query.embed ?? '') === '1')
+
+const sessionNo = ref('')
+/** 当前访客令牌：重连时要用最新的那一份 */
+const visitorToken = ref('')
+/**
+ * 机器人显示名（来自租户配置的 bot_name，开会话时随响应回来）。
+ *
+ * <p>客户侧不写"机器人"三个字：大厂客服窗口给客户看的都是**助手名字**
+ * （店小蜜、小云这种）或者中性的"智能客服"，不会每条消息都提醒客户"你在跟机器说话"。</p>
+ */
+const botName = ref('智能客服')
+/** 机器人头像：租户配了用自己的，没配用内置默认头像（以前写死平台 logo，等于把平台标给租户的客户看） */
+const botAvatarUrl = ref('/bot-avatar.svg')
+const messages = ref<SessionMessageItem[]>([])
+const draft = ref('')
+const sending = ref(false)
+const connecting = ref(true)
+/** 会话是否已经建立（拿到访客令牌 + 建了长连接对象）：没建立之前发送按钮是灰的 */
+const sessionOpened = ref(false)
+const errorText = ref('')
+/** 出错时的补充说明：会话失效和"没带 appId"要给不一样的指引 */
+const errorHint = ref('')
+const scrollRef = ref<HTMLElement>()
+const connectionState = ref<RealtimeState>('idle')
+/** 对面是否正在输入（机器人/客服）：让"发完消息干等"变成看得见的等待 */
+const botTyping = ref(false)
+const typingWho = ref<'BOT' | 'AGENT'>('BOT')
+/** 会话对象里我们会用到的两个字段（状态、负责人） */
+interface VisitorSessionState {
+  status?: number
+  agentId?: number | null
+}
+
+/** 会话状态：4-已结束（客服结束会话后，客户这边要立刻反映出来） */
+const sessionStatus = ref(1)
+/** 这条会话有没有人工客服接手（没接手就别说"客服在线"） */
+const hasAgent = ref(false)
+
+/* ---------------- 满意度评价（会话结束后客户打分） ---------------- */
+const csatScore = ref(0)
+const csatFeedback = ref('')
+const csatSending = ref(false)
+/** 已经评过就不再显示表单（一条会话只评一次，重复提交是"改评价"） */
+const csatDone = ref(false)
+
+/**
+ * 提交满意度评价。
+ *
+ * <p>带的是**访客令牌**，不是登录态：客户没有账号。服务端会校验令牌里的会话号
+ * 与路径上的会话号一致，不然谁都能给别人打差评。</p>
+ */
+async function submitCsat() {
+  if (!csatScore.value) {
+    ElMessage.warning('先给个星级再提交')
+    return
+  }
+  csatSending.value = true
+  try {
+    await submitSessionCsat(sessionNo.value, {
+      score: csatScore.value,
+      feedback: csatFeedback.value.trim() || undefined,
+      visitorToken: visitorToken.value,
+    })
+    csatDone.value = true
+    ElMessage.success('评价已提交，谢谢！')
+  } finally {
+    csatSending.value = false
+  }
+}
+
+let client: RealtimeClient | null = null
+
+const connected = computed(() => connectionState.value === 'open')
+const sessionClosed = computed(() => sessionStatus.value === 4)
+
+const stateText = computed(() => {
+  switch (connectionState.value) {
+    case 'open':
+      // 长连接正常不代表客服在线：会话结束了说"已结束"，没人接手说"等待接入"
+      if (sessionClosed.value) {
+        return '会话已结束'
+      }
+      if (hasAgent.value) {
+        return '客服在线'
+      }
+      // 状态 2 = 机器人接待中：客户对面确实有人在回话，不该显示"等待客服接入"
+      return sessionStatus.value === 2 ? '智能客服为您服务' : '等待客服接入'
+    case 'connecting':
+      return '正在接入'
+    case 'reconnecting':
+      return '网络波动，正在重连'
+    case 'closed':
+      return '已断开'
+    default:
+      return '未连接'
+  }
+})
+const stateClass = computed(() => {
+  if (sessionClosed.value) {
+    return 'dot-closed'
+  }
+  if (connectionState.value === 'open' && !hasAgent.value) {
+    // 机器人接待中是真有人在回话，给绿灯；等人工才是黄灯
+    return sessionStatus.value === 2 ? 'dot-open' : 'dot-waiting'
+  }
+  return `dot-${connectionState.value}`
+})
+const connectionTip = computed(() => {
+  if (sessionClosed.value) {
+    return '本次咨询已结束，历史消息已保存在客服系统里'
+  }
+  if (connectionState.value !== 'open') {
+    return '连接中，消息会自动重发，不会丢'
+  }
+  if (hasAgent.value) {
+    return '客服通常会在 1 分钟内回复'
+  }
+  return sessionStatus.value === 2
+    ? '智能客服会先帮您解答，需要人工时会自动转接'
+    : '正在为您分配客服，请稍候'
+})
+
+onMounted(openSession)
+
+onUnmounted(() => {
+  client?.close()
+  // 待发送图片的本地预览地址要一起释放（objectURL 不释放会一直占着内存）
+  clearPendingImages()
+})
+
+async function openSession() {
+  // appId 是正式参数名；key 是早期版本留下的别名，继续兼容老地址
+  const appKey = String(route.query.appId ?? route.query.key ?? '').trim()
+  if (!appKey) {
+    connecting.value = false
+    errorText.value = '缺少渠道密钥，无法发起会话'
+    return
+  }
+  const name = String(route.query.name ?? '').trim()
+  const storageKey = `supportflow_visitor_${appKey}`
+  // fresh=1：这次要模拟一个新客户，先清掉本地身份；参数只用一次，随即从地址里摘掉
+  if (String(route.query.fresh ?? '') === '1') {
+    localStorage.removeItem(storageKey)
+    await router.replace({
+      path: '/visitor',
+      query: { appId: route.query.appId, key: route.query.key, name: route.query.name },
+    })
+  }
+  // 身份令牌由服务端签发，本地只负责保存和回传；过期或伪造的令牌服务端会当新访客处理
+  const visitorToken = localStorage.getItem(storageKey) || undefined
+
+  try {
+    const result = await openVisitorSession({
+      appKey,
+      visitorToken,
+      visitorName: name || undefined,
+    })
+    sessionNo.value = result.sessionNo
+    if (result.botName) {
+      botName.value = result.botName
+    }
+    if (result.botAvatarUrl) {
+      botAvatarUrl.value = result.botAvatarUrl
+    }
+    sessionOpened.value = true
+    // 开会话时就知道状态了（2=机器人接待）：先用它把顶部文案定下来，
+    // 不用等长连接 JOINED 回来才从"等待客服接入"跳到"智能客服为您服务"
+    if (typeof result.sessionStatus === 'number') {
+      sessionStatus.value = result.sessionStatus
+    }
+    localStorage.setItem(storageKey, result.visitorIdentityToken)
+    connect(result.visitorToken)
+  } catch (e) {
+    connecting.value = false
+    const message = e instanceof Error ? e.message : '接入失败，请稍后重试'
+    errorText.value = message
+    // 三类最常见的原因各给一句能照做的提示；说不清才回落到通用文案。
+    // （以前不管什么错都显示"请在地址后带上渠道应用标识"，带了 appId 的人会被带偏）
+    if (message.includes('停用') || message.includes('禁用')) {
+      errorHint.value = '这个渠道已被停用：到控制台「渠道接入」把它重新启用即可。'
+        + '注意同一种渠道同时只能有一个「生效中」——如果已经有别的生效渠道，要先停用那一个。'
+    } else if (message.includes('密钥') || message.includes('无效') || message.includes('不存在')) {
+      errorHint.value = '渠道密钥无效或已被轮换：用控制台「渠道接入 → 查看密钥」里当前那串'
+        + '（重新生成过密钥的话，旧密钥会立刻失效）。'
+    } else if (message.includes('白名单') || message.includes('域名')) {
+      errorHint.value = '当前页面的域名不在这个渠道的白名单里：到渠道配置里把本站地址加进去，或清空白名单。'
+    } else {
+      errorHint.value = '如果地址里确实带了渠道密钥，多半是渠道被停用或密钥已轮换——'
+        + '去控制台「渠道接入」核对一下这个密钥对应的渠道状态。'
+    }
+  }
+}
+
+function connect(token: string) {
+  visitorToken.value = token
+  client = new RealtimeClient({
+    token,
+    // 重连取最新令牌：访客令牌也有有效期（12 小时），过期后要用新换的那份
+    tokenProvider: () => visitorToken.value,
+    onAuthFailed: () => void refreshVisitorToken(),
+    onMessage: handleMessage,
+    onStateChange: (state) => {
+      connectionState.value = state
+    },
+  })
+  client.connect()
+}
+
+/**
+ * 访客令牌失效后重新换一个再重连。
+ *
+ * <p>访客不用登录，所以"续期"就是拿本地身份令牌重新开一次会话：
+ * 服务端按身份令牌认出还是同一个客户、复用同一条未结束的会话，消息不会串。</p>
+ */
+let refreshingToken = false
+async function refreshVisitorToken() {
+  const appKey = String(route.query.appId ?? route.query.key ?? '').trim()
+  if (refreshingToken || !appKey) {
+    return
+  }
+  refreshingToken = true
+  try {
+    const storageKey = `supportflow_visitor_${appKey}`
+    const result = await openVisitorSession({
+      appKey,
+      visitorToken: localStorage.getItem(storageKey) || undefined,
+      visitorName: String(route.query.name ?? '').trim() || undefined,
+    })
+    sessionNo.value = result.sessionNo
+    localStorage.setItem(storageKey, result.visitorIdentityToken)
+    client?.close()
+    connect(result.visitorToken)
+  } catch {
+    // 换不到就先不折腾：页面上的「重新发起咨询」按钮仍然可用
+  } finally {
+    refreshingToken = false
+  }
+}
+
+function handleMessage(message: RealtimeMessage) {
+  switch (message.type) {
+    case 'CONNECTED':
+      connecting.value = false
+      break
+    case 'JOINED': {
+      connecting.value = false
+      messages.value = dedupe((message.data?.messages ?? []) as SessionMessageItem[])
+      applySession(message.data?.session)
+      // 刚进会话：从最新一条开始看
+      scrollToBottom(true)
+      // 断线期间可能漏了消息：拿本地最大序号和服务端对一下，缺的补回来
+      void syncMissedMessages(message.data?.lastSeq)
+      break
+    }
+    case 'ACK':
+      appendMessage(message.data as SessionMessageItem)
+      break
+    case 'MESSAGE':
+      // 真消息到了，输入提示就该收掉（服务端也会补一帧 typing=false）
+      botTyping.value = false
+      appendMessage(message.data as SessionMessageItem)
+      void fillGapIfNeeded(message.data as SessionMessageItem | undefined)
+      break
+    case 'TYPING': {
+      const payload = (message.data ?? {}) as { who?: string; typing?: boolean }
+      typingWho.value = payload.who === 'AGENT' ? 'AGENT' : 'BOT'
+      botTyping.value = payload.typing !== false
+      scheduleTypingTimeout()
+      // 提示气泡出现/消失都会改高度，跟着滚一下才不会"半截露在外面"
+      scrollToBottom()
+      break
+    }
+    case 'SESSION': {
+      // 人工客服接入 / 转接 / 结束都会推这条事件，客户端的在线状态跟着它变
+      const wasClosed = sessionClosed.value
+      applySession(message.data)
+      if (!wasClosed && sessionClosed.value) {
+        ElMessage.info('本次咨询已结束，如需继续可点右下角重新发起')
+        // 会话关了就发不出去了：清掉待发送区，别让客户对着点不动的附件发呆
+        clearPendingImages()
+      }
+      break
+    }
+    case 'ERROR': {
+      const code = message.code ?? 0
+      // 会话不存在 / 已结束属于"这条连接没救了"：停掉重连，提示刷新重新发起，
+      // 否则客户端会不停重连、服务端跟着刷一堆错误日志
+      if (code === 40401 || code === 40301) {
+        connecting.value = false
+        errorText.value = message.message || '会话已结束'
+        errorHint.value = '刷新页面即可重新发起咨询；历史消息已经保存在客服系统里'
+        client?.close()
+        break
+      }
+      errorMessage(message.message || '操作失败')
+      break
+    }
+    default:
+      break
+  }
+}
+
+/**
+ * 点"发送"（也走 Enter）。
+ *
+ * <p>大厂客服的图片消息是**一条消息**：客户输入的文字 + 待发送的图片，点发送才一起出去。
+ * 所以这里先看有没有待发送的图片——有就走图片消息（文字挂在 `text` 字段上），
+ * 没有才是纯文本。不替客户做"选完图立刻发出去"的决定。</p>
+ */
+function send() {
+  const content = draft.value.trim()
+  const images = pendingImages.value
+  if (images.some((item) => !item.uploaded)) {
+    ElMessage.info('图片还在上传，稍等一下再发送')
+    return
+  }
+  if (!images.length && !content) {
+    return
+  }
+  if (!readyClient()) {
+    return
+  }
+  if (!images.length) {
+    draft.value = ''
+    void sendText(content)
+    return
+  }
+  // 正文结构和后端约定的一致：第一张放在顶层（老消息/老渲染都认），
+  // 完整清单在 `images` 与 `fileIds` 里；`text` 就是客户打的字（可以是空的）
+  const uploaded = images.map((item) => item.uploaded!)
+  const payload = {
+    fileId: uploaded[0].fileId,
+    url: uploaded[0].url,
+    name: uploaded[0].name,
+    size: uploaded[0].size,
+    fileIds: uploaded.map((item) => item.fileId),
+    images: uploaded.map((item) => ({
+      fileId: item.fileId,
+      url: item.url,
+      name: item.name,
+      size: item.size,
+    })),
+    ...(content ? { text: content } : {}),
+  }
+  draft.value = ''
+  clearPendingImages()
+  void sendPayload(JSON.stringify(payload), 2)
+}
+
+/**
+ * 现在能不能发消息：不能发就提示一句并返回 null，能发就把长连接客户端给你。
+ *
+ * <p>为什么要在"发送前"判一次：连上之前发不出去，而待发送的图片已经上传到对象存储了，
+ * 得留着让客户连上后再点一次，不能悄悄丢掉。</p>
+ */
+function readyClient(): RealtimeClient | null {
+  if (sessionClosed.value) {
+    return null
+  }
+  if (!client || !sessionOpened.value) {
+    ElMessage.warning('正在接入客服，稍等一下再发送')
+    return null
+  }
+  return client
+}
+
+/** 真正发一条消息（卡片上的"转人工客服"也走这里，保证行为完全一致） */
+async function sendText(text: string) {
+  const content = text.trim()
+  if (!content) {
+    return
+  }
+  await sendPayload(content, 1)
+}
+
+/**
+ * 真正发一条消息（文本、图片都走这里，保证行为完全一致）。
+ *
+ * @param msgType 1-文本、2-图片（图片的 content 是 `{fileId,url,name,size,text}` 的 JSON，
+ *                `text` 就是客户随图打的那句话——服务端拿它当"客户的问题"用）
+ */
+async function sendPayload(content: string, msgType: number) {
+  const rt = readyClient()
+  if (!rt) {
+    return
+  }
+  // 消息号由页面生成并挂到气泡上：长连接那边不管连没连上都先收进发件箱，
+  // 连上以后自动补发；服务端按这个消息号去重，所以不会重复。
+  const clientMsgNo = `v-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
+  // 乐观气泡：先显示"发送中"，拿到 ACK 再换成服务端消息（序号、时间都以服务端为准）
+  messages.value.push({
+    msgId: `local-${clientMsgNo}`,
+    msgNo: `local-${clientMsgNo}`,
+    clientMsgNo,
+    senderType: 1,
+    msgType,
+    content,
+    sendTime: new Date().toISOString(),
+    pending: true,
+  })
+  // 自己发的消息一定要出现在眼前
+  scrollToBottom(true)
+  sending.value = true
+  try {
+    const ack = await rt.send({
+      type: 'SEND',
+      sessionNo: sessionNo.value,
+      msgType,
+      content,
+      clientMsgNo,
+    })
+    const saved = ack.data as SessionMessageItem | undefined
+    if (saved) {
+      appendMessage(saved)
+    }
+  } catch (e) {
+    // 消息仍在发件箱里，网络恢复会自动补发（同一个 clientMsgNo，服务端幂等）
+    markFailed(clientMsgNo)
+    errorMessage(e, '发送失败，消息已保留')
+  } finally {
+    sending.value = false
+  }
+}
+
+/** 图片消息解析（msgType=2 的正文是一段 JSON） */
+function imageOf(message: SessionMessageItem) {
+  return message.msgType === 2 ? parseImageContent(message.content) : null
+}
+
+/**
+ * 图片预览：点缩略图在**本窗口**的弹层里看原图。
+ *
+ * <p>以前是 `<a target="_blank">`，会在浏览器里多开一个标签页——小程序/嵌入式窗口里
+ * 那是直接跳走，客户看完还得自己找回客服窗口。改成弹层后：右上角有关闭、
+ * 点遮罩或按 Esc 也能关；会话里所有图排成一条链，弹层里能左右切换（左下角有 1/6 这样的计数），
+ * 点第几张就从第几张开始看。</p>
+ */
+const previewOpen = ref(false)
+const previewIndex = ref(0)
+const previewUrls = computed(() =>
+  messages.value
+    .flatMap((item) => imagesOf(item).map((image) => image.url))
+    .filter((url): url is string => !!url),
+)
+
+function openImage(image: ChatImageItem) {
+  const url = image?.url
+  if (!url) {
+    return
+  }
+  const index = previewUrls.value.indexOf(url)
+  previewIndex.value = index >= 0 ? index : 0
+  previewOpen.value = true
+}
+
+const fileRef = ref<HTMLInputElement>()
+
+/** 一条消息最多带几张图（和后端、AI 侧的 vision_max_images 对齐，别各写各的） */
+const MAX_IMAGES_PER_MESSAGE = 3
+/** 单张图片大小上限（后端也有一道，前端先拦一下省得白传） */
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+/** 待发送的图片：选了图就先挂在这里，点"发送"才和文字一起变成一条消息 */
+interface PendingImage {
+  name: string
+  size: number
+  /** 本地预览地址（objectURL）：上传中也能立刻看到缩略图，不用等对象存储 */
+  previewUrl: string
+  /** 上传完成后才有（fileId + 对象存储地址）；为 null 表示还在传 */
+  uploaded: ChatImageUploadResult | null
+}
+
+const pendingImages = ref<PendingImage[]>([])
+/** 还有图片在上传：这期间不让发送，否则发出去的会是一条缺图的残缺消息 */
+const uploading = computed(() => pendingImages.value.some((item) => !item.uploaded))
+/** 还能不能再选图（一条消息最多 3 张） */
+const canPickMore = computed(() => pendingImages.value.length < MAX_IMAGES_PER_MESSAGE)
+const attachHint = computed(() => {
+  const left = MAX_IMAGES_PER_MESSAGE - pendingImages.value.length
+  return left > 0
+    ? `已就绪，点“发送”随文字一起发出（还可再选 ${left} 张）`
+    : '已到上限（一条消息最多 3 张），点「发送」发出去'
+})
+
+function pickImage() {
+  if (sessionClosed.value || !sessionOpened.value || !canPickMore.value) {
+    return
+  }
+  fileRef.value?.click()
+}
+
+/** 从待发送区移除这张图：本地预览地址一起释放，别让 objectURL 一直占着内存 */
+function removePendingImage(item: PendingImage) {
+  const index = pendingImages.value.indexOf(item)
+  if (index < 0) {
+    return
+  }
+  URL.revokeObjectURL(item.previewUrl)
+  pendingImages.value.splice(index, 1)
+}
+
+/** 清空待发送区（发送成功、会话结束、离开页面时都要走这里，否则 objectURL 会漏） */
+function clearPendingImages() {
+  pendingImages.value.slice().forEach(removePendingImage)
+}
+
+/**
+ * 选了图（可一次选多张，最多 3 张）：**先上传到对象存储**，然后挂在输入框上方，等客户点"发送"。
+ *
+ * <p>为什么要先传后发：长连接只传小文本帧，图片字节走 HTTP 上传到对象存储，消息里只带
+ * `fileId + url`。大图上传要好几秒，等点"发送"那一刻才开始传，按钮只能一直转圈；
+ * 先传完再发，客户点下去就是"嗖"地出去。断线重发、历史记录也都只是几百字节的 JSON。</p>
+ *
+ * <p>为什么不再"选完图立刻发一条图片消息"：那是替客户做了决定。客户想说的大多是
+ * "这个订单为什么一直失败"配一张截图——图先发出去、文字还在输入框里，服务端会先按
+ * "只有图"接一轮（识别 + 回答），等文字到了再答一次，两轮都对不上上下文。
+ * 改成"文字 + 图片一条消息"，视觉识别和客服大脑拿到的才是完整的那句话。</p>
+ *
+ * <p>多张图怎么发：一次上传接口只收一个文件，所以这里**并行**传（每张各自转圈、各自可移除），
+ * 全部传完点发送时合成**一条**消息——顶层是第一张（兼容老消息），`images` 里是完整清单。
+ * 视觉模型一次最多看 3 张（AI 侧 vision_max_images），所以上限卡在 3，多了就提示先发出去。</p>
+ */
+async function onPickImage(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files ?? [])
+  input.value = ''
+  if (!files.length) {
+    return
+  }
+  const appKey = String(route.query.appId ?? route.query.key ?? '').trim()
+  if (!appKey) {
+    ElMessage.warning('缺少渠道密钥，无法发送图片')
+    return
+  }
+  const room = MAX_IMAGES_PER_MESSAGE - pendingImages.value.length
+  if (room <= 0) {
+    ElMessage.warning(`一条消息最多 ${MAX_IMAGES_PER_MESSAGE} 张图片，先发出去再选`)
+    return
+  }
+  const picked = files.slice(0, room)
+  if (files.length > room) {
+    ElMessage.warning(`一条消息最多 ${MAX_IMAGES_PER_MESSAGE} 张图片，这次先放前 ${room} 张`)
+  }
+  // 并行上传：三张 200KB 的图比"一张一张来"快得多，而且每张都能单独移除
+  await Promise.all(picked.map((file) => stageImage(file, appKey)))
+}
+
+/** 把一张图挂进待发送区并开始上传（上传完原地补上 fileId / 地址，失败就自己撤掉） */
+async function stageImage(file: File, appKey: string) {
+  if (file.size > MAX_IMAGE_BYTES) {
+    ElMessage.warning(`「${file.name}」超过 8MB，先压缩一下再发`)
+    return
+  }
+  const previewUrl = URL.createObjectURL(file)
+  const item: PendingImage = { name: file.name, size: file.size, previewUrl, uploaded: null }
+  pendingImages.value.push(item)
+  try {
+    const uploaded: ChatImageUploadResult = await uploadChatImage({
+      appKey,
+      sessionNo: sessionNo.value,
+      file,
+    })
+    // 上传是异步的：这期间客户可能已经把这张移除了，所以按 previewUrl 回查——
+    // 注意回查拿到的是**数组里的响应式对象**，必须改它才会触发重渲染。
+    // （直接改上面那个原始 item 是个坑：Vue 存进数组的是它的代理，
+    //   改原始对象绕过了代理的 set，界面永远停在"图片上传中…"）
+    const staged = pendingImages.value.find((row) => row.previewUrl === previewUrl)
+    if (staged) {
+      staged.uploaded = uploaded
+    }
+  } catch (e) {
+    removePendingImage(item)
+    const reason = e instanceof Error ? e.message : '请重试'
+    errorMessage(undefined, `「${file.name}」上传失败：${reason}`)
+  }
+}
+
+/**
+ * 复制一条消息。
+ *
+ * <p>客户经常要把客服给的答案（比如退款时效、订单处理说明）复制走，
+ * 或者把聊天记录发给同事；允许选中复制是底线，再补一个悬停即用的复制按钮。</p>
+ */
+async function copyMessage(message: SessionMessageItem) {
+  // 图片消息的正文是 JSON，复制 JSON 给客户没用——取"随图说的那句话"
+  const ok = await copyText(messageTextOf(message))
+  if (ok) {
+    ElMessage.success('已复制')
+  } else {
+    ElMessage.warning('复制失败，请手动选中文字后 Ctrl/Cmd + C')
+  }
+}
+
+/**
+ * 卡片消息（msgType=3）的正文结构：{"text": "...", "actions": [{"type","label"}]}。
+ *
+ * <p>解析失败（或历史数据不是 JSON）时返回 null，调用方会退回按纯文本渲染——
+ * 老消息、脏数据都不会把页面搞崩。</p>
+ */
+interface MessageCardAction {
+  type: string
+  label: string
+}
+interface MessageCard {
+  text: string
+  actions?: MessageCardAction[]
+}
+
+function cardOf(message: SessionMessageItem): MessageCard | null {
+  if (message.msgType !== 3 || !message.content) {
+    return null
+  }
+  try {
+    const parsed = JSON.parse(message.content) as MessageCard
+    return typeof parsed?.text === 'string' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/** 卡片上的动作：目前只有"转人工客服"——点了就发一句"转人工"，交给客服大脑走转人工流程 */
+function onCardAction(action: MessageCardAction) {
+  if (action.type === 'TRANSFER_HUMAN') {
+    void sendText('转人工')
+  }
+}
+
+/** 把某条本地气泡标成发送失败（按消息号定位，别用位置或内容去猜） */
+function markFailed(clientMsgNo: string) {
+  messages.value = messages.value.map((item) =>
+    item.clientMsgNo === clientMsgNo ? { ...item, pending: false, failed: true } : item,
+  )
+}
+
+/** 失败气泡上的「立即重发」：沿用同一个消息号，服务端幂等去重 */
+function resend(message: SessionMessageItem) {
+  if (!message.clientMsgNo || !client) {
+    return
+  }
+  messages.value = messages.value.map((item) =>
+    item.clientMsgNo === message.clientMsgNo ? { ...item, pending: true, failed: false } : item,
+  )
+  client.retry(message.clientMsgNo)
+}
+
+/**
+ * "正在输入"的安全绳。
+ *
+ * <p>推送可能丢（断线、网关重启），提示要是没人收就永远转下去，反而更糟。
+ * 40 秒还没等到回复就自动熄灭——比真实响应时间留足余量，又不会一直挂着。</p>
+ */
+let typingTimer: number | undefined
+function scheduleTypingTimeout() {
+  if (typingTimer) {
+    window.clearTimeout(typingTimer)
+  }
+  if (!botTyping.value) {
+    return
+  }
+  typingTimer = window.setTimeout(() => {
+    botTyping.value = false
+  }, 40000)
+}
+
+/** 同步会话状态：是否已结束、有没有人工客服接手 */
+function applySession(session?: VisitorSessionState | null) {
+  if (!session) {
+    return
+  }
+  if (typeof session.status === 'number') {
+    sessionStatus.value = session.status
+  }
+  if (session.agentId !== undefined) {
+    hasAgent.value = !!session.agentId
+  }
+}
+
+/** 重新发起：刷新即由服务端为同一个客户开一条新会话 */
+function restart() {
+  window.location.reload()
+}
+
+/** 本地已拿到的最大消息序号 */
+function maxSeq(items: SessionMessageItem[]) {
+  return items.reduce((max, item) => Math.max(max, Number(item.seq ?? 0)), 0)
+}
+
+/**
+ * 断线重连补偿：把本地最大序号和服务端的最大序号对一下，缺的用 afterSeq 增量补回来。
+ * 只拉差值，不会把整段历史重拉一遍。
+ */
+async function syncMissedMessages(lastSeq?: number | null) {
+  const local = maxSeq(messages.value)
+  const target = Number(lastSeq ?? 0)
+  if (!sessionNo.value || target <= local) {
+    return
+  }
+  try {
+    const missed = await listSessionMessages(sessionNo.value, { afterSeq: local, limit: 100 })
+    if (missed.length) {
+      messages.value = dedupe([...messages.value, ...missed])
+      scrollToBottom()
+    }
+  } catch {
+    // 拉不到就等下一次（下一条推送或下一次进入会话时再补）
+  }
+}
+
+/** 推送的序号和本地不连续，说明中间漏了，立刻补一次 */
+async function fillGapIfNeeded(message?: SessionMessageItem) {
+  if (!message?.seq) {
+    return
+  }
+  const local = maxSeq(messages.value.filter((item) => item.msgId !== message.msgId))
+  if (Number(message.seq) > local + 1) {
+    await syncMissedMessages(message.seq)
+  }
+}
+
+function appendMessage(message: SessionMessageItem | undefined) {
+  if (!message) {
+    return
+  }
+  // 同一条消息再次推送：**就地更新**而不是丢弃。
+  // 图片消息就是这样——先到一次（只有图片），识别完服务端会带着"AI 判读"再推一次。
+  const existing = messages.value.findIndex((item) => item.msgId === message.msgId)
+  if (existing >= 0) {
+    messages.value.splice(existing, 1, { ...messages.value[existing], ...message })
+    return
+  }
+  // 断线重发 / ACK 迟到时，服务端回来的这条和本地那条"乐观气泡"是同一个 clientMsgNo：
+  // 就地替换，别让客户看到"一条发送失败 + 一条又发成功了"这两个气泡
+  const localIndex = message.clientMsgNo
+    ? messages.value.findIndex((item) => item.clientMsgNo === message.clientMsgNo)
+    : -1
+  if (localIndex >= 0) {
+    messages.value.splice(localIndex, 1, message)
+    scrollToBottom()
+    return
+  }
+  messages.value.push(message)
+  scrollToBottom()
+}
+
+function dedupe(list: SessionMessageItem[]) {
+  const seen = new Set<string>()
+  return list.filter((item) => {
+    if (seen.has(item.msgId)) {
+      return false
+    }
+    seen.add(item.msgId)
+    return true
+  })
+}
+
+/**
+ * 聊天区滚动交给公共工具：双 rAF 保证滚到真正的底部（消息插入、气泡换行、
+ * "正在输入"提示消失都会改变高度，早一步滚就会差一点点），
+ * 而且客户往上翻记录时不会被新消息硬拽下去，只提示"有新消息 ↓"。
+ */
+const { hasNewBelow, scrollToBottom, onScroll, jumpToBottom } = useChatScroll(scrollRef)
+// 滚动条用时出现、闲时隐去（pro-scroll 的 is-scrolling 状态）
+useScrollFade(scrollRef)
+
+function msgRowClass(message: SessionMessageItem) {
+  if (message.senderType === 1) {
+    return 'is-self'
+  }
+  if (message.senderType === 4) {
+    return 'is-system'
+  }
+  return 'is-other'
+}
+
+/**
+ * 消息标签：客户看到的是"名字"，不是"角色"。
+ *
+ * <p>机器人显示租户配置的名字（如"小云"），人工显示"在线客服"，
+ * 系统提示不带名字（就是一条灰色提示）。</p>
+ */
+function senderText(message: SessionMessageItem) {
+  if (message.senderType === 2) {
+    return '在线客服'
+  }
+  if (message.senderType === 3) {
+    return botName.value || '智能客服'
+  }
+  return ''
+}
+
+/** 消息时间：展示成 09-12 12:25，客户翻历史时能对上时间点 */
+/** 两条消息间隔超过这个时长就插一条时间分割线（和微信/企业微信一个口径） */
+const TIME_DIVIDER_GAP_MS = 5 * 60 * 1000
+
+/** 要不要在这条消息前面显示时间分割线 */
+function showTimeDivider(index: number) {
+  const current = parseTime(messages.value[index]?.sendTime)
+  if (!current) {
+    return false
+  }
+  if (index === 0) {
+    return true
+  }
+  const previous = parseTime(messages.value[index - 1]?.sendTime)
+  return !previous || current - previous > TIME_DIVIDER_GAP_MS
+}
+
+function parseTime(value?: string | null): number {
+  if (!value) {
+    return 0
+  }
+  const time = new Date(value.replace(' ', 'T')).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
+/** 分割线文案：今天 / 昨天 只写时间，更早的写日期 */
+function dividerText(value?: string | null) {
+  const time = parseTime(value)
+  if (!time) {
+    return ''
+  }
+  const date = new Date(time)
+  const clock = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  const today = new Date()
+  const sameDay = date.toDateString() === today.toDateString()
+  if (sameDay) {
+    return clock
+  }
+  const yesterday = new Date(today.getTime() - 24 * 3600 * 1000)
+  if (date.toDateString() === yesterday.toDateString()) {
+    return `昨天 ${clock}`
+  }
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${clock}`
+}
+
+function msgTime(value?: string | null) {
+  if (!value) {
+    return ''
+  }
+  return value.length >= 16 ? value.slice(5, 16).replace('T', ' ') : value
+}
+</script>
+
+<style scoped>
+.visitor-page {
+  height: 100%;
+  min-height: 620px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(900px 500px at 10% -10%, rgba(59, 130, 246, 0.22), transparent 60%),
+    #f6f7f9;
+  padding: 24px;
+}
+
+/* 挂件内嵌模式：撑满 iframe，不要外层留白和背景 */
+.visitor-page.is-embed {
+  min-height: 0;
+  padding: 0;
+  background: #fff;
+}
+
+.visitor-page.is-embed .visitor-card {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.visitor-card {
+  width: 520px;
+  height: 640px;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.v-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: linear-gradient(135deg, #1d4ed8, #3b82f6);
+  color: #fff;
+}
+
+.v-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.v-logo {
+  width: 34px;
+  height: 34px;
+  /* 圆形 + 铺满：默认头像本身就是圆形，租户换图后也是标准头像观感 */
+  border-radius: 50%;
+  object-fit: cover;
+  background: #eef4ff;
+}
+
+.v-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.v-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #dbeafe;
+  margin-top: 3px;
+}
+
+.v-session {
+  font-size: 11px;
+  color: #dbeafe;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #facc15;
+}
+
+.dot-open {
+  background: #4ade80;
+}
+
+.dot-waiting {
+  background: #fbbf24;
+}
+
+.dot-closed {
+  background: #cbd5e1;
+}
+
+.v-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
+  background: #fafbfd;
+}
+
+.v-tip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #94a3b8;
+  font-size: 12px;
+  padding: 14px 0;
+}
+
+.v-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.v-row.is-self {
+  /* 自己的消息靠右：从左到右是「复制按钮 → 气泡 → 头像」 */
+  justify-content: flex-end;
+}
+
+/* 自己这条没有名字行，头像跟气泡顶部对齐即可 */
+.v-row.is-self .v-avatar {
+  margin-top: 2px;
+}
+
+/* 头像：机器人用品牌标识，人工客服用耳机图标，自己用中性圆形。
+   32px 是客服窗口的通用尺寸（再大就喧宾夺主，再小看不清） */
+.v-avatar {
+  flex-shrink: 0;
+  /* 三个头像必须一模一样大：显式锁死尺寸，避免某处样式或内边距把其中一种撑大 */
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  max-width: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  padding: 0;
+  margin-top: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e8eef6;
+}
+
+/* 机器人：整张头像铺满圆形（默认是内置的 /bot-avatar.svg，租户也可以换成自己的图）；
+   以前用的是"浅蓝底 + 平台 logo"，租户的客户会看到平台的标 */
+.v-avatar-bot {
+  object-fit: cover;
+  background: #eef4ff;
+  border-color: transparent;
+}
+
+.v-avatar-agent {
+  /* 人工客服：靛蓝渐变的人物头像（和客户头像同造型、不同配色；机器人是耳机标识） */
+  object-fit: cover;
+  border-color: transparent;
+  background: #eef2ff;
+}
+
+.v-avatar-self {
+  /* 客户自己：中性灰底 + 「我」——不抢眼，也一眼能认出哪条是自己发的 */
+  background: #eef2f7;
+  border-color: #e2e8f0;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* 名字 + 气泡竖排；气泡最大宽度在这里控制（扣掉头像和间距） */
+.v-main {
+  min-width: 0;
+  max-width: 78%;
+  display: flex;
+  flex-direction: column;
+}
+
+.v-row.is-self .v-main {
+  align-items: flex-end;
+}
+
+/* 时间分割线：居中灰字，代替"每条消息都挂时间" */
+.v-divider {
+  text-align: center;
+  font-size: 11px;
+  color: #a3aec2;
+  margin: 10px 0 8px;
+}
+
+/* 系统提示：居中灰胶囊，没有头像也没有气泡 */
+.v-system {
+  margin: 8px auto;
+  padding: 4px 12px;
+  max-width: 88%;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #7c8aa5;
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+/* 悬停出现的复制按钮：常态隐藏，鼠标移上去才出现 */
+.v-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  margin-top: 22px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+  color: #64748b;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+
+.v-row:hover .v-copy,
+.v-row:focus-within .v-copy {
+  opacity: 1;
+}
+
+.v-copy:hover {
+  color: #2563eb;
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+/* 复制按钮放在整行最外侧：对方消息在右边、自己的消息在左边，都不压内容 */
+.v-row .v-avatar { order: 0; }
+.v-row .v-main { order: 1; }
+.v-row .v-copy { order: 2; margin-top: 16px; }
+
+.v-row.is-self .v-copy { order: 0; margin-top: 2px; }
+.v-row.is-self .v-main { order: 1; }
+.v-row.is-self .v-avatar { order: 2; }
+
+/* 触屏设备没有 hover：按钮常驻（半透明），否则手机上根本点不出来 */
+@media (hover: none) {
+  .v-copy { opacity: 0.5; }
+}
+
+/* 正在输入：三个跳动的点，比"正在输入…"文字更像真人动作 */
+.v-typing {
+  padding: 10px 14px;
+}
+
+.v-typing-dots {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  height: 14px;
+}
+
+.v-typing-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #b6c2d4;
+  animation: v-typing-bounce 1.2s infinite ease-in-out;
+}
+
+.v-typing-dots i:nth-child(2) { animation-delay: 0.15s; }
+.v-typing-dots i:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes v-typing-bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.55; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+.v-bubble {
+  width: fit-content;
+  max-width: 100%;
+  padding: 9px 12px;
+  border-radius: 12px;
+  /* 靠近头像的那个角收小，形成"从人嘴里说出来"的观感 */
+  border-top-left-radius: 4px;
+  background: #fff;
+  border: 1px solid #e8eef6;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+}
+
+.is-self .v-bubble {
+  background: #2563eb;
+  border-color: #2563eb;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 4px;
+}
+
+/* 图片消息（文字 + 图）不走蓝色气泡：它是"媒体卡片"，
+   白底 + 深色文字才读得清，图片也不会被蓝底框住 */
+.is-self .v-bubble.is-image {
+  background: #fff;
+  border-color: #e8eef6;
+}
+
+.v-meta {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 3px;
+}
+
+/* 时间直接显示：聊天记录要能一眼看出"这句是什么时候说的"（悬停才出现的做法，客户根本不知道有）
+   颜色用 slate-400，和"客户名 / 有新消息"这些辅助信息同一个灰 */
+.v-time {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #94a3b8;
+  text-align: right;
+}
+
+.is-self .v-time {
+  color: #c7dbff;
+}
+
+/* 蓝气泡上的浅蓝时间，放到白底卡片上就看不见了，单独调回来 */
+.is-self .v-bubble.is-image .v-time {
+  color: #94a3b8;
+}
+
+.is-system .v-time {
+  color: #94a3b8;
+  text-align: left;
+}
+
+/* 发送中/发送失败的气泡给一点视觉提示（消息仍在发件箱，会自动补发） */
+.v-bubble.is-pending {
+  opacity: 0.72;
+}
+
+.v-bubble.is-failed {
+  border-color: #fca5a5;
+}
+
+.v-bubble.is-failed .v-time {
+  color: #f87171;
+  text-align: left;
+}
+
+.v-image {
+  display: block;
+  margin: 2px 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+/* 随图说的那句话：显示在图片上方（白底 + 深色字），和客户输入的阅读顺序一致 */
+.v-image-text {
+  display: block;
+  margin-bottom: 6px;
+  color: #1f2937;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.v-image img {
+  display: block;
+  max-width: 220px;
+  max-height: 220px;
+  border-radius: 8px;
+  background: #f1f5f9;
+  cursor: zoom-in;
+}
+
+/* 多张图（最多 3 张）：并排一行，尺寸统一，像相册一条 */
+.v-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.v-images.is-multi .v-image img {
+  width: 104px;
+  height: 104px;
+  object-fit: cover;
+}
+
+/* 待发送的图片：贴在输入框上方的一排"附件"（缩略图 + 文件名 + 移除） */
+.vi-attach {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.vi-attach-item {
+  width: 76px;
+}
+
+.vi-attach-thumb {
+  position: relative;
+  width: 76px;
+  height: 58px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #e2e8f0;
+}
+
+.vi-attach-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 上传中的遮罩：转圈盖在缩略图上，客户一眼知道"还在传" */
+.vi-attach-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.vi-attach-name {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #64748b;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vi-attach-hint {
+  flex: 1 1 130px;
+  min-width: 120px;
+  align-self: center;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.vi-attach-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(15, 23, 42, 0.55);
+  cursor: pointer;
+}
+
+.vi-attach-remove:hover {
+  background: #ef4444;
+}
+
+/* 发图按钮：和输入框同一行，左侧 */
+.vi-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vi-file {
+  display: none;
+}
+
+.vi-btn-text {
+  margin-left: 4px;
+}
+
+.v-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.v-content {
+  font-size: 13px;
+  line-height: 1.65;
+  color: #1f2937;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 自己说的话是蓝底，文字必须白；系统提示走灰字 */
+.is-self .v-content {
+  color: #fff;
+}
+
+.is-system .v-content {
+  color: #64748b;
+}
+
+/* "有新消息"提示：客户翻看记录时提示下面有新内容，点了才滚 */
+.v-new {
+  position: sticky;
+  bottom: 0;
+  display: block;
+  margin: 6px auto 0;
+  padding: 4px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.v-new:hover {
+  background: #dbeafe;
+}
+
+.v-input {
+  border-top: 1px solid #eef2f7;
+  padding: 12px 16px 14px;
+}
+
+.vi-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* 满意度评价：会话结束后在输入区下方出现，别抢主流程的视觉重量 */
+.csat-box {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.csat-box.done {
+  color: #16a34a;
+  font-size: 13px;
+  background: #f0fdf4;
+  border-color: #dcfce7;
+}
+
+.csat-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.csat-input {
+  width: 100%;
+}
+
+.vi-tip {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: #94a3b8;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v-error {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #f59e0b;
+  padding: 0 40px;
+  text-align: center;
+}
+
+.v-error p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: #475569;
+}
+
+.v-error span {
+  font-size: 12px;
+  color: #94a3b8;
+}
+</style>

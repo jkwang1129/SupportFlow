@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.ops.mapper.AnnouncementMapper">
+
+    <!-- 筛选条件：列表与计数共用，口径一致 -->
+    <sql id="announcementFilters">
+        a.is_deleted = FALSE
+        <if test="status != null">
+            AND a.status = #{status}
+        </if>
+        <if test="announceType != null">
+            AND a.announce_type = #{announceType}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (a.title ILIKE '%' || #{keyword} || '%'
+                 OR a.content ILIKE '%' || #{keyword} || '%')
+        </if>
+    </sql>
+
+    <select id="countAnnouncements" resultType="long">
+        SELECT COUNT(1) FROM announcement a
+         WHERE <include refid="announcementFilters"/>
+    </select>
+
+    <!-- 列名用带引号的驼峰别名：Map 返回给前端就是 announcementType / publishTime，
+         不用再靠 Jackson 命名策略（snake_case 落空那个坑） -->
+    <select id="selectAnnouncements" resultType="java.util.Map">
+        SELECT CAST(a.id AS VARCHAR)     AS "id",
+               a.title                   AS "title",
+               a.content                 AS "content",
+               a.announce_type           AS "announceType",
+               a.status                  AS "status",
+               a.publish_time            AS "publishTime",
+               a.create_time             AS "createTime",
+               a.creator                 AS "creator",
+               a.editor                  AS "editor"
+          FROM announcement a
+         WHERE <include refid="announcementFilters"/>
+         ORDER BY a.status ASC, a.create_time DESC, a.id DESC
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+</mapper>

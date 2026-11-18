@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.billing.mapper.PlatformRevenueMapper">
+
+    <!-- 实收口径：status=2（已支付）且有支付时间。待支付单独一列，不计进实收。 -->
+    <sql id="paidOrder">
+        o.is_deleted = FALSE AND o.status = 2 AND o.pay_time IS NOT NULL
+    </sql>
+
+    <select id="selectRevenueOverview" resultType="java.util.Map">
+        SELECT COUNT(1) FILTER (WHERE o.status = 2 AND o.pay_time IS NOT NULL)            AS paid_orders,
+               COALESCE(SUM(o.amount) FILTER (WHERE o.status = 2
+                                                 AND o.pay_time IS NOT NULL), 0)       AS paid_total,
+               COALESCE(SUM(o.amount) FILTER (WHERE o.status = 2
+                                                 AND o.pay_time IS NOT NULL
+                                                 AND to_char(o.pay_time, 'YYYY-MM') = #{cycleKey}), 0)
+                                                                                       AS paid_this_month,
+               COUNT(1) FILTER (WHERE o.status = 2 AND o.pay_time IS NOT NULL
+                                  AND to_char(o.pay_time, 'YYYY-MM') = #{cycleKey})     AS paid_orders_this_month,
+               COUNT(1) FILTER (WHERE o.status = 1)                                    AS pending_orders,
+               COALESCE(SUM(o.amount) FILTER (WHERE o.status = 1), 0)                  AS pending_amount,
+               COUNT(DISTINCT o.tenant_code) FILTER (WHERE o.status = 2)               AS paying_tenants
+          FROM billing_order o
+         WHERE o.is_deleted = FALSE
+    </select>
+
+    <select id="selectRevenueTrend" resultType="java.util.Map">
+        SELECT to_char(date_trunc('month', o.pay_time), 'YYYY-MM') AS month,
+               COUNT(1)                                            AS paid_orders,
+               COALESCE(SUM(o.amount), 0)                          AS paid_amount
+          FROM billing_order o
+         WHERE
+        <include refid="paidOrder"/>
+           AND o.pay_time &gt;= date_trunc('month', CURRENT_DATE) - make_interval(months =&gt; #{months} - 1)
+         GROUP BY date_trunc('month', o.pay_time)
+         ORDER BY date_trunc('month', o.pay_time)
+    </select>
+
+    <!-- 按套餐：套餐名以 plan 表为准（订单只存 plan_id，改过名也不会对不上） -->
+    <select id="selectPlanRevenue" resultType="java.util.Map">
+        SELECT p.id            AS plan_id,
+               p.plan_code     AS plan_code,
+               p.plan_name     AS plan_name,
+               COUNT(1)        AS paid_orders,
+               COALESCE(SUM(o.amount), 0) AS paid_amount
+          FROM billing_order o
+          JOIN plan p ON p.id = o.plan_id
+         WHERE
+        <include refid="paidOrder"/>
+         GROUP BY p.id, p.plan_code, p.plan_name
+         ORDER BY paid_amount DESC, p.id
+    </select>
+
+    <select id="selectPayMethodRevenue" resultType="java.util.Map">
+        SELECT o.pay_method     AS pay_method,
+               COUNT(1)         AS paid_orders,
+               COALESCE(SUM(o.amount), 0) AS paid_amount
+          FROM billing_order o
+         WHERE
+        <include refid="paidOrder"/>
+         GROUP BY o.pay_method
+         ORDER BY pay_method
+    </select>
+
+    <!-- 后付费账期：待结算 / 已结算 / 逾期三档分开，跟预付费实收各摆各的 -->
+    <select id="selectStatementSummary" resultType="java.util.Map">
+        SELECT COUNT(1)                                                            AS statements,
+               COALESCE(SUM(s.total_amount) FILTER (WHERE s.status = 2), 0)        AS settled_amount,
+               COALESCE(SUM(s.total_amount) FILTER (WHERE s.status = 1), 0)        AS pending_amount,
+               COALESCE(SUM(s.total_amount) FILTER (WHERE s.status = 3), 0)        AS overdue_amount,
+               COUNT(1) FILTER (WHERE s.status = 3)                               AS overdue_count
+          FROM billing_statement s
+         WHERE s.is_deleted = FALSE
+    </select>
+</mapper>

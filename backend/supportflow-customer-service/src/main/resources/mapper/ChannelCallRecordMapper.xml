@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.customer.mapper.ChannelCallRecordMapper">
+
+    <!-- 列表与计数共用同一套过滤条件，口径不会跑偏 -->
+    <sql id="callFilters">
+        r.is_deleted = FALSE
+        AND r.tenant_code = #{tenantCode}
+        <if test="channelId != null">
+            AND r.channel_id = #{channelId}
+        </if>
+        <if test="status != null">
+            AND r.status = #{status}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (r.caller ILIKE '%' || #{keyword} || '%'
+                 OR r.call_id ILIKE '%' || #{keyword} || '%'
+                 OR r.customer_no ILIKE '%' || #{keyword} || '%'
+                 OR r.ticket_no ILIKE '%' || #{keyword} || '%')
+        </if>
+    </sql>
+
+    <select id="countCallPage" resultType="long">
+        SELECT COUNT(1) FROM channel_call_record r
+         WHERE <include refid="callFilters"/>
+    </select>
+
+    <!-- 列名用带引号的驼峰别名：Map 返回给前端就不会出现 snake_case 落空 -->
+    <select id="selectCallPage" resultType="java.util.Map">
+        SELECT CAST(r.id AS VARCHAR)              AS "id",
+               r.call_id                          AS "callId",
+               r.caller                           AS "caller",
+               r.caller_name                      AS "callerName",
+               r.customer_no                       AS "customerNo",
+               r.session_no                        AS "sessionNo",
+               r.ticket_no                         AS "ticketNo",
+               r.status                            AS "status",
+               r.ivr_path                          AS "ivrPath",
+               r.ivr_label                         AS "ivrLabel",
+               r.duration_seconds                  AS "durationSeconds",
+               r.recording_url                     AS "recordingUrl",
+               r.agent_name                        AS "agentName",
+               r.transcript                        AS "transcript",
+               r.asr_text                          AS "asrText",
+               r.asr_status                        AS "asrStatus",
+               r.asr_hint                          AS "asrHint",
+               r.asr_time                          AS "asrTime",
+               r.event_count                       AS "eventCount",
+               r.first_event_time                  AS "firstEventTime",
+               r.answer_time                       AS "answerTime",
+               r.hangup_time                       AS "hangupTime",
+               r.create_time                       AS "createTime"
+          FROM channel_call_record r
+         WHERE <include refid="callFilters"/>
+         ORDER BY r.create_time DESC, r.id DESC
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <!-- 今日概况（页面顶部四格 + 平均时长） -->
+    <select id="selectCallSummary" resultType="java.util.Map">
+        SELECT COUNT(1)                                                          AS "total",
+               COUNT(1) FILTER (WHERE r.status = 3)                              AS "finished",
+               COUNT(1) FILTER (WHERE r.status = 2)                              AS "transferred",
+               COUNT(1) FILTER (WHERE r.status = 4)                              AS "missed",
+               COALESCE(ROUND(AVG(r.duration_seconds)
+                              FILTER (WHERE r.duration_seconds IS NOT NULL)), 0) AS "avgDuration"
+          FROM channel_call_record r
+         WHERE r.is_deleted = FALSE
+           AND r.tenant_code = #{tenantCode}
+           <if test="channelId != null">
+             AND r.channel_id = #{channelId}
+           </if>
+           AND r.create_time &gt;= CURRENT_DATE
+    </select>
+</mapper>

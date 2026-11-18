@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.user.mapper.SysUserMapper">
+
+    <!-- 按登录账号查询：手机号 / 邮箱 / 用户编号任一匹配 -->
+    <select id="findByAccount" resultType="io.supportflow.user.entity.SysUser">
+        SELECT id, tenant_code, user_no, name, phone, email, password, avatar,
+               user_type, status, last_login_time, create_time, update_time,
+               creator, editor, is_deleted
+          FROM sys_user
+         WHERE is_deleted = FALSE
+           AND (user_no = #{account}
+                OR lower(phone) = lower(#{account})
+                OR lower(email) = lower(#{account}))
+         ORDER BY id
+         LIMIT 1
+    </select>
+
+    <!-- 判断手机号或邮箱是否已被注册 -->
+    <select id="countByPhoneOrEmail" resultType="int">
+        SELECT COUNT(1)
+          FROM sys_user
+         WHERE is_deleted = FALSE
+           AND (lower(phone) = lower(#{phone}) OR lower(email) = lower(#{email}))
+    </select>
+
+    <!-- 企业成员列表：sys_user 主数据 + 当前角色，角色缺失时按企业管理员兜底 -->
+    <select id="selectEnterpriseMembers" resultType="java.util.Map">
+        SELECT u.id            AS user_id,
+               u.user_no       AS user_no,
+               u.name          AS member_name,
+               u.phone,
+               u.email,
+               u.avatar,
+               u.status        AS user_status,
+               u.last_login_time,
+               u.create_time   AS join_time,
+               COALESCE(r.role_code, 'ADMIN') AS role_code,
+               COALESCE(r.role_name, '企业管理员') AS role_name
+          FROM sys_user u
+          LEFT JOIN LATERAL (
+                SELECT r2.role_code, r2.role_name
+                  FROM sys_user_role ur
+                  JOIN sys_role r2 ON r2.id = ur.role_id
+                   AND r2.is_deleted = FALSE
+                 WHERE ur.user_id = u.id
+                   AND ur.tenant_code = u.tenant_code
+                 ORDER BY ur.id
+                 LIMIT 1
+               ) r ON TRUE
+         WHERE u.tenant_code = #{tenantCode}
+           AND u.user_type = 2
+           AND u.is_deleted = FALSE
+         ORDER BY u.create_time DESC, u.id DESC
+    </select>
+
+    <!-- ============ 平台账号中心（users） ============
+         平台侧要「平台账号 + 企业账号」一起看，所以不加 tenant_code 限制；
+         角色用 string_agg 聚合（一个账号可能有多个角色），比只取第一个更贴近事实。 -->
+    <sql id="platformUserFilters">
+        u.is_deleted = FALSE
+        <if test="userType != null">
+            AND u.user_type = #{userType}
+        </if>
+        <if test="status != null">
+            AND u.status = #{status}
+        </if>
+        <if test="tenantCode != null and tenantCode != ''">
+            AND u.tenant_code = #{tenantCode}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (u.name ILIKE '%' || #{keyword} || '%'
+                 OR u.user_no ILIKE '%' || #{keyword} || '%'
+                 OR u.phone ILIKE '%' || #{keyword} || '%'
+                 OR u.email ILIKE '%' || #{keyword} || '%'
+                 OR u.tenant_code ILIKE '%' || #{keyword} || '%')
+        </if>
+    </sql>
+
+    <sql id="platformUserColumns">
+        u.id             AS user_id,
+        u.user_no,
+        u.name,
+        u.phone,
+        u.email,
+        u.user_type,
+        u.tenant_code,
+        u.status,
+        u.last_login_time,
+        u.create_time,
+        r.role_ids,
+        r.role_codes,
+        r.role_names
+    </sql>
+
+    <sql id="platformUserJoins">
+        LEFT JOIN LATERAL (
+            SELECT string_agg(r2.id::text,  ',' ORDER BY ur.id) AS role_ids,
+                   string_agg(r2.role_code,  ',' ORDER BY ur.id) AS role_codes,
+                   string_agg(r2.role_name, '、' ORDER BY ur.id) AS role_names
+              FROM sys_user_role ur
+              JOIN sys_role r2 ON r2.id = ur.role_id AND r2.is_deleted = FALSE
+             WHERE ur.user_id = u.id
+               AND ur.tenant_code = u.tenant_code
+           ) r ON TRUE
+    </sql>
+
+    <select id="countPlatformUsers" resultType="long">
+        SELECT COUNT(1) FROM sys_user u
+         WHERE <include refid="platformUserFilters"/>
+    </select>
+
+    <select id="selectPlatformUsers" resultType="java.util.Map">
+        SELECT <include refid="platformUserColumns"/>
+          FROM sys_user u
+          <include refid="platformUserJoins"/>
+         WHERE <include refid="platformUserFilters"/>
+         ORDER BY u.create_time DESC, u.id DESC
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="selectPlatformUsersForExport" resultType="java.util.Map">
+        SELECT <include refid="platformUserColumns"/>
+          FROM sys_user u
+          <include refid="platformUserJoins"/>
+         WHERE <include refid="platformUserFilters"/>
+         ORDER BY u.create_time DESC, u.id DESC
+    </select>
+
+</mapper>

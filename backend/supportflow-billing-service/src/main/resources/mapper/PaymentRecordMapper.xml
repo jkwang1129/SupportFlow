@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.billing.mapper.PaymentRecordMapper">
+
+    <!-- 筛选条件：列表 / 计数 / 合计共用，口径必须一致（对账最忌讳"看到的和加起来的不是一批"） -->
+    <sql id="paymentFilters">
+        1 = 1
+        <if test="tenantCode != null and tenantCode != ''">
+            AND p.tenant_code ILIKE '%' || #{tenantCode} || '%'
+        </if>
+        <if test="bizType != null">
+            AND p.biz_type = #{bizType}
+        </if>
+        <if test="payMethodCode != null">
+            AND p.pay_method_code = #{payMethodCode}
+        </if>
+        <if test="status != null">
+            AND p.status = #{status}
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (p.pay_no ILIKE '%' || #{keyword} || '%'
+                 OR p.biz_no ILIKE '%' || #{keyword} || '%'
+                 OR p.tenant_code ILIKE '%' || #{keyword} || '%')
+        </if>
+        <if test="from != null and from != ''">
+            AND p.pay_time &gt;= #{from}::date
+        </if>
+        <if test="to != null and to != ''">
+            AND p.pay_time &lt; (#{to}::date + INTERVAL '1 day')
+        </if>
+    </sql>
+
+    <!-- 幂等落库：同一笔业务只写一条收款（三方回调重推、重复点确认收款都靠它） -->
+    <insert id="insertIgnore">
+        INSERT INTO payment_record (id, tenant_code, order_id, biz_type, biz_no, pay_no, pay_method,
+                                    pay_method_code, amount, status, pay_time, callback_raw, remark,
+                                    create_time, creator, editor)
+        VALUES (#{record.id}, #{record.tenantCode}, #{record.orderId}, #{record.bizType}, #{record.bizNo},
+                #{record.payNo}, #{record.payMethod}, #{record.payMethodCode}, #{record.amount},
+                #{record.status}, #{record.payTime}, #{record.callbackRaw}, #{record.remark},
+                #{record.createTime}, #{record.creator}, #{record.editor})
+        ON CONFLICT DO NOTHING
+    </insert>
+
+    <select id="countPayments" resultType="long">
+        SELECT COUNT(1) FROM payment_record p WHERE <include refid="paymentFilters"/>
+    </select>
+
+    <!-- 列名用带引号的驼峰别名：Map 到前端直接就是 payMethodCode / payTime -->
+    <select id="selectPayments" resultType="java.util.Map">
+        SELECT CAST(p.id AS VARCHAR)          AS "id",
+               p.tenant_code                  AS "tenantCode",
+               CAST(p.order_id AS VARCHAR)    AS "orderId",
+               p.biz_type                     AS "bizType",
+               p.biz_no                       AS "bizNo",
+               p.pay_no                       AS "payNo",
+               p.pay_method                   AS "payMethod",
+               p.pay_method_code              AS "payMethodCode",
+               p.amount                       AS "amount",
+               p.status                       AS "status",
+               to_char(p.pay_time, 'YYYY-MM-DD HH24:MI:SS') AS "payTime",
+               p.remark                       AS "remark",
+               p.creator                      AS "creator"
+          FROM payment_record p
+         WHERE <include refid="paymentFilters"/>
+         ORDER BY p.pay_time DESC NULLS LAST, p.id DESC
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="sumSucceeded" resultType="java.math.BigDecimal">
+        SELECT COALESCE(SUM(p.amount), 0) FROM payment_record p
+         WHERE p.status = 2 AND <include refid="paymentFilters"/>
+    </select>
+
+    <select id="selectOverview" resultType="java.util.Map">
+        SELECT COALESCE(SUM(amount) FILTER (WHERE status = 2), 0)                        AS "total",
+               COUNT(1) FILTER (WHERE status = 2)                                        AS "totalCount",
+               COALESCE(SUM(amount) FILTER (WHERE status = 2
+                     AND pay_time &gt;= date_trunc('month', CURRENT_DATE)), 0)            AS "month",
+               COALESCE(SUM(amount) FILTER (WHERE status = 2
+                     AND pay_time &gt;= CURRENT_DATE), 0)                                 AS "today",
+               COUNT(1) FILTER (WHERE biz_type = 1 AND status = 2)                        AS "orderCount",
+               COUNT(1) FILTER (WHERE biz_type = 2 AND status = 2)                        AS "statementCount"
+          FROM payment_record
+    </select>
+
+    <select id="selectByMethod" resultType="java.util.Map">
+        SELECT p.pay_method_code            AS "payMethodCode",
+               p.pay_method                 AS "payMethod",
+               COUNT(1)                     AS "count",
+               COALESCE(SUM(p.amount), 0)   AS "amount"
+          FROM payment_record p
+         WHERE p.status = 2
+        <if test="from != null and from != ''">
+            AND p.pay_time &gt;= #{from}::date
+        </if>
+        <if test="to != null and to != ''">
+            AND p.pay_time &lt; (#{to}::date + INTERVAL '1 day')
+        </if>
+         GROUP BY p.pay_method_code, p.pay_method
+         ORDER BY SUM(p.amount) DESC
+    </select>
+</mapper>

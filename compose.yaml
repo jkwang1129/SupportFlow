@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: supportflow
+      POSTGRES_PASSWORD: ${SUPPORTFLOW_DB_PASSWORD:?Set SUPPORTFLOW_DB_PASSWORD for local PostgreSQL}
+      POSTGRES_DB: postgres
+    ports:
+      - '127.0.0.1:${SUPPORTFLOW_DB_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./backend/deploy/db-init/db-init.sql:/docker-entrypoint-initdb.d/10-supportflow.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U supportflow -d user_db']
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  rustfs:
+    image: rustfs/rustfs:latest
+    profiles: [attachments]
+    command: [/data]
+    environment:
+      RUSTFS_ACCESS_KEY: ${SUPPORTFLOW_RUSTFS_ACCESS_KEY:-SUPPORTFLOWLOCAL}
+      RUSTFS_SECRET_KEY: ${SUPPORTFLOW_RUSTFS_SECRET_KEY:-supportflow-local-storage}
+      RUSTFS_ADDRESS: ':9000'
+      RUSTFS_CONSOLE_ENABLE: 'false'
+    ports:
+      - '127.0.0.1:${SUPPORTFLOW_RUSTFS_PORT:-9000}:9000'
+    volumes:
+      - attachments-data:/data
+
+volumes:
+  postgres-data:
+  attachments-data:

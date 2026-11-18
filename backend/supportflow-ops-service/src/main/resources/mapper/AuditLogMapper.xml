@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="io.supportflow.ops.mapper.AuditLogMapper">
+
+    <!-- 筛选条件：列表 / 计数 / 导出三条 SQL 共用，口径必须一致 -->
+    <sql id="auditFilters">
+        1 = 1
+        <if test="module != null and module != ''">
+            AND a.module = #{module}
+        </if>
+        <if test="result != null">
+            AND a.result = #{result}
+        </if>
+        <if test="operator != null and operator != ''">
+            AND (a.operator_name ILIKE '%' || #{operator} || '%'
+                 OR a.operator_id::text = #{operator})
+        </if>
+        <if test="keyword != null and keyword != ''">
+            AND (a.action ILIKE '%' || #{keyword} || '%'
+                 OR a.module ILIKE '%' || #{keyword} || '%'
+                 OR a.target_id ILIKE '%' || #{keyword} || '%'
+                 OR a.detail ILIKE '%' || #{keyword} || '%')
+        </if>
+        <if test="from != null and from != ''">
+            AND a.audit_time &gt;= #{from}::timestamp
+        </if>
+        <if test="to != null and to != ''">
+            AND a.audit_time &lt; (#{to}::timestamp + INTERVAL '1 day')
+        </if>
+    </sql>
+
+    <!-- 列名直接用带引号的驼峰别名：Map 返回时前端拿到的就是 auditTime / operatorName，
+         不用再在 Service 里做 snake_case → camelCase 转换（那个转换漏一处就会空白）。 -->
+    <sql id="auditColumns">
+        CAST(a.id AS VARCHAR) AS "id",
+        a.tenant_code         AS "tenantCode",
+        CAST(a.operator_id AS VARCHAR) AS "operatorId",
+        a.operator_name       AS "operatorName",
+        a.module              AS "module",
+        a.action              AS "action",
+        a.target_type         AS "targetType",
+        a.target_id           AS "targetId",
+        a.result              AS "result",
+        a.detail              AS "detail",
+        a.ip                  AS "ip",
+        a.request_id          AS "requestId",
+        a.audit_time          AS "auditTime"
+    </sql>
+
+    <select id="countLogs" resultType="long">
+        SELECT COUNT(1) FROM audit_log a
+         WHERE <include refid="auditFilters"/>
+    </select>
+
+    <select id="selectLogs" resultType="java.util.Map">
+        SELECT <include refid="auditColumns"/>
+          FROM audit_log a
+         WHERE <include refid="auditFilters"/>
+         ORDER BY a.audit_time DESC, a.id DESC
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="selectLogsForExport" resultType="java.util.Map">
+        SELECT <include refid="auditColumns"/>
+          FROM audit_log a
+         WHERE <include refid="auditFilters"/>
+         ORDER BY a.audit_time DESC, a.id DESC
+    </select>
+
+    <select id="selectModuleOptions" resultType="java.util.Map">
+        SELECT a.module AS "module", COUNT(1) AS "cnt"
+          FROM audit_log a
+         GROUP BY a.module
+         ORDER BY COUNT(1) DESC, a.module
+    </select>
+
+</mapper>
