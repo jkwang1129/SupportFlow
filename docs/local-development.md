@@ -129,3 +129,9 @@ python scripts/upgrade-runtime-security.py
 已有环境先备份并停业务，运行 `python scripts/setup-local-env.py` 补充独立的 `SUPPORTFLOW_BILLING_CUSTOMER_SECRET`，再执行 `python scripts/upgrade-runtime-security.py` 安装 `30-usage-batches.sql` 和最小授权，最后同步部署客服与计费。该密钥只分发给这两个服务；不能用旧无认证/无 batchId 的协议继续累加。新 Compose 空卷自动执行同一迁移。
 
 重放验收：`python scripts/test-usage-batches.py`，另有 `python scripts/test-security-flow.py` 的实际调度、落账及匿名拒绝用例。设计和回滚见 [ADR-0001](decisions/0001-usage-batch-delivery.md)。原始内存计数尚未形成并保存批次时仍可能因进程崩溃丢失；网关的 tenant_usage_daily 请求计数是另一条链路，未因本次计费改造获得去重保证。
+
+## AI 存活与就绪
+
+直接检查内部 AI 服务：`http://localhost:9100/api/ai/health/live` 表示存活；`http://localhost:9100/api/ai/health/ready` 只有登记的 AI/KB 结构与读取权限就绪才返回 200，否则为 503。兼容的 `/api/ai/health` 仍只表示存活，不要用它判定可以接流量。内部身份启动防护仍保持启用。
+
+旧 AUTO_MIGRATE/SCHEMA_DIR 配置不会触发运行期 DDL。结构升级由管理员在应用外执行；缺失时探针和业务 gate 都不会通过放宽权限来修复。`python scripts/test-runtime-security.py --with-ai-readiness` 在新旧两种隔离数据库中注入缺列、缺表、权限撤销并验证恢复，管理员只用于测试准备与故障注入，探测始终使用受限账号。范围及后续任务见 [ADR-0002](decisions/0002-schema-readiness-and-migrations.md)。

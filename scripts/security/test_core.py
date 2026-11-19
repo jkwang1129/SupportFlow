@@ -24,6 +24,8 @@ assert test.client.get("/ai/health").status_code == 200
 assert test.client.post("/ai/v1/kb/index").status_code == 404
 assert test.client.get("/ai/v1/bot/settings").status_code == 401
 assert direct.post("/api/ai/v1/kb/index", headers={"X-Tenant-Code": "TENANT_A", "X-Request-Id": "local-test"}).status_code == 401
+assert direct.get("/api/ai/health/live").status_code == 200
+assert direct.get("/api/ai/health/ready").status_code == 200
 test.note("HTTP boundary", "health=200, gateway internal KB=404, gateway console anonymous=401, direct anonymous=401")
 
 admin = test.login("acceptance-admin@example.test", admin_path.read_text(encoding="utf-8"))

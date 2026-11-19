@@ -8,6 +8,8 @@ import secrets
 import subprocess
 import time
 import psycopg
+import sys
+import argparse
 
 ROOT = Path(__file__).resolve().parents[1]
 INIT = ROOT / 'backend/deploy/db-init'
@@ -15,7 +17,7 @@ MIGRATION = ROOT / 'backend/supportflow-customer-service/src/main/resources/sche
 ROLES = ('user', 'tenant', 'customer', 'billing', 'ops', 'ai', 'kb', 'customer_platform')
 
 
-def scenario(legacy):
+def scenario(legacy, with_ai_readiness=False):
     name = 'supportflow-security-test-' + secrets.token_hex(6)
     env = dict(os.environ, POSTGRES_PASSWORD=secrets.token_urlsafe(32))
     for role in ROLES:
@@ -121,11 +123,20 @@ def scenario(legacy):
                     raise AssertionError('Cross-database access granted')
             except psycopg.OperationalError:
                 check(True, 'cross-database denied')
+        if with_ai_readiness:
+            subprocess.run([sys.executable,'-m','pytest','-q','tests/test_schema_readiness_postgres.py'],
+                           cwd=ROOT/'ai-service',check=True,env={**os.environ,
+                               'SUPPORTFLOW_SCHEMA_TEST_AI_URL':f"postgresql://supportflow_ai:{env['SUPPORTFLOW_AI_DB_PASSWORD']}@{host}/ai_db",
+                               'SUPPORTFLOW_SCHEMA_TEST_KB_URL':f"postgresql://supportflow_kb:{env['SUPPORTFLOW_KB_DB_PASSWORD']}@{host}/customer_db",
+                               'SUPPORTFLOW_SCHEMA_TEST_ADMIN_URL':f"postgresql://supportflow:{admin}@{host}/ai_db"})
         print(('LEGACY' if legacy else 'FRESH') + f': {checks} database security assertions passed; migration applied twice', flush=True)
     finally:
         run(['docker','rm','--force','--volumes',name], stdout=subprocess.DEVNULL)
 
 
 if __name__ == '__main__':
-    scenario(False)
-    scenario(True)
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--with-ai-readiness',action='store_true')
+    args=parser.parse_args()
+    scenario(False,args.with_ai_readiness)
+    scenario(True,args.with_ai_readiness)

@@ -14,6 +14,8 @@ from .config import get_settings
 from .core.internal_auth import install_internal_auth
 from .core.logging_config import setup_logging
 from .core.schema_guard import ensure_schema
+from .core import schema_guard
+from starlette.concurrency import run_in_threadpool
 from .core.trace import TRACE_ID_HEADER, new_trace_id, set_trace_id
 
 # 先初始化日志再导入 API：保证模块级组件（如 LLM 网关）的启动日志走统一格式
@@ -53,10 +55,10 @@ def _schema_hint(message: str) -> str:
     """按报错里出现的对象名判断是哪个库，只给对应的那一个脚本。"""
     text = message or ""
     if any(name in text for name in _AI_DB_OBJECTS):
-        return "bash scripts/migrate-ai-db.sh（AI 库）"
+        return "backend/deploy/db-init/README.md（AI 库，运行账号不得执行 DDL）"
     if any(name in text for name in _CUSTOMER_DB_OBJECTS):
-        return "bash scripts/migrate-customer-db.sh（客户库）"
-    return "bash scripts/migrate-ai-db.sh（AI 库）/ bash scripts/migrate-customer-db.sh（客户库）"
+        return "backend/deploy/db-init/README.md（客户库，运行账号不得执行 DDL）"
+    return "backend/deploy/db-init/README.md（先核对数据库与缺失结构）"
 
 
 def _install_schema_error_handler(app: FastAPI) -> None:
@@ -100,7 +102,7 @@ def create_app() -> FastAPI:
     settings = get_settings()
     from .core.runtime_roles import require_runtime_roles
     require_runtime_roles()
-    # 启动先自检 ai_db 结构（缺 bot_dialogue / 接待策略字段会自动补，补不了就大声报出来）
+    # Only diagnose here; runtime identities cannot migrate schema.
     ensure_schema()
     app = FastAPI(
         title=settings.app_name,
@@ -135,6 +137,14 @@ def create_app() -> FastAPI:
     app.include_router(observability.router, prefix=settings.api_prefix)
     # 模型训练中心：训练任务 / 版本记录 / 灰度切换
     app.include_router(training.router, prefix=settings.api_prefix)
+    @app.middleware("http")
+    async def require_ready(request, call_next):
+        probes = {settings.api_prefix + path for path in ("/ai/health", "/ai/health/live", "/ai/health/ready")}
+        if request.url.path not in probes and not await run_in_threadpool(schema_guard.is_ready):
+            return JSONResponse({"detail": "AI 服务依赖尚未就绪"}, status_code=503)
+        return await call_next(request)
+
+    # Added last: identity/operation checks run before the schema gate, even during outages.
     install_internal_auth(app, settings)
     _install_trace_middleware(app)
     return app

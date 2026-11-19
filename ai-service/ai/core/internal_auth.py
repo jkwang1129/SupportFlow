@@ -65,7 +65,8 @@ def install_internal_auth(app: FastAPI, settings: Settings) -> None:
     @app.middleware("http")
     async def verify(request: Request, call_next):
         path = request.url.path
-        if request.method == "GET" and path == prefix + "/ai/health":
+        if request.method == "GET" and path in {prefix + probe for probe in (
+                "/ai/health", "/ai/health/live", "/ai/health/ready")}:
             return await call_next(request)
         if not path.startswith(prefix + "/"):
             return JSONResponse({"detail": "Not found"}, status_code=404)

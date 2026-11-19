@@ -20,6 +20,7 @@ def client(monkeypatch):
     settings = Settings(_env_file=None, **{f"{role}_secret": key for role, key in KEYS.items()})
     monkeypatch.setattr(main, "get_settings", lambda: settings)
     monkeypatch.setattr(main, "ensure_schema", lambda: None)
+    monkeypatch.setattr(main.schema_guard, "is_ready", lambda: True)
     with TestClient(main.create_app()) as test_client:
         yield test_client
 

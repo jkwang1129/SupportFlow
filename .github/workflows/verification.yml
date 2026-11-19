@@ -43,7 +43,7 @@ jobs:
       - name: Verify evaluation gate negative cases
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
       - name: Verify fresh and legacy runtime database privileges
-        run: python scripts/test-runtime-security.py
+        run: python scripts/test-runtime-security.py --with-ai-readiness
       - name: Verify runtime credential distribution
         run: python -m unittest discover -s scripts/security -p 'unit_*.py' -v
       - name: Verify actual service flows with restricted identities

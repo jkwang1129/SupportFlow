@@ -8,6 +8,6 @@ from psycopg.rows import dict_row
 from ..config import get_settings
 
 
-def connect():
+def connect(**kwargs):
     settings = get_settings()
-    return psycopg.connect(settings.database_url, row_factory=dict_row)
+    return psycopg.connect(settings.database_url, row_factory=dict_row, **kwargs)

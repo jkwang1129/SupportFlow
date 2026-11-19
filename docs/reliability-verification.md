@@ -123,3 +123,16 @@ python scripts/report-rag-contract.py --junit .local/implementation/final-python
 边界：原始内存增量/尚未落库的候选仍可能在崩溃时丢失；这批保证已持久化批次的幂等重报，不是业务事件到计费的端到端 exactly-once。停用/删除租户的待发记录保留供管理核查。网关请求量进入 tenant_usage_daily，是另一条链路，后续单独改造。认证/永久内容冲突不会丢弃批次，需修正配置或管理员核查；完整死信运营界面尚无。
 
 迁移及回滚见运行指南和 ADR。已有数据库先备份、停业务，安装同一 SQL/最小授权后同步部署发送与接收端；不能退回无签名、无批次协议或清空账本。后续 PR-7 将该增量纳入版本化迁移。未推送，不将本地结果称远程 CI 成功或生产表现。
+
+## PR-7 子批次 1：AI 只读 Readiness（2026-11-19）
+
+基线 e16bd3e。修改 ai/core/schema_guard.py、db.py、main.py、internal_auth.py、api/health.py；新增 schema 单元/PG 故障测试，修正原授权测试夹具以隔离 schema gate；CI 新增实际数据库 Readiness 回归。开发/初始化及客服 SQL 资源文档移除不存在的执行路径。设计与回滚见 [ADR-0002](decisions/0002-schema-readiness-and-migrations.md)。
+
+- 修复前 4 个复现用例全部失败：开启旧配置可触发 DDL；新存活/就绪探针不存在；结构缺失时已认证业务仍进入模型。日志 `.local/implementation/pr7-readiness-before.log`。
+- 修复后 Python **46 passed、6 skipped、1 xfailed**。6 个跳过为 KB 2 项和实际 Readiness 4 项，均另由隔离脚本运行；已知引用正文 xfail 不作为通过。输出 `pr7-readiness-python.log`。
+- `python scripts/test-runtime-security.py --with-ai-readiness`：新/旧库各 **4 项实际 Readiness 用例**通过，原数据库安全断言仍 **28+29=57** 通过。运行账号查询结构；管理员只在隔离环境中重命名列/表或撤销读取权限，finally 恢复。验证 INSERT/UPDATE 权限仍存在时，撤销 SELECT 也不能错误就绪。输出 `pr7-readiness-postgres.log`。
+- `python scripts/test-security-flow.py`：新/旧库实际服务全部通过，包含原有核心链路、受限账号、双租户/媒体权限和新增签名计费链路。输出 `pr7-readiness-services.log`；测试容器、数据卷、网络均清理。
+
+行为：运行账号只读取 metadata，不论旧 AUTO_MIGRATE/SCHEMA_DIR 如何配置都不执行 DDL。认证和操作授权先于 schema gate；未授权仍拒绝，已认证但结构未就绪返回 503 且不调用模型。存活与就绪分离，公开响应不包含 DSN 或结构详情。
+
+范围：仅 AI/KB 登记结构与读取权限检查，不等于全量版本/类型/索引/RLS 验证。危险身份/启动关键连接仍会触发原有启动防护；没有宣称所有数据库故障下进程都能先启动。每请求 metadata 开销未进行性能评测。Java Readiness、版本历史/checksum/锁、完整 init/migrate/verify 仍待 PR-7 下一子批次，PR-7 尚未关闭。无需 DDL/数据迁移；不得用恢复自动 DDL 或放宽账号权限回退。
