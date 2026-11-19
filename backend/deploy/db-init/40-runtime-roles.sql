@@ -96,3 +96,22 @@ GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO supportflow_ai;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform;
 REVOKE ALL ON SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform;
+
+\connect customer_db
+DO $$ BEGIN
+ IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   GRANT SELECT ON public.supportflow_schema_history TO supportflow_customer;
+ END IF;
+END $$;
+
+\connect billing_db
+DO $$ BEGIN
+ IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   GRANT SELECT ON public.supportflow_schema_history TO supportflow_billing;
+ END IF;
+END $$;
+
+-- Preserve the historical caller database after provisioning.
+\connect customer_db

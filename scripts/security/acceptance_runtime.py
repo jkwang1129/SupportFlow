@@ -68,20 +68,23 @@ with (logs / "compose.log").open("wb") as output:
         subprocess.run([*compose, "up", "-d", "--wait", "postgres", "rustfs"], cwd=root, env=env,
                        stdout=output, stderr=subprocess.STDOUT, timeout=150, check=True)
         print("Acceptance database and attachment storage ready", flush=True)
+        commands = [*compose, 'exec', '-T', '-e', 'PGPASSWORD']
+        for role in ('USER','TENANT','CUSTOMER','BILLING','OPS','AI','KB','CUSTOMER_PLATFORM'):
+            commands += ['-e', f'SUPPORTFLOW_{role}_DB_PASSWORD']
+        commands += ['postgres','psql','-U','supportflow','-d','customer_db','-wXq','-v','ON_ERROR_STOP=1']
         if legacy:
-            commands = [*compose, 'exec', '-T', '-e', 'PGPASSWORD']
-            for role in ('USER','TENANT','CUSTOMER','BILLING','OPS','AI','KB','CUSTOMER_PLATFORM'):
-                commands += ['-e', f'SUPPORTFLOW_{role}_DB_PASSWORD']
-            commands += ['postgres','psql','-U','supportflow','-d','customer_db','-wXq','-v','ON_ERROR_STOP=1']
-            sql = """INSERT INTO file_meta(id,tenant_code,file_no,file_name,object_key,biz_type,creator)
+            seed = """INSERT INTO file_meta(id,tenant_code,file_no,file_name,object_key,biz_type,creator)
                 VALUES (90001,'PLATFORM','OLD_LICENSE','old.png','unchanged/old.png',2,'99');
-                CREATE POLICY old_permissive ON file_meta USING(true) WITH CHECK(true);
-            """
-            sql += (root / 'backend/supportflow-customer-service/src/main/resources/schema/customer_db_runtime_security.sql').read_text(encoding='utf-8')
-            sql += (root / 'backend/deploy/db-init/40-runtime-roles.sql').read_text(encoding='utf-8')
-            subprocess.run(commands, cwd=root, env={**env,'PGPASSWORD':password}, input=sql,
-                           text=True, encoding='utf-8', stdout=output, stderr=subprocess.STDOUT, timeout=60, check=True)
-            print('Populated legacy database upgraded in place', flush=True)
+                CREATE POLICY old_permissive ON file_meta USING(true) WITH CHECK(true);"""
+            subprocess.run(commands,cwd=root,env={**env,'PGPASSWORD':password},input=seed,
+                           text=True,encoding='utf-8',stdout=output,stderr=subprocess.STDOUT,check=True)
+        from migration_engine import migrate_databases
+        migrate_databases(env)
+        subprocess.run(commands,cwd=root,env={**env,'PGPASSWORD':password},
+                       input=(root/'backend/deploy/db-init/40-runtime-roles.sql').read_text(encoding='utf-8'),
+                       text=True,encoding='utf-8',stdout=output,stderr=subprocess.STDOUT,check=True)
+        migrate_databases(env,verify=True)
+        print('Versioned migrations and runtime role provisioning verified' + (' after legacy seed' if legacy else ''),flush=True)
         admin_env = dict(env, PYTHONPATH=str(root / "scripts"))
         admin_password = secrets.token_urlsafe(20) + "X9"
         subprocess.run([sys.executable, "-c", "import os, sys, runpy; from unittest.mock import patch; "

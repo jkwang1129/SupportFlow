@@ -1,0 +1,10 @@
+{
+  "format": 1,
+  "migrations": [
+    {"database":"customer_db","version":"001","name":"channel lookups","source":"backend/deploy/db-init/channel-tenant-lookup.sql"},
+    {"database":"customer_db","version":"002","name":"public bot avatar projection","source":"backend/deploy/db-init/public-bot-avatar.sql"},
+    {"database":"customer_db","version":"003","name":"strict runtime tenant policies","source":"backend/supportflow-customer-service/src/main/resources/schema/customer_db_runtime_security.sql"},
+    {"database":"customer_db","version":"004","name":"durable usage outbox","source":"backend/deploy/db-init/30-usage-batches.sql"},
+    {"database":"billing_db","version":"001","name":"usage batch deduplication ledger","source":"backend/deploy/db-init/30-usage-batches.sql"}
+  ]
+}

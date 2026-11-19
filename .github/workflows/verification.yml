@@ -35,6 +35,8 @@ jobs:
         run: python scripts/test-customer-rls.py --with-ai
       - name: Verify PostgreSQL usage batch ledger and outbox
         run: python scripts/test-usage-batches.py
+      - name: Verify versioned SQL migrations and rollback
+        run: python scripts/test-versioned-migrations.py
       - name: Verify AI service authorization
         working-directory: ai-service
         run: python -m pytest -q --junitxml=../.local/verification/ai-tests.xml

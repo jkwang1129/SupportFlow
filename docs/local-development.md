@@ -7,8 +7,10 @@
 使用 Docker Compose 时，先生成本机配置。脚本只补充缺失项，保留已有值；根目录 `.env` 和 AI 的 `.env` 均不提交到 Git。
 
 ```powershell
+python -m pip install "psycopg[binary]>=3.1,<4"
 python scripts/setup-local-env.py
 docker compose up -d --wait postgres
+python scripts/upgrade-runtime-security.py
 ```
 
 新建空数据卷会依次执行六库基线、渠道查询/公开头像函数、v31 严格 RLS、计费批次账本/待发记录、运行账号配置。`supportflow` 仅用于建库与迁移，表仍由它持有；Java 各服务使用 `supportflow_user/tenant/customer/billing/ops`，AI 使用 `supportflow_ai`，知识检索使用 `supportflow_kb`，平台限定操作使用 `supportflow_customer_platform`。八个运行账号都不是 owner、超级用户或 BYPASSRLS；不能建库、建角色或执行表 DDL。账号仅能连接自己的数据库，customer/KB/平台三者分别获得不同权限。不要手动把管理员账号填到应用连接配置中；客服和 AI 会拒绝危险的运行身份。
@@ -135,3 +137,9 @@ python scripts/upgrade-runtime-security.py
 直接检查内部 AI 服务：`http://localhost:9100/api/ai/health/live` 表示存活；`http://localhost:9100/api/ai/health/ready` 只有登记的 AI/KB 结构与读取权限就绪才返回 200，否则为 503。兼容的 `/api/ai/health` 仍只表示存活，不要用它判定可以接流量。内部身份启动防护仍保持启用。
 
 旧 AUTO_MIGRATE/SCHEMA_DIR 配置不会触发运行期 DDL。结构升级由管理员在应用外执行；缺失时探针和业务 gate 都不会通过放宽权限来修复。`python scripts/test-runtime-security.py --with-ai-readiness` 在新旧两种隔离数据库中注入缺列、缺表、权限撤销并验证恢复，管理员只用于测试准备与故障注入，探测始终使用受限账号。范围及后续任务见 [ADR-0002](decisions/0002-schema-readiness-and-migrations.md)。
+
+## 版本化增量检查
+
+`python scripts/upgrade-runtime-security.py` 现通过版本化 Runner 安装已登记的客服/计费增量，再独立配置运行角色并验证。结构历史与 checksum 位于各库 supportflow_schema_history；运行账号只能读取本库历史。仅检查：`python scripts/db-migrate.py verify`。该命令不会执行 DDL。已应用脚本变更、历史缺口或并发迁移会拒绝继续，不能删除历史绕过。
+
+清单、事务/多库失败语义和未覆盖项见 [迁移说明](../backend/deploy/migrations/README.md)。当前尚未完成其他四库基线采纳、统一 init、全量结构漂移检测和 Java Readiness，PR-7 仍未关闭。

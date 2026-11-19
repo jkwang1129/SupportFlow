@@ -18,3 +18,7 @@
 ## 回滚
 
 无数据库迁移。同步回退 AI gate/探针/测试即可，但会恢复结构未就绪仍接流量的行为；不得通过恢复自动 DDL 或给运行角色加迁移权限回退。健康检查部署配置要明确 `/health` 只是存活，不可作为可接流量的依据。
+
+## 后续子批次 2
+
+customer_db/billing_db 增量现已进入 manifest + checksum/事务/锁 Runner，接入原升级入口和实际服务验收，详见 `backend/deploy/migrations/README.md`。这是后续增量，不改变上述只读 Readiness 子批次的验证范围；Java、其他四库基线及全量 schema 漂移检查仍待后续实施。

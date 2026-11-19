@@ -136,3 +136,19 @@ python scripts/report-rag-contract.py --junit .local/implementation/final-python
 行为：运行账号只读取 metadata，不论旧 AUTO_MIGRATE/SCHEMA_DIR 如何配置都不执行 DDL。认证和操作授权先于 schema gate；未授权仍拒绝，已认证但结构未就绪返回 503 且不调用模型。存活与就绪分离，公开响应不包含 DSN 或结构详情。
 
 范围：仅 AI/KB 登记结构与读取权限检查，不等于全量版本/类型/索引/RLS 验证。危险身份/启动关键连接仍会触发原有启动防护；没有宣称所有数据库故障下进程都能先启动。每请求 metadata 开销未进行性能评测。Java Readiness、版本历史/checksum/锁、完整 init/migrate/verify 仍待 PR-7 下一子批次，PR-7 尚未关闭。无需 DDL/数据迁移；不得用恢复自动 DDL 或放宽账号权限回退。
+
+## PR-7 子批次 2：现有增量的版本历史与迁移锁
+
+基线 9dd9acb。新增 backend/deploy/migrations/manifest.json、scripts/migration_engine.py、db-migrate.py 和测试 Runner；接入 upgrade-runtime-security.py、运行角色历史表权限、CI 与实际服务启动。原 SQL 不复制，按数据库段载入并规范化换行符计算 checksum。
+
+设计：每库 session advisory lock，竞争立即拒绝；每条 SQL 与历史回执同事务提交。拒绝 checksum 漂移、历史缺口、未知更新版本、错误目标库、外层事务误用与不支持的 psql 指令/非后端 SQL 文件。运行角色不能 apply，verify 不执行 DDL。角色/密码 provisioning 单独执行，不保存到版本历史；只给本库运行身份 SELECT 历史，不给 DML。
+
+实际验证：
+
+- `python scripts/test-versioned-migrations.py`：**15 项通过**（5 项解析/清单 + 10 项实际 PG），并执行真实 migrate/verify CLI、运行账号 CLI 拒绝、首次升级和重复核对。验证失败 SQL 连同回执回滚、修复后重试只执行一次；checksum 篡改、锁竞争、历史缺口、只读 verify、外层事务都覆盖。保留旧证照 ID/对象 key，归属按现有严格策略升级。输出 `.local/implementation/pr7-migrations-final.log`。
+- `python scripts/test-security-flow.py`：新库与带历史数据旧库均先执行版本化增量、独立角色配置、verify，再启动完整服务，全部通过。确认 customer 历史 **4** 条、billing 历史 **1** 条，checksum 长度正确，本库运行账号不能修改历史；原核心/隔离/签名计费链路不退化。输出 `pr7-migration-services.log`。
+- parser/evaluation 普通单元测试中，实际数据库用例会跳过，不能计为通过；上面的专用脚本在隔离 PostgreSQL 17 中单独执行，容器最终清理。
+
+部署步骤与恢复见 backend/deploy/migrations/README.md。新建六库后也应通过升级入口登记现有增量。多库不构成一个原子事务：前库已成功、后库失败时保留前库结果，停止业务并修复后重跑，从待执行版本继续；不要删除历史、改 checksum 或恢复宽松 RLS 回退。无生产吞吐/耗时改进声明。
+
+范围：当前登记的是 customer_db/billing_db 的五个现有增量单元；verify 核对历史/checksum，不代表全量 schema/index/RLS 漂移检查。其他四库基线采纳、统一 init、Java Readiness 仍待下一子批次，PR-7 尚未整体关闭。

@@ -33,6 +33,10 @@ if __name__ == '__main__':
                 billing_psql = ['docker','exec',project+'-postgres-1','psql','-U','supportflow','-d','billing_db','-XqAt','-c']
                 ledger = subprocess.check_output([*billing_psql,"SELECT count(*),has_table_privilege('supportflow_billing','billing_usage_batch','DELETE') FROM billing_usage_batch"],text=True).strip().split('|')
                 assert int(ledger[0]) >= 1 and ledger[1] == 'f', ledger
+                versions = subprocess.check_output([*psql,"SELECT count(*),bool_and(length(checksum)=64),has_table_privilege('supportflow_customer','supportflow_schema_history','INSERT') FROM supportflow_schema_history"],text=True).strip().split('|')
+                assert versions == ['4','t','f'], versions
+                billing_versions = subprocess.check_output([*billing_psql,"SELECT count(*),has_table_privilege('supportflow_billing','supportflow_schema_history','UPDATE') FROM supportflow_schema_history"],text=True).strip().split('|')
+                assert billing_versions == ['1','f'], billing_versions
                 print('Observed five restricted Java database identities; mandatory platform audit receipts matched', flush=True)
                 print(('LEGACY UPGRADE' if scenario else 'FRESH DEFAULT') + ': full security flow passed', flush=True)
             finally:
