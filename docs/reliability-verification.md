@@ -179,3 +179,18 @@ python scripts/report-rag-contract.py --junit .local/implementation/final-python
 - `python scripts/test-security-flow.py`：新/旧库完整实际服务和 Java Readiness 故障回归均通过；六库均有历史，新增四库历史各一条、checksum 64 位、本库运行账号可 SELECT 而不能 INSERT/UPDATE/DELETE。核心链路/隔离/签名计费不退化，容器/卷/网络清理。输出 `pr7-sixdb-services.log`。
 
 首次 baseline 只读验证结构，成功只新增历史回执，无业务数据/DDL 变更。后续历史 verify 不会重放历史结构快照，不等于持续漂移检查；也不证明 RLS/权限安全，后者继续由独立专项验收。PR-7 尚缺统一 init 与持续全量结构/索引/RLS 核验，阶段 A 仍未退出。没有生产流量、延迟或成本改善声明；本轮仅本地提交，无远程 CI 结论。
+
+## PR-7 子批次 5：实际 schema/index/RLS 漂移核验
+
+基线 6713a42。新增 schema_drift.py、current-schema.json、隔离 PG 夹具和 test-schema-drift.py；CLI verify 在历史核对后验证实际结构，升级和完整服务启动在角色配置前后验证。CI 加入漂移门禁。无业务 DDL，设计/范围/演进/回退见 ADR-0002 及迁移说明。
+
+实际验证：
+
+- `python scripts/test-schema-drift.py`：六库只读正例，**87 张表、1 视图、4 个受控函数**匹配；**14 类实际 SQL 故障**（表/列/类型/默认值/非空/索引/约束/ENABLE/FORCE/缺策略/策略谓词/额外策略/函数权限属性/额外表）、**3 类 catalog 元数据异常**（失效索引、未知视图/受控函数）全部拒绝。另验 stale contract/新 manifest 不一致和实际 CLI 关闭 FORCE 时失败、修复后成功。输出 `.local/implementation/pr7-schema-drift-final.log`。
+- `python scripts/test-versioned-migrations.py`：**17 项通过**及六库真实 CLI migrate/verify。版本历史与结构核验共存，原事务回滚/锁/权限/数据保留不退化。输出 `pr7-drift-migrations.log`。
+- `python scripts/test-security-flow.py`：新库/历史库均在角色配置前后通过结构校验，再完成实际核心链路、双租户隔离、媒体/平台权限、签名计费及 Java Readiness 三类故障回归。六库历史权限匹配，测试容器/卷/网络清理。输出 `pr7-drift-services.log`。
+- 新增候选输出选项允许在 .local 生成待审结构，保留拒绝覆盖行为；独立从第二套 PG 初始化生成的候选与登记 JSON 内容一致，输出 `pr7-schema-candidate.log`。
+
+历史库服务夹具现在模拟已知 file_meta_tenant_isolation 被改宽，由原增量替换；未知额外策略则应阻断 verify，不能自动信任。原独立 P0 测试的额外宽松策略/strict guard 覆盖保留。本子批次没有修改任何已应用 SQL 或 checksum。
+
+当前检查范围为登记 public 应用结构及受控函数；迁移历史另验，不含全部授权/owner/触发器/扩展版本/业务数据和备份。运行期 Readiness 仍是最小结构 gate，不将单次 metadata 检查称生产性能数据。PR-7 还剩统一 init，阶段 A 尚未退出；本地成果不等于远程 CI 或真实上线。

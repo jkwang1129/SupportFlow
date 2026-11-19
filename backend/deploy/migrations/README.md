@@ -9,7 +9,7 @@ python scripts/db-migrate.py verify
 python scripts/db-migrate.py verify --database customer_db
 ```
 
-从仓库根运行。管理员连接由本机忽略配置中的 `SUPPORTFLOW_DB_HOST/PORT/PASSWORD` 提供，用户名默认 `supportflow`，可用 `SUPPORTFLOW_MIGRATION_DB_USER` 指定独立迁移身份。运行账号不能 apply；`verify` 只读历史和 checksum，不创建表、不重放 SQL，不等于全量结构/数据验证。缺少历史或有待执行版本会失败。
+从仓库根运行。管理员连接由本机忽略配置中的 `SUPPORTFLOW_DB_HOST/PORT/PASSWORD` 提供，用户名默认 `supportflow`，可用 `SUPPORTFLOW_MIGRATION_DB_USER` 指定独立迁移身份。运行账号不能 apply；`verify` 使用只读事务配置核对历史/checksum，并与 current-schema.json 对照实际结构；不创建表、不重放 SQL，不是业务数据或完整权限审计。缺少历史或有待执行版本会失败。
 
 新建空环境仍由 `backend/deploy/db-init/db-init.sql`/Compose 初始化六库。初始化与增量不是一个动作；首次启动业务前运行 `python scripts/upgrade-runtime-security.py`，它执行版本化增量、独立的运行账号配置，再 verify。旧环境先备份并停业务，使用同一升级命令，不能重跑非幂等基线、删除数据卷或清空迁移历史。
 
@@ -26,7 +26,7 @@ python scripts/db-migrate.py verify --database customer_db
 
 ## 尚未覆盖
 
-当前六库均有版本计划：客服四条增量、计费一条增量，其余四库各一条基线采纳。AI 与五个 Java 数据服务已有只读 Readiness。全量持续类型/索引/RLS 漂移检测与统一 init 命令仍属于 PR-7 后续子批次；不能据此宣布整个六库迁移与生产部署已经验收完成。
+当前六库均有版本计划：客服四条增量、计费一条增量，其余四库各一条基线采纳。AI 与五个 Java 数据服务已有只读 Readiness。统一 init 命令仍属于 PR-7 后续子批次；不能据此宣布整个六库迁移与生产部署已经验收完成。
 
 ## 四库基线采纳
 
@@ -34,6 +34,18 @@ AI/User/Tenant/Ops 的 `001` 为 baseline 操作，不执行建表 SQL。JSON �
 
 契约属于不可改写的历史版本。`--write-new-contracts` 只用于首次生成缺失文件，已存在即失败，不能覆盖契约来绕过错误。日常验收运行 `python scripts/test-schema-baselines.py`；该脚本启动独立 PG，检查 35 张表基线和原始种子表行数保留，注入缺表/缺列/类型/索引不兼容，检查失败不写历史。Runner 通用事务、checksum、锁、权限与 CLI 用例见 `python scripts/test-versioned-migrations.py`。
 
-这是首次采纳时的兼容检查。已经应用的 baseline 不会在每次 migrate/verify 重放结构检查；后续 verify 仍只核历史/checksum。现有 AI/Java Readiness 只核最小结构/读取权限，均不能替代后续完整漂移检查。基线不声称 RLS/权限正确，原受限角色和严格隔离验收继续独立运行。
+这是首次采纳时的兼容检查。已经应用的 baseline 不会在每次 migrate/verify 重放结构检查；后续 baseline 本身不重放，但 verify 会另以当前 desired-state 契约执行结构漂移检查。现有 AI/Java Readiness 只核最小结构/读取权限，不能替代发布前完整漂移检查。基线不声称 RLS/权限正确，原受限角色和严格隔离验收继续独立运行。
 
 回退需停业务并使用已测试的版本；本批扩展了历史计划，退到仅认识两库的工具后不可用于核对四库。保留四库历史，不能删除行或改 checksum 来退版本。业务结构不因采纳发生改变；数据库内容恢复始终使用独立验证的备份，不自动清库。
+
+## 当前实际结构漂移
+
+`python scripts/db-migrate.py verify` 同时核对六库历史和 current-schema.json 中登记的 **87 张应用表、1 个视图、4 个 supportflow_ 函数**。检查列集合、类型/默认值/非空/identity/generated、索引定义及有效状态、约束、RLS ENABLE/FORCE、策略集合/主体/操作/谓词，以及视图和受控函数定义。额外的未登记表/列/索引/约束/策略/视图/受控函数也会拒绝；不会自动把数据库当前状态登记为正确状态。迁移 manifest 的版本/checksum 必须与 desired-state 契约一致，避免新 SQL 配旧快照。
+
+公开 schema 中的迁移历史表由独立历史/权限检查负责，pgvector 扩展函数不属于 supportflow_ 函数范围。此核验不覆盖所有授权、owner、触发器、扩展版本、业务数据、外部对象或备份；数据库身份/租户权限仍须运行独立安全测试。应用 Readiness 不会逐请求执行本完整检查；部署必须在启动业务前执行 verify，未知策略等漂移会停止发布。
+
+升级入口在配置运行角色前和配置后分别 verify，防止给未知表批量授予 DML。已知旧策略由既有增量替换；遇到额外未知策略时停止，由管理员核查和迁移，不自动删除或信任。完整服务历史库夹具模拟已知旧策略被改宽；独立 RLS 安全测试仍保留额外宽松策略对 restrictive guard 的验证，结构负面测试则确认未知额外策略会被拒绝。
+
+复现 `python scripts/test-schema-drift.py`：六库只读正例、14 个实际 SQL 漂移故障、3 个 catalog 元数据负面例、旧 desired-state/新 manifest 不一致、实际 CLI 失败和修复后通过。测试只操作独立 PG17，事务回滚故障，不修改本机业务库。
+
+合法改表时先增加新迁移，再用 `python scripts/test-schema-drift.py --write-new-contract --output .local/schema-candidate.json` 从隔离初始化/升级生成候选，审查差异后更新 current-schema.json 并跑全部验收。候选文件已存在时拒绝覆盖。不得修改历史 SQL/checksum、关闭检测，或从有未知漂移的真实数据库直接覆盖契约来让测试变绿。

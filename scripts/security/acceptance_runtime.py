@@ -75,11 +75,12 @@ with (logs / "compose.log").open("wb") as output:
         if legacy:
             seed = """INSERT INTO file_meta(id,tenant_code,file_no,file_name,object_key,biz_type,creator)
                 VALUES (90001,'PLATFORM','OLD_LICENSE','old.png','unchanged/old.png',2,'99');
-                CREATE POLICY old_permissive ON file_meta USING(true) WITH CHECK(true);"""
+                ALTER POLICY file_meta_tenant_isolation ON file_meta USING(true) WITH CHECK(true);"""
             subprocess.run(commands,cwd=root,env={**env,'PGPASSWORD':password},input=seed,
                            text=True,encoding='utf-8',stdout=output,stderr=subprocess.STDOUT,check=True)
         from migration_engine import migrate_databases
         migrate_databases(env)
+        migrate_databases(env,verify=True)
         subprocess.run(commands,cwd=root,env={**env,'PGPASSWORD':password},
                        input=(root/'backend/deploy/db-init/40-runtime-roles.sql').read_text(encoding='utf-8'),
                        text=True,encoding='utf-8',stdout=output,stderr=subprocess.STDOUT,check=True)

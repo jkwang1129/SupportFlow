@@ -172,7 +172,8 @@ def run_plan(connection, migrations, *, verify=False):
 
 
 def migrate_databases(environment, *, verify=False, database=None):
-    plans=load_plan()
+    all_plans=load_plan()
+    plans=all_plans
     if database is not None:
         if database not in plans:
             raise MigrationError("No incremental version plan is registered for that database")
@@ -185,6 +186,14 @@ def migrate_databases(environment, *, verify=False, database=None):
         with psycopg.connect(host=environment.get("SUPPORTFLOW_DB_HOST","127.0.0.1"),
                              port=environment.get("SUPPORTFLOW_DB_PORT","5432"),dbname=target,
                              user=environment.get("SUPPORTFLOW_MIGRATION_DB_USER","supportflow"),
-                             password=password,connect_timeout=5,autocommit=True) as connection:
-            results.append(run_plan(connection,plan,verify=verify))
+                             password=password,connect_timeout=5,autocommit=True,
+                             options="-c default_transaction_read_only=on -c statement_timeout=5000 -c lock_timeout=2000" if verify else "") as connection:
+            result=run_plan(connection,plan,verify=verify)
+            if verify:
+                from schema_drift import verify_schema, SchemaDriftError
+                try:
+                    result["schema_verified"]=verify_schema(connection,all_plans)
+                except (SchemaDriftError, OSError, ValueError, KeyError) as failure:
+                    raise MigrationError(f"Schema verification {target} failed: {failure}") from None
+            results.append(result)
     return results

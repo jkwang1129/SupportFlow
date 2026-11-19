@@ -38,3 +38,13 @@ Liveness 不依赖数据库；Readiness 与业务 gate 均不缓存，故障修�
 四库各一条 001 baseline，与原 customer/billing 五条 SQL 历史并存；角色 provisioning 对六库历史统一限制为本库运行角色 SELECT，不能因 ALL TABLES 批量授权使历史可写。后续结构演进应添加新 SQL 版本，不改 baseline。首次采纳不证明持续漂移/RLS/权限安全，原安全回归仍独立执行。后续 verify 不重放 baseline catalog 检查，以免未来合法迁移删除旧列后被历史基线阻断；完整漂移验收属于下一子批次。
 
 无业务 DDL/数据修改，保留历史记录回退工具版本；不能删除迁移记录让旧工具“兼容”。新旧库升级及完整服务验收必须包含所有六库历史权限。
+
+## 后续子批次 5：发布前实际结构漂移
+
+历史 checksum 只能证明执行过哪个源文件，不能证明当前表/索引/策略没有被改写。新增 current-schema.json desired-state 契约：从隔离 PG 执行权威 init 和全部已登记迁移后读取 catalog，覆盖六库 87 张表、1 视图、4 个 supportflow_ 函数。复用 baseline 的 catalog 读取，补充默认值/identity/generated、RLS flags/策略和视图/函数。期望结构与迁移 manifest 的版本/checksum 绑定，额外未知对象/策略默认拒绝。
+
+CLI verify 与升级入口使用只读连接，设置语句 5 秒/锁 2 秒 timeout；角色批量 DML 配置前后都验证，不能顺手给未知表授予运行权限。旧 baseline 仍保持不可变历史；desired-state 是当前版本的可审查状态，只能随合法新迁移演进，不能从漂移库覆盖。运行期 Readiness 保留最小查询，不增加完整结构快照的逐请求成本。
+
+完整服务历史夹具改为模拟已知旧策略被改宽，由原迁移替换；未知额外策略在新的真实 SQL 负面集里必须使 verify 失败。独立 P0 RLS 回归仍保留“额外 permissive 策略不能突破 restrictive guard”，没有撤销安全负面覆盖。
+
+无业务数据/DDL 变更。回退工具/契约应保持同版本；不能修改历史 checksum 或关闭 RLS 回退。此检查不代替 owner/grants/触发器/扩展版本/业务数据/备份审计，安全验收和生产运维仍有独立职责。统一 init 留下一子批次。

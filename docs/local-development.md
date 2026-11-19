@@ -140,9 +140,9 @@ python scripts/upgrade-runtime-security.py
 
 ## 版本化增量检查
 
-`python scripts/upgrade-runtime-security.py` 现通过版本化 Runner 安装已登记的客服/计费增量，再独立配置运行角色并验证。结构历史与 checksum 位于各库 supportflow_schema_history；运行账号只能读取本库历史。仅检查：`python scripts/db-migrate.py verify`。该命令不会执行 DDL。已应用脚本变更、历史缺口或并发迁移会拒绝继续，不能删除历史绕过。
+`python scripts/upgrade-runtime-security.py` 现通过版本化 Runner 安装已登记的客服/计费增量，再独立配置运行角色并验证。结构历史与 checksum 位于各库 supportflow_schema_history；运行账号只能读取本库历史。仅检查：`python scripts/db-migrate.py verify`。该命令不会执行 DDL，并核对 current-schema.json 中的实际结构/索引/RLS。已应用脚本变更、历史缺口或并发迁移会拒绝继续，不能删除历史绕过。
 
-清单、事务/多库失败语义和未覆盖项见 [迁移说明](../backend/deploy/migrations/README.md)。当前尚未完成统一 init 和全量持续结构漂移检测，PR-7 仍未关闭。
+清单、事务/多库失败语义和未覆盖项见 [迁移说明](../backend/deploy/migrations/README.md)。当前尚未完成统一 init，PR-7 仍未关闭。
 
 ## Java 存活与就绪
 
@@ -152,4 +152,6 @@ python scripts/upgrade-runtime-security.py
 
 `python scripts/test-security-flow.py` 在新库和历史库两套完整服务中，分别对五个数据库注入缺列、缺表和撤销 SELECT（保留 INSERT）故障，检查存活、就绪、业务拒绝与修复后恢复；仅操作有严格命名校验的隔离验收项目。不要在真实数据库上手动执行故障注入。
 
-AI/User/Tenant/Ops 也已纳入同一清单：首次 migrate 验证基线表/列类型、索引和约束后登记 001，保留数据；后续 verify 只核历史/checksum。不得把首次采纳验证当成持续漂移检测。`python scripts/test-schema-baselines.py` 使用隔离 PG 重现四库采纳及不兼容拒绝。契约生成、权限及回退边界见迁移说明。
+AI/User/Tenant/Ops 也已纳入同一清单：首次 migrate 验证基线表/列类型、索引和约束后登记 001，保留数据；后续 baseline 不重放，但 verify 另核对当前结构漂移。不得把首次采纳验证当成持续漂移检测。`python scripts/test-schema-baselines.py` 使用隔离 PG 重现四库采纳及不兼容拒绝。契约生成、权限及回退边界见迁移说明。
+
+`python scripts/db-migrate.py verify` 的当前结构契约登记六库 87 张应用表、1 个视图和 4 个受控函数，检查实际列类型/默认值、索引/约束、RLS ENABLE/FORCE 与完整策略。额外未知策略也会阻断，不能通过直接覆盖快照放行。`python scripts/test-schema-drift.py` 在隔离 PG 中验证结构/权限策略故障拒绝。范围、合法演进和未覆盖权限项见迁移说明；这不是备份恢复或完整生产验收。
