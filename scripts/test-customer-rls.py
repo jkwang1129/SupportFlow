@@ -114,7 +114,7 @@ def main():
             raise RuntimeError("Maven was not found on PATH")
         run(
             [mvn, "-B", "-f", "backend/pom.xml", "-pl", "supportflow-customer-service", "-am", "test",
-             "-Dtest=TenantRlsDataSourceTest,TenantRlsPostgresTest,SessionMessagePostgresTest", "-Dsurefire.failIfNoSpecifiedTests=false"],
+             "-Dtest=TenantRlsDataSourceTest,TenantRlsPostgresTest,SessionMessagePostgresTest,SessionClaimPostgresTest", "-Dsurefire.failIfNoSpecifiedTests=false"],
             env=subprocess_env,
         )
         if args.with_ai:

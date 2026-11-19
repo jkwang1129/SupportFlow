@@ -9,6 +9,12 @@
          FOR UPDATE
     </select>
 
+    <update id="claimUnassigned">
+        UPDATE session SET agent_id = #{agentId}, status = 3, update_time = CURRENT_TIMESTAMP
+         WHERE tenant_code = #{tenantCode} AND id = #{sessionId}
+           AND agent_id IS NULL AND status IN (1, 2) AND is_deleted = FALSE
+    </update>
+
     <!-- 坐席工作台会话列表：左连客户档案，再用 LATERAL 取每个会话的最后一条消息 -->
     <select id="selectAgentSessions" resultType="java.util.Map">
         SELECT s.id            AS session_id,

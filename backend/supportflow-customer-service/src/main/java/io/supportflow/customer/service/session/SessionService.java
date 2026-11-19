@@ -900,7 +900,7 @@ public class SessionService {
     /**
      * 内部接口：坐席认领会话（待接待 → 我的）。
      *
-     * <p>并发抢单靠"库里已有负责人就拒绝"兜住：两个坐席同时点接入，只有一个能成功。</p>
+     * <p>通过原子条件更新决定唯一胜者，只有胜者生成认领事件和系统消息。</p>
      */
     @Transactional
     public Session claimSession(String tenantCode, String sessionNo, Long agentId) {
@@ -912,6 +912,9 @@ public class SessionService {
      */
     @Transactional
     public Session claimSession(String tenantCode, String sessionNo, Long agentId, String source) {
+        if (agentId == null || agentId <= 0) {
+            throw new BizException(40001, "缺少有效坐席ID");
+        }
         Session session = requireSession(tenantCode, sessionNo);
         if (Integer.valueOf(STATUS_CLOSED).equals(session.getStatus())) {
             throw new BizException(40301, "会话已结束");
@@ -922,12 +925,16 @@ public class SessionService {
         if (session.getAgentId() != null) {
             return session;
         }
-        Session update = new Session();
-        update.setId(session.getId());
-        update.setAgentId(agentId);
-        update.setStatus(STATUS_AGENT);
-        update.setUpdateTime(LocalDateTime.now());
-        sessionMapper.updateById(update);
+        if (sessionMapper.claimUnassigned(tenantCode, session.getId(), agentId) != 1) {
+            Session current = requireSession(tenantCode, sessionNo);
+            if (Integer.valueOf(STATUS_CLOSED).equals(current.getStatus())) {
+                throw new BizException(40301, "会话已结束");
+            }
+            if (agentId.equals(current.getAgentId()) && Integer.valueOf(STATUS_AGENT).equals(current.getStatus())) {
+                return current;
+            }
+            throw new BizException(40301, "会话状态已变更或已由其他客服接待");
+        }
         session.setAgentId(agentId);
         session.setStatus(STATUS_AGENT);
         boolean byRouting = RoutingService.SOURCE_ROUTING.equals(source);

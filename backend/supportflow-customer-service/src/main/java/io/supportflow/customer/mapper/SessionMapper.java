@@ -18,6 +18,9 @@ public interface SessionMapper extends BaseMapper<Session> {
     /** Serialize message allocation with session state changes, within the caller's transaction. */
     Session lockForMessage(@Param("tenantCode") String tenantCode, @Param("sessionId") Long sessionId);
 
+    /** Only the transaction which changes one still-unassigned live session owns the claim. */
+    int claimUnassigned(@Param("tenantCode") String tenantCode, @Param("sessionId") Long sessionId,
+                        @Param("agentId") Long agentId);
 
     /**
      * 坐席工作台的会话列表：带客户名与最后一条消息（SQL 见 SessionMapper.xml）。
