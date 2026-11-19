@@ -2,6 +2,20 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="io.supportflow.customer.mapper.SessionMessageMapper">
 
+    <select id="insertClientMessage" resultType="java.lang.Long" affectData="true" flushCache="true" useCache="false">
+        INSERT INTO session_message
+            (id, tenant_code, session_id, msg_no, client_msg_no, seq, msg_type, sender_type,
+             sender_id, content, status, visible_to, send_time, create_time, update_time, is_deleted)
+        VALUES
+            (#{message.id}, #{message.tenantCode}, #{message.sessionId}, #{message.msgNo},
+             #{message.clientMsgNo}, #{message.seq}, #{message.msgType}, #{message.senderType},
+             #{message.senderId}, #{message.content}, #{message.status}, #{message.visibleTo},
+             #{message.sendTime}, #{message.createTime}, #{message.updateTime}, #{message.deleted})
+        ON CONFLICT (tenant_code, session_id, client_msg_no) WHERE client_msg_no IS NOT NULL
+        DO NOTHING
+        RETURNING id
+    </select>
+
     <!-- 按会话取对话记录：只取文本/卡片类消息，按时间正序，供 AI 质检还原真实会话 -->
     <select id="selectDialog" resultType="io.supportflow.customer.entity.SessionMessage">
         SELECT id, tenant_code, session_id, msg_no, client_msg_no, seq, msg_type, sender_type, sender_id,

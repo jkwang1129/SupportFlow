@@ -13,6 +13,9 @@ import java.util.List;
 @Mapper
 public interface SessionMessageMapper extends BaseMapper<SessionMessage> {
 
+    /** Conflict-safe insert for the client idempotency key; other constraint violations remain errors. */
+    Long insertClientMessage(@Param("message") SessionMessage message);
+
     /**
      * 按会话读取对话记录（时间正序，SQL 见 SessionMessageMapper.xml）。
      */

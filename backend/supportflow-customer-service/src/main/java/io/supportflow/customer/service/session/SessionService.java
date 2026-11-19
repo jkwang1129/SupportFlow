@@ -507,25 +507,30 @@ public class SessionService {
                 return toMessageVO(existing);
             }
         }
+        // Hold the session row through commit. Waiting requests must re-read their idempotency key
+        // before allocating a sequence; the mapper also invalidates MyBatis's transaction-local cache.
+        session = sessionMapper.lockForMessage(tenantCode, session.getId());
+        if (session == null) {
+            throw new BizException(40401, "会话不存在");
+        }
+        if (Integer.valueOf(STATUS_CLOSED).equals(session.getStatus())) {
+            throw new BizException(40301, "会话已结束，无法继续发送消息");
+        }
+        if (normalizedClientMsgNo != null) {
+            SessionMessage existing = sessionMessageMapper.selectByClientMsgNo(
+                    tenantCode, session.getId(), normalizedClientMsgNo);
+            if (existing != null) return toMessageVO(existing);
+        }
         SessionMessage message = buildMessage(
                 tenantCode, session.getId(), senderType, senderId, msgType, content, visibleTo);
         message.setClientMsgNo(normalizedClientMsgNo);
         message.setSeq(nextSeq(tenantCode, session.getId()));
-        try {
+        if (normalizedClientMsgNo == null) {
             sessionMessageMapper.insert(message);
-        } catch (DuplicateKeyException e) {
-            // 并发重发：唯一索引挡住第二条，这里回查并返回已经落库的那条（依然幂等）
-            if (normalizedClientMsgNo == null) {
-                throw e;
-            }
-            SessionMessage existing = sessionMessageMapper.selectByClientMsgNo(
-                    tenantCode, session.getId(), normalizedClientMsgNo);
-            if (existing == null) {
-                throw e;
-            }
-            log.info("并发重发命中唯一索引，返回已落库消息 tenant={} sessionNo={} clientMsgNo={}",
-                    tenantCode, sessionNo, normalizedClientMsgNo);
-            return toMessageVO(existing);
+        } else if (sessionMessageMapper.insertClientMessage(message) == null) {
+            // Deleted keys remain reserved by the existing unique index. Roll back the sequence
+            // allocation instead of exposing the deleted row or continuing an aborted transaction.
+            throw new BizException(40901, "客户端消息号已被占用，请使用新的消息号");
         }
 
         LocalDateTime now = LocalDateTime.now();
@@ -540,7 +545,13 @@ public class SessionService {
                 message.getContent() == null ? 0 : message.getContent().length(),
                 preview(message.getContent()));
         // 计费口径：落库成功才算一条消息（并发重发被唯一索引挡掉的那条在上面已经返回，不重复计）
-        billingUsageCollector.countMessage(tenantCode);
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { billingUsageCollector.countMessage(tenantCode); }
+            });
+        } else {
+            billingUsageCollector.countMessage(tenantCode);
+        }
         // 边聊边检：消息落库后立刻过一遍实时质检规则（放在事务提交后跑）
         scheduleRealtimeQa(tenantCode, session, message);
         // 客服大脑：客户说完，机器人回一句（同样放在事务提交后跑）
@@ -1449,11 +1460,12 @@ public class SessionService {
             int visibleTo
     ) {
         LocalDateTime now = LocalDateTime.now();
+        long messageId = idGenerator.nextId();
         return SessionMessage.builder()
-                .id(idGenerator.nextId())
+                .id(messageId)
                 .tenantCode(tenant)
                 .sessionId(sessionId)
-                .msgNo(generateMsgNo())
+                .msgNo("M" + messageId)
                 .msgType(msgType)
                 .senderType(senderType)
                 .senderId(senderId)
@@ -1643,10 +1655,6 @@ public class SessionService {
 
     private String generateSessionNo() {
         return "S" + LocalDateTime.now().format(NO_TIME) + String.format("%03d", RANDOM.nextInt(1000));
-    }
-
-    private String generateMsgNo() {
-        return "M" + LocalDateTime.now().format(NO_TIME) + String.format("%04d", RANDOM.nextInt(10000));
     }
 
     private String generateCustomerNo() {

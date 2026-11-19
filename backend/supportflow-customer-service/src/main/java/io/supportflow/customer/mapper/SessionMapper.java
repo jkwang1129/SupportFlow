@@ -15,6 +15,10 @@ import java.util.Map;
 @Mapper
 public interface SessionMapper extends BaseMapper<Session> {
 
+    /** Serialize message allocation with session state changes, within the caller's transaction. */
+    Session lockForMessage(@Param("tenantCode") String tenantCode, @Param("sessionId") Long sessionId);
+
+
     /**
      * 坐席工作台的会话列表：带客户名与最后一条消息（SQL 见 SessionMapper.xml）。
      */

@@ -2,6 +2,13 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="io.supportflow.customer.mapper.SessionMapper">
 
+    <!-- Flush the local cache: a duplicate lookup before waiting may have cached an absent row. -->
+    <select id="lockForMessage" resultType="io.supportflow.customer.entity.Session" flushCache="true" useCache="false">
+        SELECT * FROM session
+         WHERE tenant_code = #{tenantCode} AND id = #{sessionId} AND is_deleted = FALSE
+         FOR UPDATE
+    </select>
+
     <!-- 坐席工作台会话列表：左连客户档案，再用 LATERAL 取每个会话的最后一条消息 -->
     <select id="selectAgentSessions" resultType="java.util.Map">
         SELECT s.id            AS session_id,
