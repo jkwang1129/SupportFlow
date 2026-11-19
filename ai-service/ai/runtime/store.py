@@ -13,10 +13,10 @@ TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELLED'}
 
 
 class RuntimeStore:
-    def __init__(self, connector=connect, *, backlog_limit=500):
+    def __init__(self, connector=None, *, backlog_limit=500):
         if type(backlog_limit) is not int or not 1 <= backlog_limit <= 10000:
             raise ValueError('Invalid tenant backlog limit')
-        self.connector = connector
+        self.connector = connector or (lambda: connect(connect_timeout=2))
         self.backlog_limit = backlog_limit
 
     @contextmanager
@@ -71,6 +71,7 @@ class RuntimeStore:
             raise ValueError('Invalid queue discovery limit')
         with self.connector() as connection:
             connection.row_factory = dict_row
+            connection.execute("SELECT set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)")
             return [row['tenant_code'] for row in connection.execute('SELECT * FROM public.supportflow_agent_due_tenants(%s)', (limit,))]
 
     @staticmethod

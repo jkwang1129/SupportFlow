@@ -230,3 +230,18 @@ init 本身不配置运行密码、不启动业务，不保证跨库原子性或
 剩余风险：这里只是存储API，store重建不等于真实Worker进程恢复或端到端业务恢复；尚无源端Outbox/顺序派发/结果幂等入口。旧进程物理调用可能继续，fencing只拒绝失效写回，最终写工具必须再鉴权/幂等/核验。未知写目前需要保留待核查，显式恢复界面属B3。队列按已收到事件序列处理，不能修复未收到的更早消息。只有调用计数/重试/时间硬限制，Token/成本硬预算、公平调度与量化性能均未验收。不报告生产流量、准确率或费用收益；CI新增门禁尚未在远端运行。
 
 - B1 存储改动后的 `python scripts/test-security-flow.py` 最终三条路径均通过：默认新库、历史库升级、CLI init；每套15次Java Readiness故障，共45次执行，原企业开通/平台审核/媒体/RLS/知识检索/访客WS机器人/签名计费链路保持通过，AI历史002已登记。日志 `.local/implementation/b1-services-retry.log`。首次运行出现服务启动阶段PG连接异常，未完成验收，记录 `b1-services.log`；并行PG夹具结束后完整重跑通过，原因未确认，不冒充已定位产品问题。三套隔离容器/卷/网络已清理。Java源码本批未改，复用前述clean verify产物；本轮没有重新声称Java全量构建。
+
+## B1 子批次 2：有界 Worker、步骤复用和真实进程故障（2026-11-19）
+
+基线 fb337d1。新增 ai/runtime/worker.py、test_runtime_worker_postgres.py、可杀死的runtime_worker_process.py测试夹具；RuntimeStore默认连接timeout2秒，队列查询也设置SQL/锁timeout；扩展同一Runtime测试脚本。无新迁移/服务依赖，不自动启动Worker，未接客服业务入口。设计和限制见ADR-0003第二子批次。
+
+实际验证：
+
+- `python scripts/test-agent-runtime.py`：**49 passed**（原16项类型、18项真PG存储，加15项真PG Worker故障/行为），额外6次危险角色负面执行仍通过。日志 `.local/implementation/b1-worker-final.log`，JUnit `.local/verification/runtime-store.xml`。首轮46项已通过后，补充3项负面用例再完整重跑，不选取有利子集。
+- Worker覆盖正常完成/同意图步骤复用、模型瞬态错误有限重试且前置已完成步骤不重复、未知写即使瞬态分类也不重试、永久/未知异常脱敏、未知版本拒绝、单槽无额外任务排队、I/O期间自动心跳、取消后晚到结果拒绝、零模型预算不调用、循环步骤预算终止、本地租户轮转/已停止轮询不领取、心跳DB异常撤销执行权与后续接管、跨重试逻辑步骤参数变化拒绝。
+- 两项真实进程故障：独立Python子进程完成前置步骤并在外部步骤RESERVED后被父进程kill，等待真实PG租约过期。MODEL场景由新Worker接管，已完成前置步骤不重跑、旧步骤UNKNOWN、新模型尝试计入原预算，最终SUCCEEDED，model_calls=2/retry_count=1/attempt=2；WRITE场景不调用新handler，FAILED/SIDE_EFFECT_UNKNOWN，tool_calls仍1。没有真实业务副作用或付费模型调用。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-worker-ai.xml`：**62 passed、39 skipped、1 xfailed**。跳过=33项Runtime真PG+4项Readiness真PG+2项KB真PG；Runtime33由上述专项实际执行。既有RAG/认证单元通过，已知引用正文xfail仍未修复。
+
+本批仅Python执行原语，未改SQL/Java/HTTP路由；前一批六库迁移/结构/全服务回归结果不冒充本批新跑。无新的端到端业务恢复结论。下一批必须补Java消息事务Outbox、按会话顺序可靠派发、真实受鉴权的AI接收入口和幂等结果回写，然后才能关闭B1。
+
+剩余风险/回滚：Python无法强杀阻塞线程，handler必须有界I/O并协作取消，fencing只控制有效写回。未知写仍需后续B3显式核验。仅本地轮转，不代表跨进程租户并发/费用硬额度。Token/成本、生产吞吐和真实模型成功率未测。回退可停用Worker模块保留Run/Step历史和原Workflow；接入前不修改原触发路径。本批CI复用已登记专项命令，尚无远端运行结果。
