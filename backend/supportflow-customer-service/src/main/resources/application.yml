@@ -13,8 +13,8 @@ spring:
       max-request-size: ${SUPPORTFLOW_UPLOAD_MAX_REQUEST:12MB}
   datasource:
     url: jdbc:postgresql://${SUPPORTFLOW_DB_HOST:127.0.0.1}:${SUPPORTFLOW_DB_PORT:5432}/${SUPPORTFLOW_CUSTOMER_DB:customer_db}
-    username: ${SUPPORTFLOW_DB_USER:supportflow}
-    password: ${SUPPORTFLOW_DB_PASSWORD}
+    username: ${SUPPORTFLOW_CUSTOMER_DB_USER:supportflow_customer}
+    password: ${SUPPORTFLOW_CUSTOMER_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
       maximum-pool-size: 10

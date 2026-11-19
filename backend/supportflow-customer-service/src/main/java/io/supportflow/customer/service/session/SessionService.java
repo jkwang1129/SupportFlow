@@ -1,5 +1,7 @@
 package io.supportflow.customer.service.session;
 
+import io.supportflow.common.context.TenantContext;
+
 import io.supportflow.common.auth.LoginUser;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.common.id.SnowflakeIdGenerator;
@@ -257,11 +259,15 @@ public class SessionService {
         if (channelKey == null) {
             throw new BizException(40401, "渠道密钥无效或已停用");
         }
+        if (TenantContext.get() != null && !TenantContext.get().equals(channelKey.getTenantCode())) {
+            throw new BizException(40301, "渠道与当前租户不一致");
+        }
         if (channelKey.getExpireTime() != null && channelKey.getExpireTime().isBefore(LocalDateTime.now())) {
             throw new BizException(40301, "渠道密钥已过期，请联系企业管理员重新生成");
         }
         Channel channel = channelMapper.selectById(channelKey.getChannelId());
-        if (channel == null || Boolean.TRUE.equals(channel.getDeleted())) {
+        if (channel == null || Boolean.TRUE.equals(channel.getDeleted())
+                || !channelKey.getTenantCode().equals(channel.getTenantCode())) {
             throw new BizException(40401, "渠道不存在");
         }
         if (!Integer.valueOf(1).equals(channel.getStatus())) {

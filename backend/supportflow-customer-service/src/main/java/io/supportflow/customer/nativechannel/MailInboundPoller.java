@@ -1,5 +1,8 @@
 package io.supportflow.customer.nativechannel;
 
+import io.supportflow.common.context.TenantContext;
+import io.supportflow.customer.internal.TenantListClient;
+
 import io.supportflow.customer.dto.channel.MailInbound;
 import io.supportflow.customer.dto.channel.MailInboundResultVO;
 import io.supportflow.customer.entity.Channel;
@@ -84,6 +87,7 @@ public class MailInboundPoller {
     private final ChannelNativeConfigService configService;
     private final ChannelMapper channelMapper;
     private final int maxPerRound;
+    private final TenantListClient tenantListClient;
 
     /** 每个渠道上一次报过的错：同样的错不每轮刷屏（改配置后重新报） */
     private final Map<Long, String> lastErrorByChannel = new ConcurrentHashMap<>();
@@ -91,16 +95,28 @@ public class MailInboundPoller {
     public MailInboundPoller(ChannelNativeInboundService inboundService,
                              ChannelNativeConfigService configService,
                              ChannelMapper channelMapper,
-                             @Value("${supportflow.mail.inbound.max-per-round:20}") int maxPerRound) {
+                             @Value("${supportflow.mail.inbound.max-per-round:20}") int maxPerRound,
+                             TenantListClient tenantListClient) {
         this.inboundService = inboundService;
         this.configService = configService;
         this.channelMapper = channelMapper;
         this.maxPerRound = Math.max(1, maxPerRound);
+        this.tenantListClient = tenantListClient;
     }
 
     @Scheduled(fixedDelayString = "${supportflow.mail.inbound.interval-ms:60000}", initialDelayString = "20000")
     public void poll() {
-        List<Channel> channels = enabledMailChannels();
+        for (String tenant : tenantListClient.allTenantCodes()) {
+            try {
+                TenantContext.run(tenant, () -> pollTenant(tenant));
+            } catch (RuntimeException e) {
+                log.warn("邮件入站扫描失败 tenant={}：{}", tenant, e.getMessage());
+            }
+        }
+    }
+
+    private void pollTenant(String tenant) {
+        List<Channel> channels = enabledMailChannels(tenant);
         if (channels.isEmpty()) {
             return;
         }
@@ -121,8 +137,9 @@ public class MailInboundPoller {
     }
 
     /** 所有启用中的邮件渠道（每个渠道属于一个租户，配置各自独立） */
-    private List<Channel> enabledMailChannels() {
+    private List<Channel> enabledMailChannels(String tenant) {
         return channelMapper.selectList(Wrappers.<Channel>lambdaQuery()
+                .eq(Channel::getTenantCode, tenant)
                 .eq(Channel::getChannelType, CHANNEL_TYPE_MAIL)
                 .eq(Channel::getStatus, CHANNEL_ENABLED)
                 .eq(Channel::getDeleted, false)

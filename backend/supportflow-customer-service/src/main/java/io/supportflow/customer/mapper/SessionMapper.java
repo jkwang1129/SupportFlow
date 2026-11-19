@@ -75,6 +75,7 @@ public interface SessionMapper extends BaseMapper<Session> {
      * @param oldest 只看比这个时间更早的消息（now - 最小超时阈值），把明显还没到点的先筛掉
      */
     List<Map<String, Object>> selectUnansweredSessions(
+            @Param("tenantCode") String tenantCode,
             @Param("oldest") LocalDateTime oldest,
             @Param("limit") int limit
     );

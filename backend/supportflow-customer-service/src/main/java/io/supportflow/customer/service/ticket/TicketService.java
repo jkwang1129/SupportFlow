@@ -1,5 +1,8 @@
 package io.supportflow.customer.service.ticket;
 
+import io.supportflow.common.context.TenantContext;
+import io.supportflow.customer.internal.TenantListClient;
+
 import io.supportflow.common.auth.LoginUser;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.common.id.SnowflakeIdGenerator;
@@ -173,6 +176,7 @@ public class TicketService {
     /** 客户 360 的标签自动化：建单会影响"工单数"类规则标签 */
     private final ObjectProvider<CustomerTagRuleService> tagRuleProvider;
     private final SnowflakeIdGenerator idGenerator;
+    private final TenantListClient tenantListClient;
     /**
      * 工单解决后的自动回访（目前是邮件渠道）。
      *
@@ -199,7 +203,8 @@ public class TicketService {
                          ObjectProvider<CustomerTagRuleService> tagRuleProvider,
                          SnowflakeIdGenerator idGenerator,
                          ObjectProvider<TicketFollowUpService> followUpProvider,
-                         ObjectProvider<MiniAppSubscribeService> subscribeProvider) {
+                         ObjectProvider<MiniAppSubscribeService> subscribeProvider,
+                         TenantListClient tenantListClient) {
         this.ticketMapper = ticketMapper;
         this.ticketEventMapper = ticketEventMapper;
         this.slaRuleMapper = slaRuleMapper;
@@ -213,6 +218,7 @@ public class TicketService {
         this.idGenerator = idGenerator;
         this.followUpProvider = followUpProvider;
         this.subscribeProvider = subscribeProvider;
+        this.tenantListClient = tenantListClient;
     }
 
     /**
@@ -1013,28 +1019,30 @@ public class TicketService {
      */
     @Scheduled(fixedDelay = 30_000L, initialDelay = 20_000L)
     public void scheduledSlaScan() {
-        try {
-            ScanResult result = scanSla();
-            if (result.alerted() > 0 || result.overdue() > 0) {
-                log.info("工单 SLA 扫描：在办 {} 条，超时 {} 条，本轮提醒 {} 条",
-                        result.scanned(), result.overdue(), result.alerted());
+        for (String tenant : tenantListClient.allTenantCodes()) {
+            try {
+                ScanResult result = TenantContext.bind(tenant, () -> scanSlaForTenant(tenant));
+                if (result.alerted() > 0 || result.overdue() > 0) {
+                    log.info("工单 SLA 扫描 tenant={}：在办 {} 条，超时 {} 条，本轮提醒 {} 条",
+                            tenant, result.scanned(), result.overdue(), result.alerted());
+                }
+            } catch (Exception e) {
+                log.warn("工单 SLA 扫描失败 tenant={}：{}", tenant, e.getMessage(), e);
             }
-        } catch (Exception e) {
-            // 定时任务里抛异常只会打到 stderr，工单不会因此坏掉，但要留下痕迹
-            log.warn("工单 SLA 扫描失败：{}", e.getMessage(), e);
         }
     }
 
     /** 手动触发一次 SLA 扫描（页面上的"立即检查超时"，也是验证脚本用的入口）。 */
     public ScanResult scanSla(LoginUser user) {
         requireManage(user);
-        return scanSla();
+        String tenant = tenantOf(user);
+        return TenantContext.bind(tenant, () -> scanSlaForTenant(tenant));
     }
 
-    /** 定时任务用的入口（没有登录人，跑的是全库在办工单）。 */
-    public ScanResult scanSla() {
+    private ScanResult scanSlaForTenant(String tenant) {
         LocalDateTime now = LocalDateTime.now();
         List<Ticket> open = ticketMapper.selectList(Wrappers.<Ticket>lambdaQuery()
+                .eq(Ticket::getTenantCode, tenant)
                 .eq(Ticket::getDeleted, false)
                 .in(Ticket::getStatus, STATUS_PENDING, STATUS_PROCESSING, STATUS_CONFIRMING)
                 .isNotNull(Ticket::getResolveDue)

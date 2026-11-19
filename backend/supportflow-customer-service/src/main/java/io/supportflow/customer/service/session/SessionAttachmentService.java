@@ -1,5 +1,6 @@
 package io.supportflow.customer.service.session;
 
+import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.common.id.SnowflakeIdGenerator;
 import io.supportflow.customer.dto.session.FileContent;
@@ -10,6 +11,8 @@ import io.supportflow.customer.entity.ChannelKey;
 import io.supportflow.customer.mapper.ChannelKeyMapper;
 import io.supportflow.customer.mapper.ChannelMapper;
 import io.supportflow.customer.mapper.FileMetaMapper;
+import io.supportflow.customer.mapper.SessionMapper;
+import io.supportflow.customer.entity.Session;
 import io.supportflow.customer.storage.ObjectStorage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import jakarta.annotation.PreDestroy;
@@ -37,6 +40,7 @@ import java.util.Base64;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.ArrayList;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -77,6 +81,7 @@ public class SessionAttachmentService {
     private final ChannelMapper channelMapper;
     private final SnowflakeIdGenerator idGenerator;
     private final int maxImageMb;
+    private final SessionMapper sessionMapper;
 
     public SessionAttachmentService(
             ObjectStorage objectStorage,
@@ -84,7 +89,8 @@ public class SessionAttachmentService {
             ChannelKeyMapper channelKeyMapper,
             ChannelMapper channelMapper,
             SnowflakeIdGenerator idGenerator,
-    @Value("${supportflow.chat.image-max-mb:8}") int maxImageMb
+    @Value("${supportflow.chat.image-max-mb:8}") int maxImageMb,
+            SessionMapper sessionMapper
     ) {
         this.objectStorage = objectStorage;
         this.fileMetaMapper = fileMetaMapper;
@@ -92,6 +98,7 @@ public class SessionAttachmentService {
         this.channelMapper = channelMapper;
         this.idGenerator = idGenerator;
         this.maxImageMb = maxImageMb <= 0 ? 8 : maxImageMb;
+        this.sessionMapper = sessionMapper;
     }
 
     /**
@@ -149,6 +156,7 @@ public class SessionAttachmentService {
      */
     @Transactional
     public UploadResult upload(String tenantCode, String sessionNo, MultipartFile file) {
+        Session session = requireSession(tenantCode, sessionNo);
         if (file == null || file.isEmpty()) {
             throw new BizException(40001, "请选择要发送的图片");
         }
@@ -184,6 +192,7 @@ public class SessionAttachmentService {
                 .mimeType(mimeType)
                 // bizType：5-聊天图片（1-头像、2-附件、3-导出、4-发票见 file_meta 的约束与注释）
                 .bizType(BIZ_TYPE_CHAT_IMAGE)
+                .bizId(session.getId())
                 .createTime(now)
                 .updateTime(now)
                 .creator("VISITOR")
@@ -198,15 +207,25 @@ public class SessionAttachmentService {
     /**
      * 读取图片字节（给前端渲染用）。
      *
-     * <p>聊天图片要同时给访客和坐席看：访客没有登录态，所以这个接口不带鉴权，
-     * 靠**不可猜的雪花 ID** 当凭据。生产环境应换成带时效的签名 URL。</p>
+     * <p>入口验证访客会话或企业身份；这里继续核对租户、会话和文件业务类型。</p>
      */
-    public FileContent load(long fileId) {
+    public FileContent load(String tenantCode, String sessionNo, long fileId) {
+        return load(requireSession(tenantCode, sessionNo), fileId);
+    }
+
+    private FileContent load(Session session, long fileId) {
+        String tenantCode = session.getTenantCode();
         FileMeta meta = fileMetaMapper.selectOne(Wrappers.<FileMeta>lambdaQuery()
                 .eq(FileMeta::getId, fileId)
+                .eq(FileMeta::getTenantCode, tenantCode)
+                .eq(FileMeta::getBizType, BIZ_TYPE_CHAT_IMAGE)
                 .eq(FileMeta::getDeleted, false)
                 .last("LIMIT 1"));
-        if (meta == null) {
+        if (meta == null || !tenantCode.equals(meta.getTenantCode())
+                || !Objects.equals(meta.getBizType(), BIZ_TYPE_CHAT_IMAGE)
+                || !(meta.getBizId() != null ? meta.getBizId().equals(session.getId())
+                    : meta.getObjectKey() != null && meta.getObjectKey().startsWith(
+                        PREFIX + "/" + tenantCode + "/" + safeSegment(session.getSessionNo()) + "/"))) {
             throw new BizException(40401, "图片不存在或已删除");
         }
         try (InputStream in = objectStorage.download(meta.getObjectKey())) {
@@ -214,6 +233,17 @@ public class SessionAttachmentService {
         } catch (Exception e) {
             throw new BizException(50001, "读取图片失败：" + e.getMessage());
         }
+    }
+
+    private Session requireSession(String tenantCode, String sessionNo) {
+        Session session = sessionMapper.selectOne(Wrappers.<Session>lambdaQuery()
+                .eq(Session::getTenantCode, tenantCode).eq(Session::getSessionNo, sessionNo)
+                .eq(Session::getDeleted, false).last("LIMIT 1"));
+        if (session == null || !tenantCode.equals(session.getTenantCode())
+                || !sessionNo.equals(session.getSessionNo()) || session.getId() == null) {
+            throw new BizException(40401, "会话不存在");
+        }
+        return session;
     }
 
     /**
@@ -227,17 +257,21 @@ public class SessionAttachmentService {
      * 这里用 {@link ExecutorService#invokeAll} 并发跑——它**按提交顺序返回 Future**，
      * 所以图片清单的顺序仍然是客户选图的顺序，模型看到的第 1 张还是第 1 张。</p>
     */
-    public List<String> toVisionImages(List<Long> fileIds) {
+    public List<String> toVisionImages(String tenantCode, String sessionNo, List<Long> fileIds) {
+        if (tenantCode == null || tenantCode.isBlank() || "PLATFORM".equalsIgnoreCase(tenantCode)) {
+            throw new IllegalArgumentException("图片识别需要有效的租户");
+        }
         if (fileIds == null || fileIds.isEmpty()) {
             return List.of();
         }
+        Session session = TenantContext.bind(tenantCode, () -> requireSession(tenantCode, sessionNo));
         // 单张不用开线程：一张图的场景最频繁，别为它付线程池的调度开销
         if (fileIds.size() == 1) {
-            return List.of(toDataUrl(fileIds.get(0)));
+            return List.of(toDataUrl(session, fileIds.get(0)));
         }
         List<Callable<String>> tasks = new ArrayList<>(fileIds.size());
         for (Long fileId : fileIds) {
-            tasks.add(() -> toDataUrl(fileId));
+            tasks.add(() -> toDataUrl(session, fileId));
         }
         try {
             List<Future<String>> futures = visionPool.invokeAll(tasks);
@@ -255,8 +289,8 @@ public class SessionAttachmentService {
         }
     }
 
-    private String toDataUrl(long fileId) {
-        FileContent content = load(fileId);
+    private String toDataUrl(Session session, long fileId) {
+        FileContent content = TenantContext.bind(session.getTenantCode(), () -> load(session, fileId));
         byte[] payload = compress(content.payload(), fileId);
         return "data:image/jpeg;base64," + Base64.getEncoder().encodeToString(payload);
     }

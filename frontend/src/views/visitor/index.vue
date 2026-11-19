@@ -64,7 +64,8 @@
                         :title="image.name || '查看大图'"
                         @click="openImage(image)"
                       >
-                        <img :src="image.url" :alt="image.name || '图片'" loading="lazy" />
+                        <SecureChatImage :file-id="image.fileId" :session-no="sessionNo" :visitor-token="visitorToken"
+                          :name="image.name" @ready="url => { if (image.fileId) loadedImages[image.fileId] = url }" />
                       </button>
                     </div>
                   </template>
@@ -229,13 +230,14 @@
 </template>
 
 <script setup lang="ts">
+import SecureChatImage from '../../components/SecureChatImage.vue'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Close, CopyDocument, Loading, Picture, WarningFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { errorMessage } from '../../utils/message'
 import {
-  imagesOf,
+  imagesOf as rawImagesOf,
   listSessionMessages,
   messageTextOf,
   openVisitorSession,
@@ -694,6 +696,13 @@ function imageOf(message: SessionMessageItem) {
  * 点第几张就从第几张开始看。</p>
  */
 const previewOpen = ref(false)
+const loadedImages = ref<Record<string, string>>({})
+function imagesOf(message: SessionMessageItem) {
+  return rawImagesOf(message).map(image => {
+    const fileId = image.fileId || image.url?.match(/^\/api\/customer\/sessions\/attachments\/([0-9]+)$/)?.[1]
+    return { ...image, fileId, url: fileId ? loadedImages.value[fileId] : undefined }
+  })
+}
 const previewIndex = ref(0)
 const previewUrls = computed(() =>
   messages.value
@@ -816,6 +825,7 @@ async function stageImage(file: File, appKey: string) {
     const uploaded: ChatImageUploadResult = await uploadChatImage({
       appKey,
       sessionNo: sessionNo.value,
+      visitorToken: visitorToken.value,
       file,
     })
     // 上传是异步的：这期间客户可能已经把这张移除了，所以按 previewUrl 回查——

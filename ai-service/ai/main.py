@@ -5,9 +5,13 @@ from __future__ import annotations
 import logging
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
 
 from .config import get_settings
+from .core.internal_auth import install_internal_auth
 from .core.logging_config import setup_logging
 from .core.schema_guard import ensure_schema
 from .core.trace import TRACE_ID_HEADER, new_trace_id, set_trace_id
@@ -69,7 +73,7 @@ def _install_schema_error_handler(app: FastAPI) -> None:
         hint = _schema_hint(message)
         logger.warning("数据库结构不完整：%s → 需要执行 %s", message, hint)
         return JSONResponse(status_code=500, content={
-            "detail": f"数据库结构不完整（{message.splitlines()[0]}）。请先执行：{hint}",
+            "detail": "AI 数据库结构不完整，请联系管理员",
         })
 
 
@@ -94,14 +98,27 @@ def _install_trace_middleware(app: FastAPI) -> None:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    from .core.runtime_roles import require_runtime_roles
+    require_runtime_roles()
     # 启动先自检 ai_db 结构（缺 bot_dialogue / 接待策略字段会自动补，补不了就大声报出来）
     ensure_schema()
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
-        debug=settings.debug,
+        debug=False,
     )
     _install_schema_error_handler(app)
+
+    @app.exception_handler(HTTPException)
+    async def _http_error(request, error):
+        if error.status_code >= 500:
+            return JSONResponse({"detail": "AI 服务暂不可用"}, status_code=error.status_code)
+        return await http_exception_handler(request, error)
+
+    @app.exception_handler(RequestValidationError)
+    async def _invalid_input(_request, _error):
+        return JSONResponse({"detail": "AI 请求参数格式不正确"}, status_code=422)
+
     app.include_router(health.router, prefix=settings.api_prefix)
     app.include_router(chat.router, prefix=settings.api_prefix)
     app.include_router(bot.router, prefix=settings.api_prefix)
@@ -118,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(observability.router, prefix=settings.api_prefix)
     # 模型训练中心：训练任务 / 版本记录 / 灰度切换
     app.include_router(training.router, prefix=settings.api_prefix)
+    install_internal_auth(app, settings)
     _install_trace_middleware(app)
     return app
 

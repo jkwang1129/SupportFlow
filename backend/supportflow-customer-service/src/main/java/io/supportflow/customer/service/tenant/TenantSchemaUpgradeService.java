@@ -12,7 +12,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Service;
 
-import javax.sql.DataSource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -52,14 +51,14 @@ public class TenantSchemaUpgradeService {
     /** 共享库的 schema */
     public static final String SHARED_SCHEMA = "public";
 
-    private final DataSource dataSource;
+    private final CustomerMigrationConnection migrationConnection;
     private final SchemaUpgradeLogMapper logMapper;
     private final SnowflakeIdGenerator idGenerator;
 
-    public TenantSchemaUpgradeService(DataSource dataSource,
+    public TenantSchemaUpgradeService(CustomerMigrationConnection migrationConnection,
                                       SchemaUpgradeLogMapper logMapper,
                                       SnowflakeIdGenerator idGenerator) {
-        this.dataSource = dataSource;
+        this.migrationConnection = migrationConnection;
         this.logMapper = logMapper;
         this.idGenerator = idGenerator;
     }
@@ -83,6 +82,9 @@ public class TenantSchemaUpgradeService {
         }
         String schema = normalizeSchema(targetSchema);
         int target = toVersion == null ? TenantSchemaCatalog.LATEST_VERSION : toVersion;
+        if (!SHARED_SCHEMA.equals(schema) && target >= 31) {
+            throw new BizException(40001, "v31 是共享库运行权限迁移；独立 schema 请通过管理员单独部署并验收");
+        }
         if (target != 0 && TenantSchemaCatalog.of(target) == null) {
             throw new BizException(40001, "未知的库版本：" + target
                     + "（最新为 " + TenantSchemaCatalog.LATEST_VERSION + "）");
@@ -159,7 +161,7 @@ public class TenantSchemaUpgradeService {
             throw new BizException(50002, "读取脚本失败：" + script);
         }
         boolean shared = SHARED_SCHEMA.equals(schema);
-        try (Connection connection = dataSource.getConnection();
+        try (Connection connection = migrationConnection.open();
              Statement statement = connection.createStatement()) {
             if (!shared) {
                 statement.execute("SET search_path TO \"" + schema + "\", public");

@@ -11,6 +11,7 @@ import logging
 import re
 import threading
 import time
+from contextlib import contextmanager
 
 import psycopg
 from psycopg.rows import dict_row
@@ -51,6 +52,18 @@ def connect():
     return psycopg.connect(dsn, row_factory=dict_row)
 
 
+@contextmanager
+def tenant_connection(tenant_code: str):
+    """Bind the authenticated tenant for this transaction only."""
+    if not isinstance(tenant_code, str) or tenant_code.upper() == "PLATFORM" or not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_-]{0,15}", tenant_code
+    ):
+        raise ValueError("A valid business tenant is required")
+    with connect() as conn:
+        conn.execute("SELECT pg_catalog.set_config('app.tenant_code', %s, true)", (tenant_code,))
+        yield conn
+
+
 def _derive_kb_dsn(ai_dsn: str) -> str:
     """没单独配 kb_database_url 时，从 ai_db 的连接串推出 customer_db 的连接串。"""
     return ai_dsn.replace("/ai_db", "/customer_db")
@@ -70,7 +83,7 @@ def replace_chunks(
     """
     if len(chunks) != len(vectors):
         raise ValueError(f"切片数与向量数不一致：{len(chunks)} vs {len(vectors)}")
-    with connect() as conn, conn.cursor() as cur:
+    with tenant_connection(tenant_code) as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM kb_chunk WHERE tenant_code = %s AND doc_id = %s", (tenant_code, doc_id))
         if not chunks:
             return 0
@@ -100,13 +113,13 @@ def replace_chunks(
 
 
 def delete_chunks(tenant_code: str, doc_id: int) -> int:
-    with connect() as conn, conn.cursor() as cur:
+    with tenant_connection(tenant_code) as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM kb_chunk WHERE tenant_code = %s AND doc_id = %s", (tenant_code, doc_id))
         return cur.rowcount
 
 
 def list_chunks(tenant_code: str, doc_id: int, limit: int = 200) -> list[dict]:
-    with connect() as conn, conn.cursor() as cur:
+    with tenant_connection(tenant_code) as conn, conn.cursor() as cur:
         cur.execute(
             """
             SELECT id, doc_id, chunk_no, content, char_count, token_count, embedding_model, create_time
@@ -130,7 +143,7 @@ def search(tenant_code: str, vector: list[float], top_k: int = 5, doc_ids: list[
                d.title AS doc_title, d.status AS doc_status,
                1 - (c.embedding <=> %s::vector) AS score
           FROM kb_chunk c
-          JOIN kb_document d ON d.id = c.doc_id
+          JOIN kb_document d ON d.id = c.doc_id AND d.tenant_code = c.tenant_code
          WHERE c.tenant_code = %s
            AND c.embedding IS NOT NULL
            AND d.is_deleted = FALSE
@@ -141,7 +154,7 @@ def search(tenant_code: str, vector: list[float], top_k: int = 5, doc_ids: list[
         params.append(doc_ids)
     sql += " ORDER BY c.embedding <=> %s::vector LIMIT %s"
     params.extend([literal, max(1, min(top_k, 50))])
-    with connect() as conn, conn.cursor() as cur:
+    with tenant_connection(tenant_code) as conn, conn.cursor() as cur:
         # HNSW 是"先按向量取 K 个、再按 WHERE 过滤"（后过滤）。
         # 多租户同库时，别的租户的切片会占掉候选名额，导致本租户召回不足。
         # 把 ef_search 调大能明显缓解；彻底解决要按租户分区或独立表（第 27 篇再展开）。
@@ -230,7 +243,7 @@ def keyword_search(tenant_code: str, query: str, top_k: int = 5) -> list[dict]:
                d.title AS doc_title, d.status AS doc_status,
                ({hit_case})::float / %s AS score
           FROM kb_chunk c
-          JOIN kb_document d ON d.id = c.doc_id
+          JOIN kb_document d ON d.id = c.doc_id AND d.tenant_code = c.tenant_code
          WHERE c.tenant_code = %s
            AND d.is_deleted = FALSE
            AND ({hit_where})
@@ -238,7 +251,7 @@ def keyword_search(tenant_code: str, query: str, top_k: int = 5) -> list[dict]:
          LIMIT %s
     """
     params = patterns + [len(terms), tenant_code] + patterns + [max(1, min(top_k, 50))]
-    with connect() as conn, conn.cursor() as cur:
+    with tenant_connection(tenant_code) as conn, conn.cursor() as cur:
         cur.execute(sql, params)
         rows = cur.fetchall()
     for row in rows:
@@ -251,8 +264,8 @@ def ping() -> bool:
     """探活：给健康检查用。"""
     try:
         with connect() as conn, conn.cursor() as cur:
-            cur.execute("SELECT 1 AS ok")
-            return bool(cur.fetchone())
+            cur.execute("SELECT embedding FROM kb_chunk LIMIT 0")
+            return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("知识库探活失败：%s", exc)
         return False

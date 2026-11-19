@@ -1,5 +1,7 @@
 package io.supportflow.customer.internal;
 
+import io.supportflow.common.auth.AiRequestSigner;
+
 import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.context.TraceContext;
 import io.supportflow.common.exception.BizException;
@@ -44,6 +46,7 @@ public class BotAiClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String baseUrl;
+    private final String aiSecret;
     private final boolean logPayload;
     private final int timeoutSeconds;
     /** 计费用量：调一次客服大脑算一次 AI 调用 */
@@ -52,6 +55,7 @@ public class BotAiClient {
     private final CostGuardClient costGuardClient;
 
     public BotAiClient(
+            @Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String aiSecret,
             @Value("${supportflow.ai.bot-base-url:http://127.0.0.1:9100}") String baseUrl,
             @Value("${supportflow.ai.log-payload:true}") boolean logPayload,
             @Value("${supportflow.ai.bot-timeout-seconds:60}") int timeoutSeconds,
@@ -62,6 +66,7 @@ public class BotAiClient {
                 .connectTimeout(Duration.ofSeconds(5))
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
+        this.aiSecret = aiSecret;
         this.baseUrl = (baseUrl == null || baseUrl.isBlank())
                 ? "http://127.0.0.1:9100" : baseUrl.replaceAll("/+$", "");
         this.logPayload = logPayload;
@@ -113,7 +118,7 @@ public class BotAiClient {
                     .POST(HttpRequest.BodyPublishers.ofString(
                             objectMapper.writeValueAsString(body), StandardCharsets.UTF_8))
                     .build();
-            HttpResponse<String> response = httpClient.send(request,
+            HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (logPayload) {
                 log.info("客服大脑响应 tenant={} session={} status={} body={}",
@@ -182,7 +187,7 @@ public class BotAiClient {
                     .timeout(Duration.ofSeconds(8))
                     .GET()
                     .build();
-            HttpResponse<String> response = httpClient.send(request,
+            HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", null),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             String hint = null;
             if (response.statusCode() == 404) {
@@ -242,7 +247,7 @@ public class BotAiClient {
                     .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                     .GET()
                     .build();
-            String body = httpClient.send(request, HttpResponse.BodyHandlers.ofString(
+            String body = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode), HttpResponse.BodyHandlers.ofString(
                     StandardCharsets.UTF_8)).body();
             Map<String, Object> parsed = objectMapper.readValue(body, new TypeReference<>() {
             });

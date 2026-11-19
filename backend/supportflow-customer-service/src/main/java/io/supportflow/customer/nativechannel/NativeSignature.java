@@ -36,10 +36,10 @@ public final class NativeSignature {
         }
     }
 
-    /** 校验签名与时间窗口；secret 没配时返回 true（允许不启用签名，方便本地联调） */
+    /** 校验签名与时间窗口；未配置密钥时拒绝处理回调。 */
     public static boolean verify(String secret, String timestamp, String signature, String body, long nowMillis) {
         if (secret == null || secret.isBlank()) {
-            return true;
+            return false;
         }
         if (timestamp == null || signature == null) {
             return false;
@@ -50,9 +50,15 @@ public final class NativeSignature {
         } catch (NumberFormatException e) {
             return false;
         }
-        if (Math.abs(nowMillis - sent) > WINDOW_MILLIS) {
+        if (sent < nowMillis - WINDOW_MILLIS || sent > nowMillis + WINDOW_MILLIS) {
             return false;
         }
-        return sign(secret, timestamp, body).equalsIgnoreCase(signature.trim());
+        String normalized = signature.trim();
+        if (!normalized.matches("[a-fA-F0-9]{64}")) {
+            return false;
+        }
+        return java.security.MessageDigest.isEqual(
+                java.util.HexFormat.of().parseHex(sign(secret, timestamp, body)),
+                java.util.HexFormat.of().parseHex(normalized));
     }
 }

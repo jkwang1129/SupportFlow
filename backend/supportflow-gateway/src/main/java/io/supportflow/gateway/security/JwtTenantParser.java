@@ -54,6 +54,7 @@ public class JwtTenantParser {
                     stringClaim(payload, "tnt"),
                     stringClaim(payload, "sub"),
                     stringClaim(payload, "name"),
+                    longClaim(payload, "type"),
                     exp);
         } catch (Exception e) {
             return null;
@@ -110,7 +111,6 @@ public class JwtTenantParser {
         return MessageDigest.isEqual(expected, Base64.getUrlDecoder().decode(signature));
     }
 
-    /** 令牌里我们关心的三个声明 */
-    public record ParsedToken(String tenantCode, String userId, String userName, long expireAt) {
+    public record ParsedToken(String tenantCode, String userId, String userName, long userType, long expireAt) {
     }
 }

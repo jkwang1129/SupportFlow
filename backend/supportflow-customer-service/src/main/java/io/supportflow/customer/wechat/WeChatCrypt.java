@@ -34,7 +34,8 @@ public final class WeChatCrypt {
 
     /** 验签：token + timestamp + nonce 排序后 SHA1 */
     public static boolean checkSignature(String token, String signature, String timestamp, String nonce) {
-        if (token == null || signature == null || timestamp == null || nonce == null) {
+        if (token == null || token.isBlank() || signature == null || signature.isBlank()
+                || timestamp == null || timestamp.isBlank() || nonce == null || nonce.isBlank()) {
             return false;
         }
         String[] parts = {token, timestamp, nonce};
@@ -47,13 +48,14 @@ public final class WeChatCrypt {
      * 安全模式报文的验签：把 token / timestamp / nonce / encrypt 四个值字典序拼成一串再 SHA1。
      *
      * <p>公众号与小程序是同一套算法（之前两个类里各抄了一份 {@code sortedJoin}），
-     * 提到这里之后，改算法只需要动一处。{@code msgSignature} 为空时按"没带签名"放行，
-     * 与微信明文模式的报文兼容。</p>
+     * 提到这里之后，改算法只需要动一处。加密报文必须携带完整签名。</p>
      */
     public static boolean msgSignatureMatches(String token, String timestamp, String nonce,
                                               String encrypt, String msgSignature) {
-        if (msgSignature == null) {
-            return true;
+        if (token == null || token.isBlank() || timestamp == null || timestamp.isBlank()
+                || nonce == null || nonce.isBlank() || encrypt == null || encrypt.isBlank()
+                || msgSignature == null || msgSignature.isBlank()) {
+            return false;
         }
         String[] parts = {token, timestamp, nonce, encrypt};
         Arrays.sort(parts);

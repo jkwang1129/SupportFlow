@@ -122,13 +122,15 @@
                 SELECT id, seq, content, send_time, sender_type
                   FROM session_message
                  WHERE session_id = s.id
+                   AND tenant_code = s.tenant_code
                    AND is_deleted = FALSE
                    AND visible_to = 1
                    AND sender_type IN (1, 2)
                  ORDER BY seq DESC, id DESC
                  LIMIT 1
                ) m ON TRUE
-         WHERE s.is_deleted = FALSE
+         WHERE s.tenant_code = #{tenantCode}
+           AND s.is_deleted = FALSE
            AND s.status IN (1, 3)
            AND m.sender_type = 1
            AND m.send_time &lt;= #{oldest}

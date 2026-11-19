@@ -1,0 +1,43 @@
+"""Build JARs first, then verify actual services with disposable data and offline AI."""
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+if __name__ == '__main__':
+    logs = ROOT / '.local/security-services'
+    logs.mkdir(parents=True, exist_ok=True)
+    stop = logs / 'stop'
+    for scenario in ([], ['--legacy']):
+        stop.unlink(missing_ok=True)
+        with (logs / 'runtime.log').open('wb') as log:
+            runtime = subprocess.Popen([sys.executable, 'scripts/security/acceptance_runtime.py', *scenario],
+                                       cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
+            try:
+                # Let the runtime remove stale markers before the health-check client starts.
+                time.sleep(1)
+                subprocess.run([sys.executable, 'scripts/security/test_core.py'], cwd=ROOT, check=True, timeout=240)
+                project = (logs / '.project-name').read_text(encoding='utf-8')
+                import re
+                if not re.fullmatch(r'supportflow-acceptance-[0-9a-f]{6}',project):
+                    raise RuntimeError('Invalid disposable project identity')
+                psql = ['docker','exec',project+'-postgres-1','psql','-U','supportflow','-d','customer_db','-XqAt','-c']
+                observed = subprocess.check_output([*psql,"SELECT DISTINCT usename FROM pg_stat_activity WHERE backend_type='client backend' AND pid<>pg_backend_pid()"],text=True)
+                identities = set(observed.splitlines())
+                assert 'supportflow' not in identities, 'Bootstrap identity leaked into application connections'
+                assert {'supportflow_user','supportflow_customer','supportflow_tenant','supportflow_billing','supportflow_ops'} <= identities, identities
+                audit = subprocess.check_output([*psql,"SELECT count(*) FILTER(WHERE phase='START'),count(*) FILTER(WHERE phase='END') FROM platform_access_audit"],text=True).strip().split('|')
+                assert int(audit[0]) >= 6 and audit[0] == audit[1], audit
+                print('Observed five restricted Java database identities; mandatory platform audit receipts matched', flush=True)
+                print(('LEGACY UPGRADE' if scenario else 'FRESH DEFAULT') + ': full security flow passed', flush=True)
+            finally:
+                stop.touch()
+                try:
+                    runtime.wait(timeout=90)
+                except subprocess.TimeoutExpired:
+                    runtime.terminate()
+                    runtime.wait(timeout=15)
+            if runtime.returncode:
+                raise SystemExit('Security runtime failed; see .local/security-services/runtime.log')

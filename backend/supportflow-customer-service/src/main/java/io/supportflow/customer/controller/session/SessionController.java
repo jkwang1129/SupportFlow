@@ -1,6 +1,7 @@
 package io.supportflow.customer.controller.session;
 
 import io.supportflow.common.context.LoginUserContext;
+import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.api.ApiResponse;
 import io.supportflow.common.auth.LoginUser;
 import io.supportflow.common.exception.BizException;
@@ -16,6 +17,7 @@ import io.supportflow.customer.dto.session.SessionVO;
 import io.supportflow.customer.dto.session.VisitorPrincipal;
 import io.supportflow.customer.dto.session.WorkloadVO;
 import io.supportflow.customer.security.OpenSessionRateLimiter;
+import io.supportflow.customer.security.ChannelTenantResolver;
 import io.supportflow.customer.security.VisitorTokenService;
 import io.supportflow.customer.service.session.SessionService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -40,15 +42,18 @@ public class SessionController {
     private final SessionService sessionService;
     private final OpenSessionRateLimiter openSessionRateLimiter;
     private final VisitorTokenService visitorTokenService;
+    private final ChannelTenantResolver channelTenantResolver;
 
     public SessionController(
             SessionService sessionService,
             OpenSessionRateLimiter openSessionRateLimiter,
-            VisitorTokenService visitorTokenService
+            VisitorTokenService visitorTokenService,
+            ChannelTenantResolver channelTenantResolver
     ) {
         this.sessionService = sessionService;
         this.openSessionRateLimiter = openSessionRateLimiter;
         this.visitorTokenService = visitorTokenService;
+        this.channelTenantResolver = channelTenantResolver;
     }
 
     /**
@@ -76,8 +81,9 @@ public class SessionController {
         if (principal == null || !sessionNo.equals(principal.sessionNo())) {
             throw new BizException(40301, "访客身份无效，请重新打开客服窗口后再评价");
         }
-        return ApiResponse.ok(sessionService.submitCsat(principal.tenantCode(), sessionNo, score,
-                body.feedback(), null, principal.customerName()));
+        return TenantContext.bind(principal.tenantCode(), () -> ApiResponse.ok(
+                sessionService.submitCsat(principal.tenantCode(), sessionNo, score,
+                        body.feedback(), null, principal.customerName())));
     }
 
     /**
@@ -91,11 +97,12 @@ public class SessionController {
             HttpServletRequest request
     ) {
         openSessionRateLimiter.check(body.appKey(), RequestUtils.clientIp(request));
-        return ApiResponse.ok(sessionService.openSession(new OpenCommand(
+        String tenant = channelTenantResolver.resolve(body.appKey());
+        return TenantContext.bind(tenant, () -> ApiResponse.ok(sessionService.openSession(new OpenCommand(
                 body.appKey(),
                 body.visitorToken(),
                 body.visitorName(),
-                RequestUtils.origin(request))));
+                RequestUtils.origin(request)))));
     }
 
     /**

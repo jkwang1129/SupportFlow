@@ -1,5 +1,8 @@
 package io.supportflow.customer.service.quality;
 
+import io.supportflow.common.context.TenantContext;
+import io.supportflow.customer.internal.TenantListClient;
+
 import io.supportflow.common.auth.LoginUser;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.common.id.SnowflakeIdGenerator;
@@ -117,6 +120,7 @@ public class RealtimeQaService {
     private final RealtimeNotifyClient notifyClient;
     private final UserNameClient userNameClient;
     private final SnowflakeIdGenerator idGenerator;
+    private final TenantListClient tenantListClient;
 
     public RealtimeQaService(
             QaRuleMapper qaRuleMapper,
@@ -125,7 +129,8 @@ public class RealtimeQaService {
             SessionMessageMapper sessionMessageMapper,
             RealtimeNotifyClient notifyClient,
             UserNameClient userNameClient,
-            SnowflakeIdGenerator idGenerator
+            SnowflakeIdGenerator idGenerator,
+            TenantListClient tenantListClient
     ) {
         this.qaRuleMapper = qaRuleMapper;
         this.qaAlertMapper = qaAlertMapper;
@@ -134,6 +139,7 @@ public class RealtimeQaService {
         this.notifyClient = notifyClient;
         this.userNameClient = userNameClient;
         this.idGenerator = idGenerator;
+        this.tenantListClient = tenantListClient;
     }
 
     /**
@@ -474,9 +480,20 @@ public class RealtimeQaService {
      */
     public TimeoutScanResult scanUnansweredSessions() {
         LocalDateTime oldest = LocalDateTime.now().minusSeconds(TIMEOUT_SCAN_FLOOR_SECONDS);
+        int scanned = 0;
+        int alerted = 0;
+        for (String tenant : tenantListClient.allTenantCodes()) {
+            TimeoutScanResult result = TenantContext.bind(tenant, () -> scanTenant(tenant, oldest));
+            scanned += result.scanned();
+            alerted += result.alerted();
+        }
+        return new TimeoutScanResult(scanned, alerted);
+    }
+
+    private TimeoutScanResult scanTenant(String tenant, LocalDateTime oldest) {
         List<Map<String, Object>> rows;
         try {
-            rows = sessionMapper.selectUnansweredSessions(oldest, TIMEOUT_SCAN_LIMIT);
+            rows = sessionMapper.selectUnansweredSessions(tenant, oldest, TIMEOUT_SCAN_LIMIT);
         } catch (Exception e) {
             log.warn("响应超时扫描失败 error={}", e.getMessage());
             return new TimeoutScanResult(0, 0);

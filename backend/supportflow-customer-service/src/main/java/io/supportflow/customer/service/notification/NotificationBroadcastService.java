@@ -1,5 +1,6 @@
 package io.supportflow.customer.service.notification;
 
+import io.supportflow.common.context.TenantContext;
 import io.supportflow.customer.dto.internal.BroadcastBody;
 import io.supportflow.customer.dto.internal.BroadcastResultVO;
 import io.supportflow.customer.dto.internal.PublishBody;
@@ -52,8 +53,11 @@ public class NotificationBroadcastService {
         int delivered = 0;
         for (String tenantCode : tenants) {
             try {
-                notificationService.publishToTenant(tenantCode, NOTIFY_TYPE_ANNOUNCEMENT,
-                        body.title(), body.content(), body.linkView());
+                TenantContext.bind(tenantCode, () -> {
+                    notificationService.publishToTenant(tenantCode, NOTIFY_TYPE_ANNOUNCEMENT,
+                            body.title(), body.content(), body.linkView());
+                    return null;
+                });
                 delivered++;
             } catch (Exception e) {
                 log.warn("公告推送失败 tenant={} title={} error={}", tenantCode, body.title(), e.getMessage());

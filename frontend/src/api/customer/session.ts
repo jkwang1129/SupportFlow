@@ -124,12 +124,12 @@ export interface ChatImageUploadResult {
 /**
  * 访客上传聊天图片。
  *
- * 访客没有登录态，所以用**渠道密钥**（appKey）证明这条会话来自哪个渠道——租户由服务端从密钥解析，
- * 前端传什么都不影响租户归属。
+ * 访客令牌通过 X-Visitor-Token 请求头传入，服务端核对会话与渠道租户。
  */
 export function uploadChatImage(data: {
   appKey: string
   sessionNo: string
+  visitorToken: string
   file: File
 }): Promise<ChatImageUploadResult> {
   const form = new FormData()
@@ -139,7 +139,7 @@ export function uploadChatImage(data: {
     method: 'post',
     params: { appKey: data.appKey, sessionNo: data.sessionNo },
     data: form,
-    headers: { 'Content-Type': 'multipart/form-data' },
+    headers: { 'Content-Type': 'multipart/form-data', 'X-Visitor-Token': data.visitorToken },
     timeout: 60000,
   })
 }

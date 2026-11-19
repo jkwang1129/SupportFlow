@@ -1,5 +1,7 @@
 package io.supportflow.realtime.client;
 
+import io.supportflow.common.auth.CustomerInternalCredential;
+import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.api.ApiResponse;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.realtime.dto.AgentLoadView;
@@ -30,15 +32,19 @@ public class SessionApiClient {
 
     private final RestClient restClient;
 
-    public SessionApiClient(@Value("${supportflow.customer.internal-base-url}") String baseUrl) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+    public SessionApiClient(@Value("${supportflow.customer.internal-base-url}") String baseUrl,
+            @Value("${SUPPORTFLOW_CUSTOMER_REALTIME_SECRET:}") String secret) {
+        this.restClient = RestClient.builder().baseUrl(baseUrl)
+                .requestInterceptor(CustomerInternalCredential.signer(secret, CustomerInternalCredential.Caller.REALTIME))
+                .build();
     }
 
-                public SessionInfo requireSession(String tenantCode, String sessionNo) {
+    public SessionInfo requireSession(String tenantCode, String sessionNo) {
         ApiResponse<SessionInfo> response = restClient.get()
                 .uri(uriBuilder -> uriBuilder.path("/api/customer/internal/sessions/{sessionNo}")
                         .queryParam("tenantCode", tenantCode)
                         .build(sessionNo))
+                .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<SessionInfo>>() {
                 });
@@ -57,6 +63,7 @@ public class SessionApiClient {
                     }
                     return uriBuilder.build(sessionNo);
                 })
+                .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<List<MessageView>>>() {
                 });
@@ -93,6 +100,7 @@ public class SessionApiClient {
                     .uri("/api/customer/internal/sessions/{sessionNo}/messages", sessionNo)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(body)
+                    .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                     .retrieve()
                     .body(new ParameterizedTypeReference<ApiResponse<MessageView>>() {
                     });
@@ -125,6 +133,7 @@ public class SessionApiClient {
                 .uri("/api/customer/internal/agent/connection")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("tenantCode", tenantCode, "agentId", agentId, "connected", connected))
+                .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<Void>>() {
                 });
@@ -136,6 +145,7 @@ public class SessionApiClient {
                 .uri("/api/customer/internal/sessions/{sessionNo}/claim", sessionNo)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("tenantCode", tenantCode, "agentId", agentId))
+                .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<SessionInfo>>() {
                 });
@@ -147,6 +157,7 @@ public class SessionApiClient {
                 .uri("/api/customer/internal/sessions/{sessionNo}/release", sessionNo)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("tenantCode", tenantCode, "agentId", agentId))
+                .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<SessionInfo>>() {
                 });
@@ -171,6 +182,7 @@ public class SessionApiClient {
                 .uri("/api/customer/internal/sessions/{sessionNo}/transfer", sessionNo)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
+                .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<SessionInfo>>() {
                 });
@@ -190,6 +202,7 @@ public class SessionApiClient {
                 .uri("/api/customer/internal/sessions/{sessionNo}/close", sessionNo)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
+                .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<SessionInfo>>() {
                 });
@@ -201,6 +214,7 @@ public class SessionApiClient {
                 .uri(uriBuilder -> uriBuilder.path("/api/customer/internal/sessions/workload")
                         .queryParam("tenantCode", tenantCode)
                         .build())
+                .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<List<AgentLoadView>>>() {
                 });

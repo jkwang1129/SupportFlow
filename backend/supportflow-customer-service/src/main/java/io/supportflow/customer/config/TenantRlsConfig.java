@@ -1,5 +1,6 @@
 package io.supportflow.customer.config;
 
+import com.zaxxer.hikari.HikariDataSource;
 import io.supportflow.common.context.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,8 +12,11 @@ import org.springframework.jdbc.datasource.DelegatingDataSource;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.sql.Statement;
+import java.sql.DriverManager;
+import io.supportflow.customer.security.PlatformAccess;
+import org.springframework.core.env.Environment;
 
 /**
  * 行级安全（RLS）上下文注入 —— 隔离的第二道防线。
@@ -26,12 +30,11 @@ import java.sql.Statement;
  * <p>为什么包一层 DataSource 而不是用 MyBatis 拦截器：GUC 是连接级状态，必须在 SQL 执行前落到
  * **同一条连接**上；MyBatis 拦截器拿不到 Connection，DataSource 出口是唯一稳定的位置。</p>
  *
- * <p>代价与取舍：每条语句多一次 select set_config(...) 往返。更极致的做法是把租户绑在事务上
- * （连接借出时设一次、归还时清空），但那要求所有入口都在事务里；这里选择"宁可多一次往返，
- * 也不留一条漏网 SQL"。</p>
+ * <p>每次借连接增加一次 set_config 往返。同一事务复用连接时，不会随内部 Scope 的变化自动重设，
+ * 因此必须先确定并绑定可信租户，再进入事务。</p>
  *
- * <p>开关：supportflow.tenant.rls-enabled=true。关掉系统照常运行（表 owner 绕过 RLS），
- * 但也就没有这层兜底——所以默认打开，启动时会打印状态。</p>
+ * <p>开关：supportflow.tenant.rls-enabled=true 只开启上下文注入，不证明数据库隔离已生效。
+ * 还必须使用非超级用户、非 BYPASSRLS 的业务角色及 fail-closed 策略，并单独验证。</p>
  */
 @Configuration
 @ConditionalOnProperty(name = "supportflow.tenant.rls-enabled", havingValue = "true")
@@ -45,13 +48,34 @@ public class TenantRlsConfig {
      * 都直接依赖容器里那个 DataSource bean，换掉它（而不是并行加一个）才能保证所有 SQL 都经过这里。
      */
     @Bean
-    public static BeanPostProcessor tenantRlsDataSourceWrapper() {
+    public static BeanPostProcessor tenantRlsDataSourceWrapper(Environment env) {
         return new BeanPostProcessor() {
             @Override
             public Object postProcessAfterInitialization(Object bean, String beanName) {
                 if (bean instanceof DataSource dataSource && !(bean instanceof TenantRlsDataSource)) {
-                    log.info("行级安全已启用：DataSource [{}] 已注入租户上下文（app.tenant_code）", beanName);
-                    return new TenantRlsDataSource(dataSource);
+                    log.info("DataSource [{}] 已注入租户上下文；RLS 角色与策略需独立验证", beanName);
+                    return new TenantRlsDataSource(dataSource, () -> {
+                        String user = env.getProperty("SUPPORTFLOW_CUSTOMER_PLATFORM_DB_USER", "supportflow_customer_platform");
+                        String password = env.getProperty("SUPPORTFLOW_CUSTOMER_PLATFORM_DB_PASSWORD", "");
+                        if (password.isBlank() || user.equals(env.getProperty("spring.datasource.username"))) {
+                            throw new SQLException("Separate platform database credentials are required");
+                        }
+                        Connection connection = DriverManager.getConnection(env.getRequiredProperty("spring.datasource.url"), user, password);
+                        try (var statement = connection.createStatement(); var roles = statement.executeQuery("""
+                                SELECT NOT (rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication)
+                                  AND pg_has_role(current_user,'supportflow_platform_access','MEMBER')
+                                  AND NOT pg_has_role(current_user,c.relowner,'MEMBER')
+                                  AND NOT pg_has_role(current_user,'supportflow_customer_tenant','MEMBER')
+                                  AND NOT pg_has_role(current_user,'supportflow_kb_tenant','MEMBER')
+                                FROM pg_roles,pg_class c WHERE rolname=current_user AND c.oid='public.file_meta'::regclass
+                                """)) {
+                            if (!roles.next() || !roles.getBoolean(1)) throw new SQLException("Unsafe platform runtime identity");
+                            return connection;
+                        } catch (SQLException | RuntimeException failure) {
+                            connection.close();
+                            throw failure;
+                        }
+                    });
                 }
                 return bean;
             }
@@ -60,33 +84,56 @@ public class TenantRlsConfig {
 
     /** 带租户上下文的 DataSource：每次借出连接时把当前租户写进 app.tenant_code。 */
     static class TenantRlsDataSource extends DelegatingDataSource {
+        @FunctionalInterface interface PlatformConnection { Connection open() throws SQLException; }
+        private final PlatformConnection platform;
 
         TenantRlsDataSource(DataSource delegate) {
+            this(delegate, () -> { throw new SQLException("No platform channel configured"); });
+        }
+        TenantRlsDataSource(DataSource delegate, PlatformConnection platform) {
             super(delegate);
+            this.platform = platform;
         }
 
         @Override
         public Connection getConnection() throws SQLException {
-            return applyTenant(super.getConnection());
+            return applyTenant(PlatformAccess.active() ? platform.open() : super.getConnection());
         }
 
         @Override
         public Connection getConnection(String username, String password) throws SQLException {
-            return applyTenant(super.getConnection(username, password));
+            return applyTenant(PlatformAccess.active() ? platform.open() : super.getConnection(username, password));
         }
 
-        // 上下文为空时写空串（而不是不写）：连接是复用的，不写就会留着**上一个请求**的租户，
-        // 那才是最危险的串数据场景。写失败只记日志、不抛异常——RLS 是兜底，
-        // 不能因为它把正常请求打挂（真出问题表现为查不到数据，宁可查不到也不串）。
-        private Connection applyTenant(Connection connection) {
+        // 连接池可能保留上一位借用者的会话变量。每次借用都覆盖，不允许初始化失败的连接交给调用者。
+        private Connection applyTenant(Connection connection) throws SQLException {
             String tenant = TenantContext.get();
-            String value = tenant == null ? "" : tenant.replace("'", "''");
-            try (Statement statement = connection.createStatement()) {
-                statement.execute("select set_config('app.tenant_code', '" + value + "', false)");
-            } catch (SQLException e) {
-                log.warn("写入 RLS 租户上下文失败 tenant={} error={}", tenant, e.getMessage());
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "select pg_catalog.set_config('app.tenant_code', ?, false)")) {
+                statement.setString(1, tenant == null ? "" : tenant);
+                statement.execute();
+            } catch (SQLException | RuntimeException failure) {
+                discard(connection, failure);
+                throw failure;
             }
             return connection;
+        }
+
+        private void discard(Connection connection, Exception failure) {
+            // close() 只把连接归还 Hikari，失败时应销毁物理连接，不能让会话状态不明的连接重新入池。
+            try {
+                if (getTargetDataSource() instanceof HikariDataSource hikari) {
+                    hikari.evictConnection(connection);
+                }
+            } catch (RuntimeException evictionFailure) {
+                failure.addSuppressed(evictionFailure);
+            } finally {
+                try {
+                    connection.close();
+                } catch (SQLException | RuntimeException closeFailure) {
+                    failure.addSuppressed(closeFailure);
+                }
+            }
         }
     }
 }

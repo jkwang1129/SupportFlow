@@ -1,8 +1,11 @@
 package io.supportflow.ops.internal;
 
+import io.supportflow.common.auth.AiRequestSigner;
+import io.supportflow.ops.dto.AiTraceVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -11,7 +14,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import io.supportflow.ops.dto.AiTraceVO;
 
 /**
  * AI 服务的可观测查询客户端：按调用链号查明细、取单租户近 N 天成本。
@@ -30,9 +32,12 @@ public class AiObservabilityClient {
 
     private final String baseUrl;
     private final RestClient restClient;
+    private final String aiSecret;
 
-    public AiObservabilityClient(@Value("${supportflow.ai.internal-base-url:http://127.0.0.1:9100}") String baseUrl) {
+    public AiObservabilityClient(@Value("${supportflow.ai.internal-base-url:http://127.0.0.1:9100}") String baseUrl,
+                                 @Value("${SUPPORTFLOW_AI_OPS_SECRET:}") String aiSecret) {
         this.baseUrl = baseUrl;
+        this.aiSecret = aiSecret;
         this.restClient = RestClient.builder().build();
     }
 
@@ -40,7 +45,7 @@ public class AiObservabilityClient {
     public AiTraceVO trace(String traceId) {
         String path = baseUrl + "/api/internal/usage/trace/" + traceId;
         try {
-            AiTraceVO body = restClient.get().uri(URI.create(path)).retrieve().body(AiTraceVO.class);
+            AiTraceVO body = get(path, "").retrieve().body(AiTraceVO.class);
             return body == null ? emptyTrace(traceId) : body;
         } catch (Exception e) {
             log.warn("按调用链号查 AI 计量失败 trace={} error={}", traceId, e.getMessage());
@@ -53,7 +58,7 @@ public class AiObservabilityClient {
     public Map<String, Object> tenantTotal(String tenantCode, int days) {
         String path = baseUrl + "/api/internal/usage/tenant-total?tenantCode=" + tenantCode + "&days=" + days;
         try {
-            Map<String, Object> body = restClient.get().uri(URI.create(path)).retrieve().body(Map.class);
+            Map<String, Object> body = get(path, tenantCode).retrieve().body(Map.class);
             if (body != null) {
                 return body;
             }
@@ -80,7 +85,7 @@ public class AiObservabilityClient {
     public List<Map<String, Object>> tenantMetrics(int days) {
         String path = baseUrl + "/api/internal/usage/tenant-metrics?days=" + days;
         try {
-            Map<String, Object> body = restClient.get().uri(URI.create(path)).retrieve().body(Map.class);
+            Map<String, Object> body = get(path, "").retrieve().body(Map.class);
             Object items = body == null ? null : body.get("items");
             if (items instanceof List<?> list) {
                 List<Map<String, Object>> result = new ArrayList<>(list.size());
@@ -95,6 +100,14 @@ public class AiObservabilityClient {
             log.warn("取按租户指标失败 days={} error={}", days, e.getMessage());
         }
         return List.of();
+    }
+
+    private RestClient.RequestHeadersSpec<?> get(String path, String tenant) {
+        URI uri = URI.create(path);
+        return restClient.get().uri(uri)
+                .header("X-Tenant-Code", tenant)
+                .header(AiRequestSigner.HEADER,
+                        AiRequestSigner.credential(aiSecret, "ops", HttpMethod.GET.name(), uri.getRawPath(), tenant));
     }
 
     private static AiTraceVO emptyTrace(String traceId) {

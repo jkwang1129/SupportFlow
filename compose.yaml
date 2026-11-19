@@ -5,11 +5,24 @@ services:
       POSTGRES_USER: supportflow
       POSTGRES_PASSWORD: ${SUPPORTFLOW_DB_PASSWORD:?Set SUPPORTFLOW_DB_PASSWORD for local PostgreSQL}
       POSTGRES_DB: postgres
+      SUPPORTFLOW_USER_DB_PASSWORD: ${SUPPORTFLOW_USER_DB_PASSWORD:?Run scripts/setup-local-env.py}
+      SUPPORTFLOW_TENANT_DB_PASSWORD: ${SUPPORTFLOW_TENANT_DB_PASSWORD:?Run scripts/setup-local-env.py}
+      SUPPORTFLOW_CUSTOMER_DB_PASSWORD: ${SUPPORTFLOW_CUSTOMER_DB_PASSWORD:?Run scripts/setup-local-env.py}
+      SUPPORTFLOW_BILLING_DB_PASSWORD: ${SUPPORTFLOW_BILLING_DB_PASSWORD:?Run scripts/setup-local-env.py}
+      SUPPORTFLOW_OPS_DB_PASSWORD: ${SUPPORTFLOW_OPS_DB_PASSWORD:?Run scripts/setup-local-env.py}
+      SUPPORTFLOW_AI_DB_PASSWORD: ${SUPPORTFLOW_AI_DB_PASSWORD:?Run scripts/setup-local-env.py}
+      SUPPORTFLOW_KB_DB_PASSWORD: ${SUPPORTFLOW_KB_DB_PASSWORD:?Run scripts/setup-local-env.py}
+      SUPPORTFLOW_CUSTOMER_PLATFORM_DB_PASSWORD: ${SUPPORTFLOW_CUSTOMER_PLATFORM_DB_PASSWORD:?Run scripts/setup-local-env.py}
     ports:
       - '127.0.0.1:${SUPPORTFLOW_DB_PORT:-5432}:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./backend/deploy/db-init/db-init.sql:/docker-entrypoint-initdb.d/10-supportflow.sql:ro
+      - ./backend/deploy/db-init/channel-tenant-lookup.sql:/docker-entrypoint-initdb.d/20-channel-lookup.sql:ro
+      - ./backend/deploy/db-init/public-bot-avatar.sql:/docker-entrypoint-initdb.d/21-public-avatar.sql:ro
+      - ./backend/deploy/db-init/25-runtime-security.sql:/docker-entrypoint-initdb.d/25-runtime-security.sql:ro
+      - ./backend/supportflow-customer-service/src/main/resources/schema/customer_db_runtime_security.sql:/opt/supportflow/customer_db_runtime_security.sql:ro
+      - ./backend/deploy/db-init/40-runtime-roles.sql:/docker-entrypoint-initdb.d/40-runtime-roles.sql:ro
     healthcheck:
       test: [CMD-SHELL, 'pg_isready -h 127.0.0.1 -U supportflow -d user_db']
       interval: 3s

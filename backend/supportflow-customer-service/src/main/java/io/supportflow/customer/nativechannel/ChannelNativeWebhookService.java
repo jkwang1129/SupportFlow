@@ -1,6 +1,8 @@
 package io.supportflow.customer.nativechannel;
 
 import io.supportflow.common.exception.BizException;
+import io.supportflow.common.context.TenantContext;
+import io.supportflow.customer.security.ChannelTenantResolver;
 import io.supportflow.customer.dto.channel.AppInboundResultVO;
 import io.supportflow.customer.dto.channel.AppMessage;
 import io.supportflow.customer.dto.channel.MailInbound;
@@ -38,28 +40,32 @@ public class ChannelNativeWebhookService {
     private final ChannelNativeConfigService configService;
     private final ChannelNativeInboundService inboundService;
     private final PhoneCallSpeechService phoneCallSpeechService;
+    private final ChannelTenantResolver channelTenantResolver;
 
     public ChannelNativeWebhookService(ChannelNativeConfigService configService,
                                        ChannelNativeInboundService inboundService,
-                                       PhoneCallSpeechService phoneCallSpeechService) {
+                                       PhoneCallSpeechService phoneCallSpeechService,
+                                       ChannelTenantResolver channelTenantResolver) {
         this.configService = configService;
         this.inboundService = inboundService;
         this.phoneCallSpeechService = phoneCallSpeechService;
+        this.channelTenantResolver = channelTenantResolver;
     }
 
     /** App 用户发消息。 */
     public AppInboundResultVO appMessage(String appKey, String timestamp, String signature, String body) {
-        Channel channel = requireChannel(appKey, 4);
+        return inChannel(appKey, 4, channel -> {
         Map<String, Object> config = configService.raw(channel.getTenantCode(), channel.getId());
         verify(secretOf(config, "pushSecret"), timestamp, signature, body);
         AppMessage payload = parse(body, AppMessage.class);
         return inboundService.appMessage(channel, payload.userId(), payload.userName(),
                 payload.content(), payload.clientMsgNo());
+        });
     }
 
     /** 邮件网关把新邮件推过来。 */
     public MailInboundResultVO mailInbound(String appKey, String timestamp, String signature, String body) {
-        Channel channel = requireChannel(appKey, 6);
+        return inChannel(appKey, 6, channel -> {
         Map<String, Object> config = configService.raw(channel.getTenantCode(), channel.getId());
         // 邮件渠道现在只支持方案 A（平台直连企业邮箱收信），网关回调只留给早期已配好签名密钥的
         // 渠道做兼容。没配密钥的一律拒绝：AppKey 不是秘密，放任未签名请求进来等于谁都能伪造来信。
@@ -71,6 +77,7 @@ public class ChannelNativeWebhookService {
         MailMessage payload = parse(body, MailMessage.class);
         return inboundService.mailInbound(channel, new MailInbound(
                 payload.from(), payload.fromName(), payload.subject(), payload.text(), payload.messageId()));
+        });
     }
 
     /**
@@ -78,7 +85,7 @@ public class ChannelNativeWebhookService {
      * no_answer 未接 / abandoned 客户放弃 / hangup 挂机。
      */
     public PhoneEventResultVO phoneEvent(String appKey, String timestamp, String signature, String body) {
-        Channel channel = requireChannel(appKey, 5);
+        return inChannel(appKey, 5, channel -> {
         Map<String, Object> config = configService.raw(channel.getTenantCode(), channel.getId());
         verify(secretOf(config, "webhookSecret"), timestamp, signature, body);
         PhoneCall payload = parse(body, PhoneCall.class);
@@ -86,6 +93,7 @@ public class ChannelNativeWebhookService {
                 payload.event(), payload.callId(), payload.from(), payload.digits(),
                 payload.intent(), payload.action(), payload.duration(),
                 payload.recordingUrl(), payload.agentName(), payload.reason()));
+        });
     }
 
     /**
@@ -96,7 +104,7 @@ public class ChannelNativeWebhookService {
      */
     public TtsResult synthesizeTts(String appKey, String timestamp,
                                                   String signature, String body) {
-        Channel channel = requireChannel(appKey, 5);
+        return inChannel(appKey, 5, channel -> {
         Map<String, Object> config = configService.raw(channel.getTenantCode(), channel.getId());
         verify(secretOf(config, "webhookSecret"), timestamp, signature, body);
         TtsPayload payload = parse(body, TtsPayload.class);
@@ -113,6 +121,18 @@ public class ChannelNativeWebhookService {
                 channel.getTenantCode(), appKey, payload.text().length(),
                 result.audio().length, result.contentType());
         return result;
+        });
+    }
+
+    private <T> T inChannel(String appKey, int type, java.util.function.Function<Channel, T> action) {
+        String tenant = channelTenantResolver.resolve(appKey);
+        return TenantContext.bind(tenant, () -> {
+            Channel channel = requireChannel(appKey, type);
+            if (!tenant.equals(channel.getTenantCode())) {
+                throw new BizException(40301, "渠道与租户不一致");
+            }
+            return action.apply(channel);
+        });
     }
 
     private Channel requireChannel(String appKey, int expectedType) {

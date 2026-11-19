@@ -96,6 +96,7 @@ public class WeChatCallbackController {
         if (!body.contains("<Encrypt>")) {
             if (!WeChatCrypt.checkSignature(config.getToken(), signature, timestamp, nonce)) {
                 log.warn("公众号明文消息验签失败 appId={}", config.getAppId());
+                throw new BizException(40301, "微信消息签名校验失败");
             }
             return body;
         }

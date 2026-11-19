@@ -62,7 +62,8 @@ public final class TenantSchemaCatalog {
             new Step(28, "customer_db_rls.sql", "行级安全兜底策略（补齐本批新增表）"),
             new Step(29, "customer_db_session_message_client_no.sql",
                     "会话消息幂等键加宽（邮件把 Message-ID 当 client_msg_no，64 位不够）"),
-            new Step(30, "customer_db_rls.sql", "行级安全兜底策略（清单末步：覆盖前面所有新增表）")
+            new Step(30, "customer_db_rls.sql", "行级安全兜底策略（历史版本）"),
+            new Step(31, "customer_db_runtime_security.sql", "严格租户策略、证照归属与独立平台权限")
     );
 
     /** 最新版本号 */

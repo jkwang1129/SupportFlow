@@ -22,8 +22,7 @@ import java.lang.ScopedValue.CallableOp;
  *
  * <p>绑定时顺带把租户也绑进 {@link TenantContext}：库上有 RLS 兜底（策略读
  * {@code app.tenant_code}），登录态里就有权威租户，没必要让业务代码再手工设一次。
- * 平台账号的租户编码就是 RLS 策略里的 {@code PLATFORM} 放行标记，所以平台侧的跨租户
- * 查询不受影响。</p>
+ * {@code PLATFORM} 不属于普通业务租户；跨租户操作必须走独立的授权与数据库身份。</p>
  */
 public final class LoginUserContext {
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +15,10 @@ class Settings(BaseSettings):
     service_name: str = "ai-center"
     debug: bool = False
     api_prefix: str = "/api"
+    gateway_secret: SecretStr = SecretStr("")
+    customer_secret: SecretStr = SecretStr("")
+    ops_secret: SecretStr = SecretStr("")
+    tenant_secret: SecretStr = SecretStr("")
     # 日志级别：DEBUG / INFO / WARNING / ERROR
     log_level: str = "INFO"
     # 是否打印 AI 调用的完整入参/出参（真实模型请求与响应原文）
@@ -105,7 +110,8 @@ class Settings(BaseSettings):
         return self.embedding_api_key or self.qwen_api_key
 
     # 知识库：切片参数与数据源（切片存在 customer_db，和文档表同库，租户隔离靠 tenant_code）
-    kb_database_url: str = ""
+    kb_database_url: str = "postgresql://supportflow_kb@127.0.0.1:5432/customer_db"
+    enforce_runtime_db_roles: bool = True
     # 切块大小：内置实现按"字符"算，LlamaIndex 按"token"算（同数值粒度不同，可按需分别调）
     kb_chunk_size: int = 600
     kb_chunk_overlap: int = 80
@@ -115,7 +121,7 @@ class Settings(BaseSettings):
     kafka_bootstrap: str = "localhost:9092"
 
     # ai_db (SUPPORTFLOW_AI_DATABASE_URL)
-    database_url: str = "postgresql://supportflow@127.0.0.1:5432/ai_db"
+    database_url: str = "postgresql://supportflow_ai@127.0.0.1:5432/ai_db"
 
 
 @lru_cache

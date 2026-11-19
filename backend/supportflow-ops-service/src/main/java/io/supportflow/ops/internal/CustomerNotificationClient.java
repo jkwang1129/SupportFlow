@@ -1,5 +1,7 @@
 package io.supportflow.ops.internal;
 
+import io.supportflow.common.auth.CustomerInternalCredential;
+import io.supportflow.common.context.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,8 +28,11 @@ public class CustomerNotificationClient {
     private final RestClient restClient;
 
     public CustomerNotificationClient(
-            @Value("${supportflow.customer.internal-base-url:http://127.0.0.1:9093}") String baseUrl) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+            @Value("${supportflow.customer.internal-base-url:http://127.0.0.1:9093}") String baseUrl,
+            @Value("${SUPPORTFLOW_CUSTOMER_OPS_SECRET:}") String secret) {
+        this.restClient = RestClient.builder().baseUrl(baseUrl)
+                .requestInterceptor(CustomerInternalCredential.signer(secret, CustomerInternalCredential.Caller.OPS))
+                .build();
     }
 
     /**
@@ -73,6 +78,7 @@ public class CustomerNotificationClient {
                             "title", title,
                             "content", content == null ? "" : content,
                             "linkView", linkView == null ? "" : linkView))
+                    .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                     .retrieve()
                     .body(Map.class);
             return true;

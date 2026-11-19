@@ -292,7 +292,8 @@
                           :title="image.name || '查看大图'"
                           @click="openImage(image)"
                         >
-                          <img :src="image.url" :alt="image.name || '图片'" loading="lazy" />
+                          <SecureChatImage :file-id="image.fileId" :session-no="activeSessionNo" :name="image.name"
+                            @ready="url => { if (image.fileId) loadedImages[image.fileId] = url }" />
                         </button>
                       </div>
                       <div v-if="imageOf(msg)?.aiSummary" class="msg-ai">
@@ -652,6 +653,7 @@
 </template>
 
 <script setup lang="ts">
+import SecureChatImage from '../../components/SecureChatImage.vue'
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -692,7 +694,7 @@ import { openVisitorTestTab } from '../../utils/visitor'
 import {
   fetchSessionWorkload,
   getSessionDetail,
-  imagesOf,
+  imagesOf as rawImagesOf,
   messageTextOf,
   parseImageContent,
   listSessionMessages,
@@ -1672,6 +1674,13 @@ function imageOf(message: SessionMessageItem) {
  * 本会话里的图排成一条链，弹层里能左右切换（客户一条消息发 3 张图时，坐席能挨个看）。
  */
 const previewOpen = ref(false)
+const loadedImages = ref<Record<string, string>>({})
+function imagesOf(message: SessionMessageItem) {
+  return rawImagesOf(message).map(image => {
+    const fileId = image.fileId || image.url?.match(/^\/api\/customer\/sessions\/attachments\/([0-9]+)$/)?.[1]
+    return { ...image, fileId, url: fileId ? loadedImages.value[fileId] : undefined }
+  })
+}
 const previewIndex = ref(0)
 const previewUrls = computed(() =>
   messages.value

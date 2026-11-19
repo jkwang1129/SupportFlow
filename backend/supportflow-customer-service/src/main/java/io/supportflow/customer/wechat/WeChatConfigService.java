@@ -1,6 +1,8 @@
 package io.supportflow.customer.wechat;
 
 import io.supportflow.common.exception.BizException;
+import io.supportflow.common.context.TenantContext;
+import io.supportflow.customer.security.ChannelTenantResolver;
 import io.supportflow.common.id.SnowflakeIdGenerator;
 import io.supportflow.customer.dto.wechat.SaveCommand;
 import io.supportflow.customer.entity.Channel;
@@ -31,28 +33,32 @@ public class WeChatConfigService {
     private final WeChatChannelConfigMapper configMapper;
     private final ChannelMapper channelMapper;
     private final SnowflakeIdGenerator idGenerator;
+    private final ChannelTenantResolver tenantResolver;
 
     /** 对外回调前缀：微信后台「服务器地址(URL)」要填的完整地址由它拼出来 */
     @Value("${supportflow.wechat.callback-base-url:}")
     private String callbackBaseUrl;
 
     public WeChatConfigService(WeChatChannelConfigMapper configMapper, ChannelMapper channelMapper,
-                               SnowflakeIdGenerator idGenerator) {
+                               SnowflakeIdGenerator idGenerator, ChannelTenantResolver tenantResolver) {
         this.configMapper = configMapper;
         this.channelMapper = channelMapper;
         this.idGenerator = idGenerator;
+        this.tenantResolver = tenantResolver;
     }
 
     /** 回调按 AppID 反查（微信推送时只知道收件方 AppID） */
     public WeChatChannelConfig byAppId(String appId) {
-        if (appId == null || appId.isBlank()) {
+        String tenant = tenantResolver.wechatTenant(appId);
+        if (tenant == null || (TenantContext.get() != null && !TenantContext.get().equals(tenant))) {
             return null;
         }
-        return configMapper.selectOne(Wrappers.<WeChatChannelConfig>lambdaQuery()
+        return TenantContext.bind(tenant, () -> configMapper.selectOne(Wrappers.<WeChatChannelConfig>lambdaQuery()
+                .eq(WeChatChannelConfig::getTenantCode, tenant)
                 .eq(WeChatChannelConfig::getAppId, appId.trim())
                 .eq(WeChatChannelConfig::getStatus, 1)
                 .eq(WeChatChannelConfig::getDeleted, false)
-                .last("LIMIT 1"));
+                .last("LIMIT 1")));
     }
 
     public WeChatChannelConfig byChannel(String tenantCode, Long channelId) {

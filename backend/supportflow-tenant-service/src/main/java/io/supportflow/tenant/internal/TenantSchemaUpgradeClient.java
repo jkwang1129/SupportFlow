@@ -1,5 +1,7 @@
 package io.supportflow.tenant.internal;
 
+import io.supportflow.common.auth.CustomerInternalCredential;
+import io.supportflow.common.context.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,8 +21,11 @@ public class TenantSchemaUpgradeClient {
 
     private final RestClient restClient;
 
-    public TenantSchemaUpgradeClient(@Value("${supportflow.customer.internal-base-url}") String baseUrl) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+    public TenantSchemaUpgradeClient(@Value("${supportflow.customer.internal-base-url}") String baseUrl,
+            @Value("${SUPPORTFLOW_CUSTOMER_TENANT_SECRET:}") String secret) {
+        this.restClient = RestClient.builder().baseUrl(baseUrl)
+                .requestInterceptor(CustomerInternalCredential.signer(secret, CustomerInternalCredential.Caller.TENANT))
+                .build();
     }
 
     /** 脚本清单（最新版本号 + 每一步）：平台概览要看"有多少租户的库版本落后"。 */
@@ -47,6 +52,7 @@ public class TenantSchemaUpgradeClient {
                             .queryParam("tenantCode", tenantCode)
                             .queryParam("targetSchema", targetSchema == null ? "public" : targetSchema)
                             .build())
+                    .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                     .retrieve()
                     .body(Map.class);
             return body == null ? null : (Map<String, Object>) body.get("data");
@@ -69,6 +75,7 @@ public class TenantSchemaUpgradeClient {
                     }
                     return uri.build();
                 })
+                .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                 .retrieve()
                 .body(Map.class);
         return body == null ? null : (Map<String, Object>) body.get("data");

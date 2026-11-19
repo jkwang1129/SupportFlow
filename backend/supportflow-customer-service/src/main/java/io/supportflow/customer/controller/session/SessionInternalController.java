@@ -1,6 +1,7 @@
 package io.supportflow.customer.controller.session;
 
 import io.supportflow.common.api.ApiResponse;
+import io.supportflow.common.auth.CustomerInternalCredential.Caller;
 import io.supportflow.customer.dto.session.AgentBody;
 import io.supportflow.customer.dto.session.AgentLoadVO;
 import io.supportflow.customer.dto.session.AppendBody;
@@ -9,20 +10,19 @@ import io.supportflow.customer.dto.session.MessageVO;
 import io.supportflow.customer.dto.session.SessionInfo;
 import io.supportflow.customer.dto.session.TransferBody;
 import io.supportflow.customer.entity.Session;
+import io.supportflow.customer.security.CustomerInternalCall;
+import io.supportflow.customer.security.InternalCustomerEndpoint;
 import io.supportflow.customer.service.session.SessionService;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.Size;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -32,6 +32,7 @@ import java.util.List;
  * 这条边界在生产可以平滑替换成 RPC 或消息队列。</p>
  */
 @RestController
+@InternalCustomerEndpoint(Caller.REALTIME)
 @RequestMapping("/api/customer/internal/sessions")
 public class SessionInternalController {
 
@@ -46,10 +47,11 @@ public class SessionInternalController {
      */
     @GetMapping("/{sessionNo}")
     public ApiResponse<SessionInfo> detail(
+            @RequestAttribute(CustomerInternalCall.ATTRIBUTE) CustomerInternalCall call,
             @PathVariable String sessionNo,
             @RequestParam String tenantCode
     ) {
-        return ApiResponse.ok(toInfo(sessionService.requireSession(tenantCode, sessionNo)));
+        return call.inTenant(tenantCode, () -> ApiResponse.ok(toInfo(sessionService.requireSession(tenantCode, sessionNo))));
     }
 
     /**
@@ -57,6 +59,7 @@ public class SessionInternalController {
      */
     @GetMapping("/{sessionNo}/messages")
     public ApiResponse<List<MessageVO>> messages(
+            @RequestAttribute(CustomerInternalCall.ATTRIBUTE) CustomerInternalCall call,
             @PathVariable String sessionNo,
             @RequestParam String tenantCode,
             @RequestParam(required = false) Long beforeId,
@@ -64,11 +67,9 @@ public class SessionInternalController {
             @RequestParam(required = false) Integer limit,
             @RequestParam(required = false, defaultValue = "true") boolean agentView
     ) {
-        if (afterSeq != null) {
-            // 增量补拉：重连后只要断线期间漏掉的那几条
-            return ApiResponse.ok(sessionService.messagesAfter(tenantCode, sessionNo, afterSeq, limit, agentView));
-        }
-        return ApiResponse.ok(sessionService.historyByTenant(tenantCode, sessionNo, beforeId, limit, agentView));
+        return call.inTenant(tenantCode, () -> ApiResponse.ok(afterSeq != null
+                ? sessionService.messagesAfter(tenantCode, sessionNo, afterSeq, limit, agentView)
+                : sessionService.historyByTenant(tenantCode, sessionNo, beforeId, limit, agentView)));
     }
 
     /**
@@ -76,10 +77,11 @@ public class SessionInternalController {
      */
     @PostMapping("/{sessionNo}/messages")
     public ApiResponse<MessageVO> append(
+            @RequestAttribute(CustomerInternalCall.ATTRIBUTE) CustomerInternalCall call,
             @PathVariable String sessionNo,
             @Valid @RequestBody AppendBody body
     ) {
-        return ApiResponse.ok(sessionService.appendMessage(
+        return call.inTenant(body.tenantCode(), () -> ApiResponse.ok(sessionService.appendMessage(
                 body.tenantCode(),
                 sessionNo,
                 body.senderType() == null ? SessionService.SENDER_CUSTOMER : body.senderType(),
@@ -88,7 +90,7 @@ public class SessionInternalController {
                 body.content(),
                 body.visibleTo() == null ? SessionService.VISIBLE_ALL : body.visibleTo(),
                 body.clientMsgNo()
-        ));
+        )));
     }
 
     /**
@@ -96,10 +98,12 @@ public class SessionInternalController {
      */
     @PostMapping("/{sessionNo}/claim")
     public ApiResponse<SessionInfo> claim(
+            @RequestAttribute(CustomerInternalCall.ATTRIBUTE) CustomerInternalCall call,
             @PathVariable String sessionNo,
             @Valid @RequestBody AgentBody body
     ) {
-        return ApiResponse.ok(toInfo(sessionService.claimSession(body.tenantCode(), sessionNo, body.agentId())));
+        return call.inTenant(body.tenantCode(),
+                () -> ApiResponse.ok(toInfo(sessionService.claimSession(body.tenantCode(), sessionNo, body.agentId()))));
     }
 
     /**
@@ -107,10 +111,12 @@ public class SessionInternalController {
      */
     @PostMapping("/{sessionNo}/release")
     public ApiResponse<SessionInfo> release(
+            @RequestAttribute(CustomerInternalCall.ATTRIBUTE) CustomerInternalCall call,
             @PathVariable String sessionNo,
             @Valid @RequestBody AgentBody body
     ) {
-        return ApiResponse.ok(toInfo(sessionService.releaseSession(body.tenantCode(), sessionNo, body.agentId())));
+        return call.inTenant(body.tenantCode(),
+                () -> ApiResponse.ok(toInfo(sessionService.releaseSession(body.tenantCode(), sessionNo, body.agentId()))));
     }
 
     /**
@@ -118,11 +124,12 @@ public class SessionInternalController {
      */
     @PostMapping("/{sessionNo}/transfer")
     public ApiResponse<SessionInfo> transfer(
+            @RequestAttribute(CustomerInternalCall.ATTRIBUTE) CustomerInternalCall call,
             @PathVariable String sessionNo,
             @Valid @RequestBody TransferBody body
     ) {
-        return ApiResponse.ok(toInfo(sessionService.transferSession(
-                body.tenantCode(), sessionNo, body.fromAgentId(), body.toAgentId(), body.remark())));
+        return call.inTenant(body.tenantCode(), () -> ApiResponse.ok(toInfo(sessionService.transferSession(
+                body.tenantCode(), sessionNo, body.fromAgentId(), body.toAgentId(), body.remark()))));
     }
 
     /**
@@ -130,19 +137,21 @@ public class SessionInternalController {
      */
     @PostMapping("/{sessionNo}/close")
     public ApiResponse<SessionInfo> close(
+            @RequestAttribute(CustomerInternalCall.ATTRIBUTE) CustomerInternalCall call,
             @PathVariable String sessionNo,
             @Valid @RequestBody CloseBody body
     ) {
-        return ApiResponse.ok(toInfo(sessionService.closeSession(
-                body.tenantCode(), sessionNo, body.operatorId(), body.remark())));
+        return call.inTenant(body.tenantCode(), () -> ApiResponse.ok(toInfo(sessionService.closeSession(
+                body.tenantCode(), sessionNo, body.operatorId(), body.remark()))));
     }
 
     /**
      * 各坐席当前接待量（工作台展示谁忙谁闲）。
      */
     @GetMapping("/workload")
-    public ApiResponse<List<AgentLoadVO>> workload(@RequestParam String tenantCode) {
-        return ApiResponse.ok(sessionService.agentWorkload(tenantCode));
+    public ApiResponse<List<AgentLoadVO>> workload(@RequestAttribute(CustomerInternalCall.ATTRIBUTE) CustomerInternalCall call,
+                                                  @RequestParam String tenantCode) {
+        return call.inTenant(tenantCode, () -> ApiResponse.ok(sessionService.agentWorkload(tenantCode)));
     }
 
     private SessionInfo toInfo(Session session) {

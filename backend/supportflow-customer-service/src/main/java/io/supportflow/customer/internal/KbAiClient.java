@@ -1,5 +1,7 @@
 package io.supportflow.customer.internal;
 
+import io.supportflow.common.auth.AiRequestSigner;
+
 import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.context.TraceContext;
 import io.supportflow.common.exception.BizException;
@@ -42,6 +44,7 @@ public class KbAiClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String baseUrl;
+    private final String aiSecret;
     private final boolean logPayload;
     /** 计费用量：知识库索引（embedding）与检索 / 问答都算 AI 调用 */
     private final BillingUsageCollector billingUsageCollector;
@@ -49,6 +52,7 @@ public class KbAiClient {
     private final CostGuardClient costGuardClient;
 
     public KbAiClient(
+            @Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String aiSecret,
             @Value("${supportflow.ai.kb-base-url:http://127.0.0.1:9100}") String baseUrl,
             @Value("${supportflow.ai.log-payload:true}") boolean logPayload,
             BillingUsageCollector billingUsageCollector,
@@ -58,6 +62,7 @@ public class KbAiClient {
                 .connectTimeout(Duration.ofSeconds(5))
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
+        this.aiSecret = aiSecret;
         this.baseUrl = (baseUrl == null || baseUrl.isBlank())
                 ? "http://127.0.0.1:9100" : baseUrl.replaceAll("/+$", "");
         this.logPayload = logPayload;
@@ -93,7 +98,7 @@ public class KbAiClient {
                     // 关键：显式把字节数组作为请求体，不经过消息转换器
                     .POST(HttpRequest.BodyPublishers.ofByteArray(payload))
                     .build();
-            HttpResponse<String> response = httpClient.send(request,
+            HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (logPayload) {
                 log.info("知识库索引响应 tenant={} docId={} status={} body={}",
@@ -207,7 +212,7 @@ public class KbAiClient {
                     .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                     .DELETE()
                     .build();
-            httpClient.send(request, HttpResponse.BodyHandlers.discarding());
+            httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode), HttpResponse.BodyHandlers.discarding());
         } catch (Exception e) {
             // 删切片失败不该拦住删文档：切片留着也只是查不到（文档已软删）
             log.warn("删除知识切片失败 tenant={} docId={} error={}", tenantCode, docId, e.getMessage());
@@ -242,15 +247,18 @@ public class KbAiClient {
      * @return health 原始 JSON；读不到时返回空 Map（调用方按"不确定"处理，不乱动数据）
      */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> healthDetail() {
+    public Map<String, Object> healthDetail(String tenantCode) {
         try {
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/ai/v1/kb/health"))
+                    .uri(URI.create(baseUrl + "/api/ai/v1/kb/repair-status"))
+                    .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                     .timeout(Duration.ofSeconds(10))
                     .GET()
                     .build();
-            String body = httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body();
-            if (body == null || body.isBlank()) {
+            var response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode),
+                    HttpResponse.BodyHandlers.ofString());
+            String body = response.body();
+            if (response.statusCode() != 200 || body == null || body.isBlank()) {
                 return Map.of();
             }
             return objectMapper.readValue(body, new TypeReference<Map<String, Object>>() {
@@ -268,7 +276,7 @@ public class KbAiClient {
                     .timeout(Duration.ofSeconds(5))
                     .GET()
                     .build();
-            String body = httpClient.send(request, HttpResponse.BodyHandlers.ofString()).body();
+            String body = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", null), HttpResponse.BodyHandlers.ofString()).body();
             return body != null && body.contains("\"UP\"");
         } catch (Exception e) {
             log.warn("知识库探活失败：{}", e.getMessage());
@@ -289,7 +297,7 @@ public class KbAiClient {
                         TraceContext.getOrCreate())
                 .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
                 .build();
-        HttpResponse<String> response = httpClient.send(request,
+        HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new BizException(40001, parseDetail(response.body()));

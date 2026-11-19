@@ -1,5 +1,7 @@
 package io.supportflow.customer.wechat;
 
+import io.supportflow.common.context.TenantContext;
+
 import io.supportflow.common.exception.BizException;
 import io.supportflow.common.id.SnowflakeIdGenerator;
 import io.supportflow.customer.dto.session.OpenCommand;
@@ -108,12 +110,16 @@ public class WeChatInboundService {
             log.warn("收到未配置的公众号消息，已忽略 appId={}", appId);
             return "success";
         }
+        return TenantContext.bind(config.getTenantCode(), () -> dispatchInTenant(config, message, simulated));
+    }
+
+    private String dispatchInTenant(WeChatChannelConfig config, Map<String, String> message, boolean simulated) {
         String openid = message.get("FromUserName");
         String msgType = value(message.get("MsgType"));
         String event = message.get("Event");
         String dedupeKey = dedupeKey(message, msgType, event);
         if (!simulated && !markProcessed(config, dedupeKey, openid, msgType, event)) {
-            log.info("微信消息重复推送，已跳过 appId={} msgId={}", appId, dedupeKey);
+            log.info("微信消息重复推送，已跳过 appId={} msgId={}", config.getAppId(), dedupeKey);
             return "success";
         }
         switch (msgType) {
@@ -166,6 +172,10 @@ public class WeChatInboundService {
 
     /** openid → 客户档案：没有就建（复用开会话链路，客户编号/访客令牌都由核心服务签发） */
     public WeChatCustomerBind bindOrCreate(WeChatChannelConfig config, String openid, boolean simulated) {
+        return TenantContext.bind(config.getTenantCode(), () -> bindOrCreateInTenant(config, openid, simulated));
+    }
+
+    private WeChatCustomerBind bindOrCreateInTenant(WeChatChannelConfig config, String openid, boolean simulated) {
         WeChatCustomerBind exists = bindMapper.selectOne(Wrappers.<WeChatCustomerBind>lambdaQuery()
                 .eq(WeChatCustomerBind::getAppId, config.getAppId())
                 .eq(WeChatCustomerBind::getOpenid, openid)

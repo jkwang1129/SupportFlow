@@ -1,5 +1,8 @@
 package io.supportflow.customer.service.customer;
 
+import io.supportflow.common.context.TenantContext;
+import io.supportflow.customer.internal.TenantListClient;
+
 import io.supportflow.common.auth.LoginUser;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.common.id.SnowflakeIdGenerator;
@@ -88,19 +91,21 @@ public class CustomerTagRuleService {
     private final SessionMapper sessionMapper;
     private final CustomerDynamics dynamics;
     private final SnowflakeIdGenerator idGenerator;
+    private final TenantListClient tenantListClient;
 
     public CustomerTagRuleService(CustomerMapper customerMapper,
                                   CustomerTagMapper customerTagMapper,
                                   CustomerTagDefMapper tagDefMapper,
                                   SessionMapper sessionMapper,
                                   CustomerDynamics dynamics,
-                                  SnowflakeIdGenerator idGenerator) {
+                                  SnowflakeIdGenerator idGenerator, TenantListClient tenantListClient) {
         this.customerMapper = customerMapper;
         this.customerTagMapper = customerTagMapper;
         this.tagDefMapper = tagDefMapper;
         this.sessionMapper = sessionMapper;
         this.dynamics = dynamics;
         this.idGenerator = idGenerator;
+        this.tenantListClient = tenantListClient;
     }
 
     // ------------------------------------------------------------------ 对外：重算
@@ -165,37 +170,38 @@ public class CustomerTagRuleService {
      */
     @Scheduled(initialDelay = 120_000, fixedDelay = 600_000)
     public void scheduledScan() {
-        List<String> tenants;
-        try {
-            tenants = tagDefMapper.selectTenantsWithRunnableRules();
-        } catch (Exception e) {
-            log.warn("规则标签定时扫描跳过：读不到租户（{}）", e.getMessage());
+        for (String tenant : tenantListClient.allTenantCodes()) {
+            try {
+                TenantContext.run(tenant, () -> scanTenant(tenant));
+            } catch (RuntimeException e) {
+                log.warn("规则标签定时扫描跳过 tenant={} error={}", tenant, e.getMessage());
+            }
+        }
+    }
+
+    private void scanTenant(String tenant) {
+        List<CustomerTagDef> rules = runnableRules(tenant);
+        if (rules.isEmpty()) {
             return;
         }
-        for (String tenant : tenants) {
-            List<CustomerTagDef> rules = runnableRules(tenant);
-            if (rules.isEmpty()) {
-                continue;
+        List<Customer> targets = customerMapper.selectList(Wrappers.<Customer>lambdaQuery()
+                .eq(Customer::getTenantCode, tenant)
+                .eq(Customer::getDeleted, false)
+                .orderByDesc(Customer::getLastActive)
+                .last("LIMIT " + SCHEDULE_BATCH));
+        int changed = 0;
+        for (Customer customer : targets) {
+            try {
+                Set<Long> hit = evaluate(rules, tenant, customer);
+                ApplyResult result = apply(tenant, customer, rules, hit, null);
+                changed += result.tagged() + result.untagged();
+            } catch (Exception e) {
+                log.warn("规则标签重算失败 tenant={} customerId={} error={}",
+                        tenant, customer.getId(), e.getMessage());
             }
-            List<Customer> targets = customerMapper.selectList(Wrappers.<Customer>lambdaQuery()
-                    .eq(Customer::getTenantCode, tenant)
-                    .eq(Customer::getDeleted, false)
-                    .orderByDesc(Customer::getLastActive)
-                    .last("LIMIT " + SCHEDULE_BATCH));
-            int changed = 0;
-            for (Customer customer : targets) {
-                try {
-                    Set<Long> hit = evaluate(rules, tenant, customer);
-                    ApplyResult result = apply(tenant, customer, rules, hit, null);
-                    changed += result.tagged() + result.untagged();
-                } catch (Exception e) {
-                    log.warn("规则标签重算失败 tenant={} customerId={} error={}",
-                            tenant, customer.getId(), e.getMessage());
-                }
-            }
-            if (changed > 0) {
-                log.info("规则标签定时扫描 tenant={} 扫描={} 标签变化={}", tenant, targets.size(), changed);
-            }
+        }
+        if (changed > 0) {
+            log.info("规则标签定时扫描 tenant={} 扫描={} 标签变化={}", tenant, targets.size(), changed);
         }
     }
 

@@ -1,5 +1,7 @@
 package io.supportflow.customer.internal;
 
+import io.supportflow.common.auth.AiRequestSigner;
+
 import io.supportflow.common.api.ApiResponse;
 import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.context.TraceContext;
@@ -36,6 +38,7 @@ public class QaAiClient {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient;
     private final String baseUrl;
+    private final String aiSecret;
     private final boolean logPayload;
     /** 计费用量：调一次质检算一次 AI 调用 */
     private final BillingUsageCollector billingUsageCollector;
@@ -43,6 +46,7 @@ public class QaAiClient {
     private final CostGuardClient costGuardClient;
 
     public QaAiClient(
+            @Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String aiSecret,
             @Value("${supportflow.ai.qa-base-url:http://127.0.0.1:9100}") String baseUrl,
             @Value("${supportflow.ai.log-payload:true}") boolean logPayload,
             BillingUsageCollector billingUsageCollector,
@@ -52,6 +56,7 @@ public class QaAiClient {
                 .connectTimeout(Duration.ofSeconds(5))
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
+        this.aiSecret = aiSecret;
         this.baseUrl = (baseUrl == null || baseUrl.isBlank()) ? "http://127.0.0.1:9100" : baseUrl.replaceAll("/+$", "");
         this.logPayload = logPayload;
         this.billingUsageCollector = billingUsageCollector;
@@ -97,7 +102,7 @@ public class QaAiClient {
                     .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
                     .build();
             HttpResponse<String> response = httpClient.send(
-                    httpRequest,
+                    AiRequestSigner.sign(httpRequest, aiSecret, "customer", request.tenantCode()),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8)
             );
             long cost = System.currentTimeMillis() - startedAt;

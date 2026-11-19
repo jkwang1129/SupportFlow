@@ -1,10 +1,11 @@
 package io.supportflow.customer.service.bot;
 
 import io.supportflow.common.auth.LoginUser;
+import io.supportflow.common.context.TenantContext;
 import io.supportflow.customer.entity.KbDocument;
 import io.supportflow.customer.internal.KbAiClient;
+import io.supportflow.customer.internal.TenantListClient;
 import io.supportflow.customer.mapper.KbDocumentMapper;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,7 +17,6 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -49,6 +49,7 @@ public class KbVectorHealer implements ApplicationRunner {
     private final KbAiClient aiClient;
     private final KbDocumentMapper documentMapper;
     private final KbService kbService;
+    private final TenantListClient tenantListClient;
     private final boolean enabled;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -56,11 +57,13 @@ public class KbVectorHealer implements ApplicationRunner {
             KbAiClient aiClient,
             KbDocumentMapper documentMapper,
             KbService kbService,
+            TenantListClient tenantListClient,
             @Value("${supportflow.kb.auto-reindex:true}") boolean enabled
     ) {
         this.aiClient = aiClient;
         this.documentMapper = documentMapper;
         this.kbService = kbService;
+        this.tenantListClient = tenantListClient;
         this.enabled = enabled;
     }
 
@@ -85,83 +88,55 @@ public class KbVectorHealer implements ApplicationRunner {
         }
     }
 
-    private void heal() {
+    void heal() {
         if (!running.compareAndSet(false, true)) {
             return;
         }
         try {
-            Map<String, Object> health = aiClient.healthDetail();
-            long fallbackChunks = fallbackChunkCount(health);
-            if (fallbackChunks <= 0) {
-                return;
-            }
-            if (!Boolean.TRUE.equals(health.get("embeddingKeyConfigured"))) {
-                log.warn("发现 {} 个切片用的是兜底向量，但向量密钥还没配好——先把 "
-                        + "SUPPORTFLOW_AI_QWEN_API_KEY（或 SUPPORTFLOW_AI_EMBEDDING_API_KEY）配上再重启，"
-                        + "现在重索引还是兜底向量", fallbackChunks);
-                return;
-            }
-            List<Long> fallbackDocs = fallbackDocIds(health);
-            log.warn("发现 {} 个切片是兜底向量（没有语义，检索会退化成字面匹配），"
-                            + "涉及 {} 份文档，开始自动重新索引…",
-                    fallbackChunks, fallbackDocs.isEmpty() ? "（未报到具体文档，按整库处理）" : fallbackDocs.size());
-
-            List<String> tenants = tenantsWithDocuments();
-            int healed = 0;
-            int failed = 0;
-            for (String tenant : tenants) {
-                for (KbDocument doc : documentsOf(tenant, fallbackDocs)) {
-                    if (healed >= MAX_DOCS_PER_RUN) {
-                        log.warn("本次自愈已达上限 {} 份，剩余的等下次启动继续", MAX_DOCS_PER_RUN);
+            int attempted = 0;
+            for (String tenant : tenantListClient.allTenantCodes().stream().distinct().toList()) {
+                if (!tenant.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,15}") || "PLATFORM".equalsIgnoreCase(tenant)) {
+                    continue;
+                }
+                try {
+                    int budget = MAX_DOCS_PER_RUN - attempted;
+                    attempted += TenantContext.bind(tenant, () -> healTenant(tenant, budget));
+                    if (attempted >= MAX_DOCS_PER_RUN) {
                         return;
                     }
-                    if (reindexOne(doc)) {
-                        healed++;
-                    } else {
-                        failed++;
-                    }
+                } catch (RuntimeException e) {
+                    log.warn("知识库向量自愈跳过租户 {}：{}", tenant, e.getMessage());
                 }
             }
-            log.info("知识库向量自愈完成：成功 {} 份，失败 {} 份", healed, failed);
         } finally {
             running.set(false);
         }
     }
 
-    /** 体检结果里"兜底向量切片数"（没有这项就当 0，不乱动数据） */
-    private long fallbackChunkCount(Map<String, Object> health) {
-        Object models = health.get("chunkVectorModels");
-        if (!(models instanceof List<?> list)) {
+    private int healTenant(String tenant, int budget) {
+        Map<String, Object> health = aiClient.healthDetail(tenant);
+        if (!Boolean.TRUE.equals(health.get("embeddingKeyConfigured"))) {
             return 0;
         }
-        long total = 0;
-        for (Object item : list) {
-            if (item instanceof Map<?, ?> row && "local-hash".equals(String.valueOf(row.get("model")))) {
-                Object chunks = row.get("chunks");
-                total += chunks instanceof Number number ? number.longValue() : 0L;
+        List<Long> fallbackDocs = fallbackDocIds(health);
+        if (fallbackDocs.isEmpty()) {
+            return 0;
+        }
+        int attempted = 0;
+        for (KbDocument doc : documentsOf(tenant, fallbackDocs)) {
+            if (tenant.equals(doc.getTenantCode()) && attempted < budget) {
+                attempted++;
+                reindexOne(doc);
             }
         }
-        return total;
-    }
-
-    /** 有文档的租户编码（去重）：自愈要挨个租户来，别把别家的切片弄混 */
-    private List<String> tenantsWithDocuments() {
-        List<Object> rows = documentMapper.selectObjs(
-                new QueryWrapper<KbDocument>()
-                        .select("DISTINCT tenant_code")
-                        .eq("is_deleted", false));
-        return rows.stream()
-                .filter(Objects::nonNull)
-                .map(String::valueOf)
-                .filter(code -> !code.isBlank())
-                .toList();
+        return attempted;
     }
 
     /**
      * 体检结果里"哪些文档用了兜底向量"。
      *
      * <p>只重建这几份（而不是整库重跑）：真按整库来，几千份文档的库启动一次就要重算几千次向量，
-     * 白花钱还慢。拿不到这个清单（旧版 AI 服务）时返回空，调用方退化成"整库处理"。</p>
+     * 白花钱还慢。拿不到清单时跳过。</p>
      */
     private List<Long> fallbackDocIds(Map<String, Object> health) {
         Object ids = health.get("fallbackDocIds");
@@ -179,20 +154,12 @@ public class KbVectorHealer implements ApplicationRunner {
         return result;
     }
 
-    /**
-     * 某个租户下需要重建的文档。
-     *
-     * <p>{@code onlyIds} 为空表示"整库重建"（旧版 AI 服务没给清单时的兜底）；
-     * 不为空时只挑出那几份，别的文档原样不动。</p>
-     */
     private List<KbDocument> documentsOf(String tenantCode, List<Long> onlyIds) {
         var query = Wrappers.<KbDocument>lambdaQuery()
                 .eq(KbDocument::getTenantCode, tenantCode)
                 .eq(KbDocument::getDeleted, false)
+                .in(KbDocument::getId, onlyIds)
                 .orderByAsc(KbDocument::getId);
-        if (!onlyIds.isEmpty()) {
-            query.in(KbDocument::getId, onlyIds);
-        }
         return documentMapper.selectList(query);
     }
 

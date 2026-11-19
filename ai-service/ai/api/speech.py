@@ -36,7 +36,7 @@ router = APIRouter(prefix="/ai/v1/speech", tags=["speech"])
 
 class TtsRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
-    tenant_code: str = Field(default="", max_length=32)
+    tenant_code: str = Field(min_length=1, max_length=32)
     # 音色与格式都可不传：不传用平台默认（知祥 / wav / 16k）
     voice: str = Field(default="", max_length=32)
     format: str = Field(default="", max_length=8)

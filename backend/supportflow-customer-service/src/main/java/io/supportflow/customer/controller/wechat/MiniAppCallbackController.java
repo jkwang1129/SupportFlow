@@ -47,6 +47,6 @@ public class MiniAppCallbackController {
                           @RequestParam(required = false) String timestamp,
                           @RequestParam(required = false) String nonce,
                           @RequestBody(required = false) String body) {
-        return callbackService.receive(appId, body, msg_signature, timestamp, nonce);
+        return callbackService.receive(appId, body, signature, msg_signature, timestamp, nonce);
     }
 }

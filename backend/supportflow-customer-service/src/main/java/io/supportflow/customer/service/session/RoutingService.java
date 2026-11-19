@@ -1,5 +1,8 @@
 package io.supportflow.customer.service.session;
 
+import io.supportflow.common.context.TenantContext;
+import io.supportflow.customer.internal.TenantListClient;
+
 import io.supportflow.common.exception.BizException;
 import io.supportflow.customer.entity.AgentStatus;
 import io.supportflow.customer.entity.Session;
@@ -58,6 +61,7 @@ public class RoutingService {
     private final SkillGroupMemberMapper memberMapper;
     private final SessionService sessionService;
     private final RealtimeNotifyClient notifyClient;
+    private final TenantListClient tenantListClient;
 
     public RoutingService(
             SessionMapper sessionMapper,
@@ -65,7 +69,8 @@ public class RoutingService {
             AgentStatusMapper agentStatusMapper,
             SkillGroupMemberMapper memberMapper,
             SessionService sessionService,
-            RealtimeNotifyClient notifyClient
+            RealtimeNotifyClient notifyClient,
+            TenantListClient tenantListClient
     ) {
         this.sessionMapper = sessionMapper;
         this.skillGroupMapper = skillGroupMapper;
@@ -73,6 +78,7 @@ public class RoutingService {
         this.memberMapper = memberMapper;
         this.sessionService = sessionService;
         this.notifyClient = notifyClient;
+        this.tenantListClient = tenantListClient;
     }
 
     /**
@@ -83,10 +89,9 @@ public class RoutingService {
      */
     @Scheduled(fixedDelay = 10_000L, initialDelay = 10_000L)
     public void dispatchQueue() {
-        List<String> tenants = sessionMapper.selectTenantsWithQueue();
-        for (String tenant : tenants) {
+        for (String tenant : tenantListClient.allTenantCodes()) {
             try {
-                int assigned = assignQueue(tenant);
+                int assigned = TenantContext.bind(tenant, () -> assignQueue(tenant));
                 if (assigned > 0) {
                     log.info("排队调度完成 tenant={} 本次分配={} 条", tenant, assigned);
                 }

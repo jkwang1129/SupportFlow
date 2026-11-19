@@ -3,7 +3,8 @@ package io.supportflow.common.context;
 import java.lang.ScopedValue.CallableOp;
 
 /**
- * 租户上下文（{@link ScopedValue}，JDK 25 正式 API）。网关解析 X-Tenant-Code 后注入，业务侧使用。
+ * 租户上下文（{@link ScopedValue}）。由已验证的登录态、服务调用或内部任务绑定；
+ * 不应将外部请求传入的租户头直接绑定为权威值。
  *
  * <p>绑定只在 {@link #bind} 的作用域内有效，出了作用域自动失效——不需要 ThreadLocal 那套
  * "set 完记得 remove"的纪律，也就不会出现"线程池复用把上个租户带进下一个请求"。</p>
@@ -46,5 +47,10 @@ public final class TenantContext {
     public static <R, X extends Throwable> R bind(String tenantCode, CallableOp<? extends R, X> action)
             throws X {
         return ScopedValue.where(CURRENT, tenantCode).call(action);
+    }
+
+    /** Run a job with a tenant taken from its verified request or stored business record. */
+    public static void run(String tenantCode, Runnable action) {
+        ScopedValue.where(CURRENT, tenantCode).run(action);
     }
 }

@@ -4,15 +4,7 @@
 --
 -- 幂等：可重复执行（DROP POLICY IF EXISTS + CREATE POLICY，表清单自动扫描）。
 --
--- 三个关键约定（读代码前先看这三条）：
---   1. **会话变量 app.tenant_code**：应用每次拿连接时执行
---      `select set_config('app.tenant_code', '<租户>', false)`（见 customer-service 的 TenantRlsConfig）。
---   2. **上下文为空则放行**：迁移脚本、psql 手工排查、平台内部任务不会设置它，
---      策略里对"未设置 / 空 / PLATFORM"放行——否则运维动作会被自己的兜底挡住。
---   3. **FORCE ROW LEVEL SECURITY**：PG 默认对表 owner 不生效（owner 能绕过 RLS），
---      不 FORCE 的话这条兜底形同虚设。生产更彻底的做法是给应用单独建一个
---      **非 owner 角色**并只给它 DML 权限，这里按"用同一个库账号"的现状写成 FORCE。
-
+-- Empty/invalid/PLATFORM scopes never authorize runtime access. Platform operations use a separate role.
 -- ---------------------------------------------------------------------------
 -- 1. 给所有带 tenant_code 的业务表开启 RLS + 兜底策略
 --    表清单自动扫描（新表加了 tenant_code 之后，重跑本脚本就会自动覆盖）
@@ -41,9 +33,9 @@ BEGIN
                        t.table_name || '_tenant_isolation', t.table_name);
         EXECUTE format(
             'CREATE POLICY %I ON public.%I USING ('
-            '    NULLIF(current_setting(''app.tenant_code'', true), '''') IS NULL'      -- 未设置上下文：迁移/运维
-            ' OR NULLIF(current_setting(''app.tenant_code'', true), '''') = ''PLATFORM'''  -- 平台账号受控跨租户
-            ' OR "tenant_code" = NULLIF(current_setting(''app.tenant_code'', true), '''')' -- 正常业务请求
+            '    "tenant_code" = NULLIF(current_setting(''app.tenant_code'', true), '''')'
+            ' AND "tenant_code" <> ''PLATFORM'''
+            ' AND "tenant_code" ~ ''^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'''
             ')',
             t.table_name || '_tenant_isolation', t.table_name);
     END LOOP;

@@ -49,7 +49,7 @@ public class VisionService {
         // 别一上来就怀疑模型——3 张图 2 秒里有一半可能是本地预处理
         long prepareStarted = System.currentTimeMillis();
         try {
-            images = attachmentService.toVisionImages(fileIds);
+            images = attachmentService.toVisionImages(tenantCode, sessionNo, fileIds);
         } catch (Exception e) {
             log.warn("读取聊天图片失败 tenant={} session={} error={}", tenantCode, sessionNo, e.getMessage());
             return VisionResult.unavailable("图片读取失败：" + e.getMessage());

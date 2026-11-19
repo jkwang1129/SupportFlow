@@ -1,5 +1,7 @@
 package io.supportflow.customer.internal;
 
+import io.supportflow.common.auth.AiRequestSigner;
+
 import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.context.TraceContext;
 import io.supportflow.common.exception.BizException;
@@ -46,6 +48,7 @@ public class SpeechAiClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String baseUrl;
+    private final String aiSecret;
     private final boolean logPayload;
     private final int timeoutSeconds;
     /** 计费用量：调一次语音算一次 AI 调用（配额口径与视觉/文本一致） */
@@ -54,6 +57,7 @@ public class SpeechAiClient {
     private final CostGuardClient costGuardClient;
 
     public SpeechAiClient(
+            @Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String aiSecret,
             @Value("${supportflow.ai.speech-base-url:http://127.0.0.1:9100}") String baseUrl,
             @Value("${supportflow.ai.log-payload:true}") boolean logPayload,
             @Value("${supportflow.ai.speech-timeout-seconds:60}") int timeoutSeconds,
@@ -64,6 +68,7 @@ public class SpeechAiClient {
                 .connectTimeout(Duration.ofSeconds(5))
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
+        this.aiSecret = aiSecret;
         this.baseUrl = (baseUrl == null || baseUrl.isBlank())
                 ? "http://127.0.0.1:9100" : baseUrl.replaceAll("/+$", "");
         this.logPayload = logPayload;
@@ -101,7 +106,7 @@ public class SpeechAiClient {
                             TraceContext.getOrCreate())
                     .POST(HttpRequest.BodyPublishers.ofByteArray(audio))
                     .build();
-            HttpResponse<String> response = httpClient.send(request,
+            HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new BizException(50001, parseDetail(response.body()));
@@ -159,7 +164,7 @@ public class SpeechAiClient {
                     .POST(HttpRequest.BodyPublishers.ofString(
                             objectMapper.writeValueAsString(payload), StandardCharsets.UTF_8))
                     .build();
-            HttpResponse<byte[]> response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+            HttpResponse<byte[]> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode), HttpResponse.BodyHandlers.ofByteArray());
             String contentType = response.headers().firstValue("Content-Type").orElse("");
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new BizException(50001, parseDetail(new String(response.body(), StandardCharsets.UTF_8)));

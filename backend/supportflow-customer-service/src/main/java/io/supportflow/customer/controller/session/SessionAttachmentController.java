@@ -1,6 +1,11 @@
 package io.supportflow.customer.controller.session;
 
 import io.supportflow.common.api.ApiResponse;
+import io.supportflow.common.context.TenantContext;
+import io.supportflow.customer.security.ChannelTenantResolver;
+import io.supportflow.customer.security.ChatAttachmentAccess;
+import io.supportflow.common.exception.BizException;
+import org.springframework.web.bind.annotation.RequestHeader;
 import io.supportflow.customer.dto.session.FileContent;
 import io.supportflow.customer.dto.session.UploadResult;
 import io.supportflow.customer.service.session.SessionAttachmentService;
@@ -25,10 +30,8 @@ import java.nio.charset.StandardCharsets;
  * <p>两个接口，分工不同：</p>
  *
  * <ul>
- *   <li><b>上传</b>：访客没有登录态，所以用**渠道密钥**（appKey）证明"这条会话来自我的渠道"。
- *       租户由密钥解析出来，不信前端传的任何租户参数——这是多租户系统的底线；</li>
- *   <li><b>读取</b>：聊天图片要同时给访客和坐席看，所以不能要求登录态，
- *       靠不可猜的雪花 fileId 当凭据。生产环境应换成带时效的签名 URL（这里留了注释说明）。</li>
+ *   <li><b>上传</b>：渠道密钥与访客会话或企业身份必须对应同一租户；</li>
+ *   <li><b>读取</b>：验证访客会话或企业身份，并核对文件所属会话。</li>
  * </ul>
  */
 @RestController
@@ -36,9 +39,14 @@ import java.nio.charset.StandardCharsets;
 public class SessionAttachmentController {
 
     private final SessionAttachmentService attachmentService;
+    private final ChannelTenantResolver channelTenantResolver;
+    private final ChatAttachmentAccess access;
 
-    public SessionAttachmentController(SessionAttachmentService attachmentService) {
+    public SessionAttachmentController(SessionAttachmentService attachmentService, ChannelTenantResolver channelTenantResolver,
+                                       ChatAttachmentAccess access) {
         this.attachmentService = attachmentService;
+        this.channelTenantResolver = channelTenantResolver;
+        this.access = access;
     }
 
     /**
@@ -48,27 +56,35 @@ public class SessionAttachmentController {
     public ApiResponse<UploadResult> upload(
             @RequestParam("appKey") String appKey,
             @RequestParam("sessionNo") String sessionNo,
+            @RequestHeader(value = "X-Visitor-Token", required = false) String visitorToken,
             @RequestPart("file") MultipartFile file
     ) {
-        return ApiResponse.ok(attachmentService.upload(attachmentService.tenantOf(appKey), sessionNo, file));
+        String tenant = channelTenantResolver.resolve(appKey);
+        if (!tenant.equals(access.tenant(sessionNo, visitorToken))) {
+            throw new BizException(40301, "渠道与会话租户不一致");
+        }
+        return TenantContext.bind(tenant, () -> ApiResponse.ok(attachmentService.upload(tenant, sessionNo, file)));
     }
 
     /**
      * 按文件 ID 读取图片（消息气泡里直接当 img src 用）。
      */
     @GetMapping("/{fileId}")
-    public ResponseEntity<byte[]> load(@PathVariable long fileId) throws IOException {
-        FileContent content = attachmentService.load(fileId);
+    public ResponseEntity<byte[]> load(@PathVariable long fileId, @RequestParam String sessionNo,
+            @RequestHeader(value = "X-Visitor-Token", required = false) String visitorToken) throws IOException {
+        String tenant = access.tenant(sessionNo, visitorToken);
+        FileContent content = TenantContext.bind(tenant, () -> attachmentService.load(tenant, sessionNo, fileId));
         String encoded = URLEncoder.encode(content.fileName() == null ? "image" : content.fileName(),
                 StandardCharsets.UTF_8).replace("+", "%20");
         MediaType mediaType = content.mimeType() == null
                 ? MediaType.APPLICATION_OCTET_STREAM
                 : MediaType.parseMediaType(content.mimeType());
         return ResponseEntity.ok()
+                .header("X-Content-Type-Options", "nosniff")
                 // inline：让浏览器直接显示，而不是弹下载
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encoded)
-                // 图片按 fileId 不可变，缓存一天，消息列表反复渲染时不再回源
-                .header(HttpHeaders.CACHE_CONTROL, "private, max-age=86400")
+                // 私有聊天内容不进入浏览器或代理缓存。
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
                 .contentType(mediaType)
                 .body(content.payload());
     }

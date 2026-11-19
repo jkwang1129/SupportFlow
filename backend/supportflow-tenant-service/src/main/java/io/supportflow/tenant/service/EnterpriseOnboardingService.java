@@ -46,19 +46,22 @@ public class EnterpriseOnboardingService {
     private final RegistrationPolicyClient registrationPolicyClient;
     /** 自动放行走人工审批的同一段逻辑（同一条审计、同样的试用开通） */
     private final EnterpriseReviewAdminService reviewAdminService;
+    private final io.supportflow.tenant.internal.LicenseOwnershipClient licenseOwnership;
 
     public EnterpriseOnboardingService(
             EnterpriseMapper enterpriseMapper,
             EnterpriseReviewMapper enterpriseReviewMapper,
             SnowflakeIdGenerator idGenerator,
             RegistrationPolicyClient registrationPolicyClient,
-            EnterpriseReviewAdminService reviewAdminService
+            EnterpriseReviewAdminService reviewAdminService,
+            io.supportflow.tenant.internal.LicenseOwnershipClient licenseOwnership
     ) {
         this.enterpriseMapper = enterpriseMapper;
         this.enterpriseReviewMapper = enterpriseReviewMapper;
         this.idGenerator = idGenerator;
         this.registrationPolicyClient = registrationPolicyClient;
         this.reviewAdminService = reviewAdminService;
+        this.licenseOwnership = licenseOwnership;
     }
 
     /**
@@ -90,6 +93,7 @@ public class EnterpriseOnboardingService {
      */
     @Transactional
     public GuideState saveProfile(LoginUser user, ProfileRequest request) {
+        licenseOwnership.requireOwner(user.userId(), request.licenseFileId());
         Enterprise enterprise = requireEnterprise(user);
         updateEnterpriseProfile(enterprise.getId(), request);
         return getState(user);
@@ -100,6 +104,7 @@ public class EnterpriseOnboardingService {
      */
     @Transactional
     public GuideState submitReview(LoginUser user, ProfileRequest request) {
+        licenseOwnership.requireOwner(user.userId(), request.licenseFileId());
         long applicantId = user.userId();
         Enterprise enterprise = requireEnterprise(user);
         if (enterprise.getStatus() != null && enterprise.getStatus() == 2) {

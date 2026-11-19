@@ -1,5 +1,6 @@
 package io.supportflow.customer.service.bot;
 
+import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.customer.dto.bot.BotProfile;
 import io.supportflow.customer.dto.session.EscalateResult;
@@ -180,7 +181,7 @@ public class BotBrainService {
         Object lock = sessionLocks.computeIfAbsent(lockKey, key -> new Object());
         try {
             synchronized (lock) {
-                runOneTurn(tenantCode, sessionNo, extraContext);
+                TenantContext.run(tenantCode, () -> runOneTurn(tenantCode, sessionNo, extraContext));
             }
         } catch (Exception e) {
             // 必须在这里兜住：这是线程池里的任务，异常跑出去只会打到 stderr，

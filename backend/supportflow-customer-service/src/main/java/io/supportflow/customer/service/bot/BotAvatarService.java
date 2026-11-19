@@ -8,10 +8,10 @@ import io.supportflow.customer.dto.bot.UploadResult;
 import io.supportflow.customer.entity.FileMeta;
 import io.supportflow.customer.mapper.FileMetaMapper;
 import io.supportflow.customer.storage.ObjectStorage;
-import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -25,7 +25,7 @@ import java.util.Set;
  *
  * <p>为什么不能复用营业执照那套：营业执照的读取接口要登录（只有审核人员看），
  * 而机器人头像是**给访客看的**——访客没有登录态，拿不到 token，所以必须像聊天图片那样
- * 提供一个免登录的直链（靠不可猜的雪花 ID 当凭据）。</p>
+ * 提供公开的头像资源接口；数据库仅投影已发布头像的文件元数据。</p>
  *
  * <p>头像存 {@code file_meta.biz_type=1}（表注释里本来就把 1 定义成"头像"），
  * 和聊天图片（5）、营业执照（2）分开，便于以后做清理与统计。</p>
@@ -46,17 +46,23 @@ public class BotAvatarService {
     private final ObjectStorage objectStorage;
     private final FileMetaMapper fileMetaMapper;
     private final SnowflakeIdGenerator idGenerator;
+    private final JdbcTemplate jdbc;
 
     public BotAvatarService(ObjectStorage objectStorage, FileMetaMapper fileMetaMapper,
-                            SnowflakeIdGenerator idGenerator) {
+                            SnowflakeIdGenerator idGenerator, JdbcTemplate jdbc) {
         this.objectStorage = objectStorage;
         this.fileMetaMapper = fileMetaMapper;
         this.idGenerator = idGenerator;
+        this.jdbc = jdbc;
     }
 
     /** 上传头像，返回可直接填进 avatar_url 的访问地址 */
     @Transactional
     public UploadResult upload(LoginUser user, MultipartFile file) {
+        if (user == null || user.userType() != 2 || user.tenantCode() == null || user.tenantCode().isBlank()
+                || "PLATFORM".equalsIgnoreCase(user.tenantCode())) {
+            throw new BizException(40301, "仅企业成员可设置机器人头像");
+        }
         if (file == null || file.isEmpty()) {
             throw new BizException(40001, "请选择要上传的头像图片");
         }
@@ -68,8 +74,7 @@ public class BotAvatarService {
         if (ext == null || !ALLOWED_EXT.contains(ext)) {
             throw new BizException(40001, "头像只支持 PNG / JPG / WEBP 图片");
         }
-        String tenant = user == null || user.tenantCode() == null || user.tenantCode().isBlank()
-                ? "PLATFORM" : user.tenantCode();
+        String tenant = user.tenantCode();
 
         long fileId = idGenerator.nextId();
         String safeName = original.replaceAll("[\\\\/:*?\"<>|\\s]+", "_");
@@ -105,14 +110,13 @@ public class BotAvatarService {
     /**
      * 读取头像字节（访客端直接当 img src 用）。
      *
-     * <p>免登录：访客没有登录态，靠**不可猜的雪花 ID**当凭据。生产环境可以换成带时效的签名 URL。</p>
+     * <p>头像属于公开品牌资源；受控函数仅返回头像目录下的有效头像，不读取聊天图片或企业附件。</p>
      */
     public FileContent load(long fileId) {
-        FileMeta meta = fileMetaMapper.selectOne(Wrappers.<FileMeta>lambdaQuery()
-                .eq(FileMeta::getId, fileId)
-                .eq(FileMeta::getBizType, BIZ_TYPE_AVATAR)
-                .eq(FileMeta::getDeleted, false)
-                .last("LIMIT 1"));
+        FileMeta meta = jdbc.query("SELECT * FROM public.supportflow_public_bot_avatar(?)",
+                (rs, index) -> FileMeta.builder().fileName(rs.getString("file_name"))
+                        .mimeType(rs.getString("mime_type")).objectKey(rs.getString("object_key")).build(),
+                fileId).stream().findFirst().orElse(null);
         if (meta == null) {
             throw new BizException(40401, "头像不存在或已被替换");
         }

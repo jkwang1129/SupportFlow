@@ -1,5 +1,8 @@
 package io.supportflow.customer.service.metrics;
 
+import io.supportflow.common.context.TenantContext;
+import io.supportflow.customer.internal.TenantListClient;
+
 import io.supportflow.common.auth.LoginUser;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.common.util.Texts;
@@ -98,15 +101,17 @@ public class MetricsService {
     private final SessionMapper sessionMapper;
     private final UserNameClient userNameClient;
     private final UserRoleClient userRoleClient;
+    private final TenantListClient tenantListClient;
 
     public MetricsService(AgentDailyMetricMapper metricMapper,
                           SessionMapper sessionMapper,
                           UserNameClient userNameClient,
-                          UserRoleClient userRoleClient) {
+                          UserRoleClient userRoleClient, TenantListClient tenantListClient) {
         this.metricMapper = metricMapper;
         this.sessionMapper = sessionMapper;
         this.userNameClient = userNameClient;
         this.userRoleClient = userRoleClient;
+        this.tenantListClient = tenantListClient;
     }
 
     // ------------------------------------------------------------------ 实时大屏
@@ -396,7 +401,8 @@ public class MetricsService {
     }
 
     private int rebuildDay(String tenant, LocalDate date) {
-        return metricMapper.rebuildDaily(tenant, date, date.atStartOfDay(), date.plusDays(1).atStartOfDay());
+        return TenantContext.bind(tenant,
+                () -> metricMapper.rebuildDaily(tenant, date, date.atStartOfDay(), date.plusDays(1).atStartOfDay()));
     }
 
     /**
@@ -407,7 +413,7 @@ public class MetricsService {
      */
     @Scheduled(initialDelay = 60_000, fixedDelay = 300_000)
     public void scheduledRebuild() {
-        for (String tenant : sessionMapper.selectTenantsForMetrics()) {
+        for (String tenant : tenantListClient.allTenantCodes()) {
             for (LocalDate date : List.of(LocalDate.now(), LocalDate.now().minusDays(1))) {
                 try {
                     rebuildDay(tenant, date);
@@ -429,7 +435,7 @@ public class MetricsService {
             ApplicationReadyEvent.class)
     public void warmUpHistory() {
         try {
-            List<String> tenants = sessionMapper.selectTenantsForMetrics();
+            List<String> tenants = tenantListClient.allTenantCodes();
             for (String tenant : tenants) {
                 for (int i = 0; i < 14; i++) {
                     rebuildDay(tenant, LocalDate.now().minusDays(i));

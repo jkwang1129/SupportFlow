@@ -2628,9 +2628,9 @@ BEGIN
                        t.table_name || '_tenant_isolation', t.table_name);
         EXECUTE format(
             'CREATE POLICY %I ON public.%I USING ('
-            '    NULLIF(current_setting(''app.tenant_code'', true), '''') IS NULL'      -- 未设置上下文：迁移/运维
-            ' OR NULLIF(current_setting(''app.tenant_code'', true), '''') = ''PLATFORM'''  -- 平台账号受控跨租户
-            ' OR "tenant_code" = NULLIF(current_setting(''app.tenant_code'', true), '''')' -- 正常业务请求
+            '    "tenant_code" = NULLIF(current_setting(''app.tenant_code'', true), '''')'
+            ' AND "tenant_code" <> ''PLATFORM'''
+            ' AND "tenant_code" ~ ''^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'''
             ')',
             t.table_name || '_tenant_isolation', t.table_name);
     END LOOP;

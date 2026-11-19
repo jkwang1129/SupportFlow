@@ -1,7 +1,7 @@
 import { request } from '../request'
 
 /**
- * 知识库体检（直连 supportflow-ai）。
+ * 通过网关读取当前登录租户的知识库体检结果。
  *
  * <p>最该看的是 `chunkVectorModels` / `vectorQualityHint`：切片的向量是索引那一刻算出来的，
  * 如果当时向量化失败（密钥没配 / 401），库里存的就是没有语义的兜底向量，
@@ -19,5 +19,5 @@ export interface KbHealth {
 }
 
 export function getKbHealth(): Promise<KbHealth> {
-  return request<KbHealth>({ url: '/ai/v1/kb/health', method: 'get', silent: true })
+  return request<KbHealth>({ url: '/ai/v1/kb/status', method: 'get', silent: true })
 }

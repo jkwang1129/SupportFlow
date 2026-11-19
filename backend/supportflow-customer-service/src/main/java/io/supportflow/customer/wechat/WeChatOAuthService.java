@@ -1,5 +1,7 @@
 package io.supportflow.customer.wechat;
 
+import io.supportflow.common.context.TenantContext;
+
 import io.supportflow.common.exception.BizException;
 import io.supportflow.customer.entity.ChannelKey;
 import io.supportflow.customer.entity.WeChatChannelConfig;
@@ -71,6 +73,7 @@ public class WeChatOAuthService {
         if (code == null || code.isBlank()) {
             throw new BizException(40001, "缺少微信授权 code");
         }
+        return TenantContext.bind(config.getTenantCode(), () -> {
         String openid = apiClient.exchangeOpenId(appId, config.getAppSecret(), code);
         if (openid == null || openid.isBlank()) {
             throw new BizException(50002, "微信没有返回 openid，请检查网页授权域名配置");
@@ -85,6 +88,7 @@ public class WeChatOAuthService {
                 : state + (state.contains("?") ? "&" : "?") + "wt=" + url(identityToken);
         log.info("公众号网页授权完成 appId={} openid={} customerNo={}", appId, openid, bind.getCustomerNo());
         return target;
+        });
     }
 
     /** 取渠道当前生效的密钥（appKey），没有可用密钥就抛业务异常。 */

@@ -1,5 +1,7 @@
 package io.supportflow.customer.internal;
 
+import io.supportflow.common.auth.AiRequestSigner;
+
 import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.context.TraceContext;
 import io.supportflow.common.exception.BizException;
@@ -37,6 +39,7 @@ public class VisionAiClient {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String baseUrl;
+    private final String aiSecret;
     private final boolean logPayload;
     private final int timeoutSeconds;
     /** 计费用量：调一次视觉识别算一次 AI 调用 */
@@ -45,6 +48,7 @@ public class VisionAiClient {
     private final CostGuardClient costGuardClient;
 
     public VisionAiClient(
+            @Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String aiSecret,
             @Value("${supportflow.ai.vision-base-url:http://127.0.0.1:9100}") String baseUrl,
             @Value("${supportflow.ai.log-payload:true}") boolean logPayload,
             @Value("${supportflow.ai.vision-timeout-seconds:90}") int timeoutSeconds,
@@ -55,6 +59,7 @@ public class VisionAiClient {
                 .connectTimeout(Duration.ofSeconds(5))
                 .version(HttpClient.Version.HTTP_1_1)
                 .build();
+        this.aiSecret = aiSecret;
         this.baseUrl = (baseUrl == null || baseUrl.isBlank())
                 ? "http://127.0.0.1:9100" : baseUrl.replaceAll("/+$", "");
         this.logPayload = logPayload;
@@ -101,7 +106,7 @@ public class VisionAiClient {
                     .POST(HttpRequest.BodyPublishers.ofString(
                             objectMapper.writeValueAsString(body), StandardCharsets.UTF_8))
                     .build();
-            HttpResponse<String> response = httpClient.send(request,
+            HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (logPayload) {
                 // 图片 base64 不能整段打进日志；这里按字段打，识别结论一眼可见

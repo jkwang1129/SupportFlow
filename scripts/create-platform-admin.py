@@ -7,9 +7,11 @@ import secrets
 
 import bcrypt
 import psycopg
+from local_env import load
 
 
 def main() -> None:
+    load()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--email", required=True)
     parser.add_argument("--name", default="SupportFlow Admin")

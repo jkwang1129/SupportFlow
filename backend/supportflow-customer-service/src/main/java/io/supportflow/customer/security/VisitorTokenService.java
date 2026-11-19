@@ -129,6 +129,11 @@ public class VisitorTokenService {
                     .build()
                     .parseSignedClaims(token)
                     .getPayload();
+            if (!Integer.valueOf(TYPE_VISITOR).equals(claims.get("typ", Integer.class))
+                    || claims.get("sno", String.class) == null
+                    || claims.get("tnt", String.class) == null) {
+                throw new IllegalArgumentException("A visitor session token is required");
+            }
             return new VisitorPrincipal(
                     Long.parseLong(claims.getSubject()),
                     claims.get("name", String.class),

@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic.alias_generators import to_camel
 
@@ -169,11 +169,30 @@ def kb_health() -> dict:
         # 说明当前用的是哪套实现：装了 llama-index 就是它，否则是内置兜底
         "engine": pipeline.engine_name(),
     }
-    result.update(_vector_quality())
     return result
 
 
-def _vector_quality() -> dict:
+@router.get("/repair-status")
+def kb_repair_status(x_tenant_code: str = Header()) -> dict:
+    """Only the customer service can read this tenant's repair candidates."""
+    return _vector_quality(x_tenant_code, include_document_ids=True)
+
+
+@router.get("/status")
+def kb_console_status(x_tenant_code: str | None = Header(default=None)) -> dict:
+    """Console diagnostics for the tenant selected by the gateway."""
+    if not x_tenant_code or not x_tenant_code.strip() or x_tenant_code == "PLATFORM":
+        raise HTTPException(status_code=403, detail="缺少企业租户上下文")
+    result = {
+        "status": "UP" if store.ping() else "DOWN",
+        "vectorStore": "pgvector",
+        "engine": pipeline.engine_name(),
+    }
+    result.update(_vector_quality(tenant_code=x_tenant_code))
+    return {"code": 0, "message": "成功", "data": result}
+
+
+def _vector_quality(tenant_code: str, *, include_document_ids: bool = False) -> dict:
     """体检：库里那批切片到底是用什么向量建出来的。
 
     这是"知识库明明有数据，机器人却答不上来"最该先看的一项：
@@ -186,34 +205,37 @@ def _vector_quality() -> dict:
     settings = get_settings()
     fallback = ["local-hash"]
     try:
-        with store.connect() as conn:
+        with store.tenant_connection(tenant_code) as conn:
             rows = conn.execute(
                 """
                 SELECT COALESCE(embedding_model, 'null') AS model, COUNT(1) AS chunks
                   FROM kb_chunk
-                 WHERE is_deleted = FALSE
+                 WHERE tenant_code = %s
                  GROUP BY COALESCE(embedding_model, 'null')
                  ORDER BY chunks DESC
-                """
+                """,
+                (tenant_code,),
             ).fetchall()
-    except Exception as exc:  # noqa: BLE001
-        return {"chunkVectorModels": [], "vectorQualityHint": f"读取切片向量来源失败：{exc}"}
+    except Exception:  # noqa: BLE001
+        logger.warning("读取切片向量来源失败", exc_info=True)
+        return {"chunkVectorModels": [], "vectorQualityHint": "读取切片向量来源失败"}
     models = [{"model": row["model"], "chunks": int(row["chunks"])} for row in rows]
     degraded = [item for item in models if item["model"] in fallback]
     # 具体是哪些文档用了兜底向量：客户服务侧据此只重建这几份，不用整库重跑
     fallback_docs: list[str] = []
-    if degraded:
+    if degraded and include_document_ids:
         try:
-            with store.connect() as conn:
+            with store.tenant_connection(tenant_code) as conn:
                 fallback_docs = [
                     str(row["doc_id"])
                     for row in conn.execute(
                         """
                         SELECT DISTINCT doc_id
                           FROM kb_chunk
-                         WHERE is_deleted = FALSE AND embedding_model = 'local-hash'
+                         WHERE tenant_code = %s AND embedding_model = 'local-hash'
                          ORDER BY doc_id
-                        """
+                        """,
+                        (tenant_code,),
                     ).fetchall()
                 ]
         except Exception as exc:  # noqa: BLE001
@@ -229,7 +251,7 @@ def _vector_quality() -> dict:
         hint = "知识库里还没有切片，先上传文档"
     return {
         "chunkVectorModels": models,
-        "fallbackDocIds": fallback_docs,
+        **({"fallbackDocIds": fallback_docs} if include_document_ids else {}),
         "embeddingKeyConfigured": bool(settings.embedding_key()),
         "embeddingModel": settings.embedding_model,
         "vectorQualityHint": hint,

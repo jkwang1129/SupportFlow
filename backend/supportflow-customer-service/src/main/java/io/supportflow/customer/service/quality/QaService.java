@@ -1,5 +1,6 @@
 package io.supportflow.customer.service.quality;
 
+import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.auth.LoginUser;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.common.id.SnowflakeIdGenerator;
@@ -288,7 +289,7 @@ public class QaService {
     private void evaluateAsync(String tenantCode, String taskNo) {
         AI_EVALUATOR.submit(() -> {
             try {
-                evaluateNow(tenantCode, taskNo);
+                TenantContext.run(tenantCode, () -> evaluateNow(tenantCode, taskNo));
             } catch (Exception e) {
                 log.warn("后台 AI 初检失败 tenant={} taskNo={} error={}", tenantCode, taskNo, e.getMessage());
             }

@@ -52,6 +52,7 @@ public class BotAvatarController {
     public ResponseEntity<byte[]> load(@PathVariable long fileId) {
         FileContent content = avatarService.load(fileId);
         return ResponseEntity.ok()
+                .header("X-Content-Type-Options", "nosniff")
                 .header(HttpHeaders.CACHE_CONTROL, "public, max-age=3600")
                 .contentType(MediaType.parseMediaType(content.mimeType()))
                 .body(content.bytes());

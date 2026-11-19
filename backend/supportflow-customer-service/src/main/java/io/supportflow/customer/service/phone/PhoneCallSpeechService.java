@@ -78,14 +78,16 @@ public class PhoneCallSpeechService {
     /** 提交一个转写任务（不阻塞 webhook）；入队失败也要留痕，不能静默丢 */
     public void transcribeLater(Channel channel, String callId, String recordingUrl) {
         if (recordingUrl == null || recordingUrl.isBlank()) {
-            phoneCallService.markAsr(channel, callId, false, "", "话务侧没有回传录音地址");
+            TenantContext.run(channel.getTenantCode(), () ->
+                    phoneCallService.markAsr(channel, callId, false, "", "话务侧没有回传录音地址"));
             return;
         }
         try {
             executor.execute(() -> transcribe(channel, callId, recordingUrl));
         } catch (RejectedExecutionException e) {
             log.warn("语音转写队列已满 tenant={} callId={}", channel.getTenantCode(), callId);
-            phoneCallService.markAsr(channel, callId, false, "", "语音转写任务排队已满，请稍后重试");
+            TenantContext.run(channel.getTenantCode(), () ->
+                    phoneCallService.markAsr(channel, callId, false, "", "语音转写任务排队已满，请稍后重试"));
         }
     }
 
@@ -99,14 +101,12 @@ public class PhoneCallSpeechService {
     void transcribe(Channel channel, String callId, String recordingUrl) {
         String tenantCode = channel.getTenantCode();
         try {
-            TenantContext.bind(tenantCode, () -> {
-                transcribeInTenant(channel, callId, recordingUrl, tenantCode);
-                return null;
-            });
+            TenantContext.run(tenantCode, () -> transcribeInTenant(channel, callId, recordingUrl, tenantCode));
         } catch (Exception e) {
             log.warn("400 语音转写异常 tenant={} callId={} error={}", tenantCode, callId, e.getMessage());
             try {
-                phoneCallService.markAsr(channel, callId, false, "", "转写异常：" + friendly(e));
+                TenantContext.run(tenantCode, () ->
+                        phoneCallService.markAsr(channel, callId, false, "", "转写异常：" + friendly(e)));
             } catch (Exception ignored) {
                 // 回填失败只记日志：不能因为"记录失败原因"再抛一层
             }

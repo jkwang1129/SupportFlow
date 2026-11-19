@@ -1,5 +1,7 @@
 package io.supportflow.ops.internal;
 
+import io.supportflow.common.auth.AiRequestSigner;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,11 +36,14 @@ public class AiMetricsClient {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final String baseUrl;
+    private final String aiSecret;
     private final HttpClient httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
             .build();
 
-    public AiMetricsClient(@Value("${supportflow.ai.internal-base-url:http://127.0.0.1:9100}") String baseUrl) {
+    public AiMetricsClient(@Value("${supportflow.ai.internal-base-url:http://127.0.0.1:9100}") String baseUrl,
+                          @Value("${SUPPORTFLOW_AI_OPS_SECRET:}") String aiSecret) {
+        this.aiSecret = aiSecret;
         this.baseUrl = baseUrl == null ? "" : baseUrl.replaceAll("/$", "");
     }
 
@@ -55,7 +60,7 @@ public class AiMetricsClient {
                     .header("Accept", "application/json")
                     .GET()
                     .build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "ops", null), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
                 log.warn("AI 用量接口返回 {}：{}", response.statusCode(),
                         response.body() == null ? "" : response.body().substring(0,
@@ -83,7 +88,7 @@ public class AiMetricsClient {
                     .header("Accept", "application/json")
                     .GET()
                     .build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "ops", null), HttpResponse.BodyHandlers.ofString());
             if (response.statusCode() != 200) {
                 log.warn("AI 接口 {} 返回 {}", path, response.statusCode());
                 return null;

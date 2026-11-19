@@ -4,19 +4,24 @@
 
 ## 1. 初始化数据库
 
-使用 Docker Compose 时，先设置本地数据库密码及用于所有 Java 服务的同一个 JWT 签名密钥。
+使用 Docker Compose 时，先生成本机配置。脚本只补充缺失项，保留已有值；根目录 `.env` 和 AI 的 `.env` 均不提交到 Git。
 
 ```powershell
-$env:SUPPORTFLOW_DB_PASSWORD = python -c "import secrets; print(secrets.token_urlsafe(24))"
-$env:SUPPORTFLOW_JWT_SECRET = python -c "import secrets; print(secrets.token_urlsafe(48))"
+python scripts/setup-local-env.py
 docker compose up -d --wait postgres
 ```
 
-保留这两个值供后续启动使用。如果已有开发数据卷，继续使用它初始化时的数据库密码。也可以自行准备 PostgreSQL，用 `psql -h 127.0.0.1 -U supportflow -d postgres -f backend/deploy/db-init/db-init.sql` 初始化六库。初始化账号需要建库和安装扩展的权限。使用已有库时，把 `SUPPORTFLOW_DB_HOST`、`SUPPORTFLOW_DB_PORT`、`SUPPORTFLOW_DB_USER` 和 `SUPPORTFLOW_DB_PASSWORD` 设置为实际连接配置。[数据库初始化说明](../backend/deploy/db-init/README.md)
+新建空数据卷会依次执行六库基线、渠道查询/公开头像函数、v31 严格 RLS、运行账号配置。`supportflow` 仅用于建库与迁移，表仍由它持有；Java 各服务使用 `supportflow_user/tenant/customer/billing/ops`，AI 使用 `supportflow_ai`，知识检索使用 `supportflow_kb`，平台限定操作使用 `supportflow_customer_platform`。八个运行账号都不是 owner、超级用户或 BYPASSRLS；不能建库、建角色或执行表 DDL。账号仅能连接自己的数据库，customer/KB/平台三者分别获得不同权限。不要手动把管理员账号填到应用连接配置中；客服和 AI 会拒绝危险的运行身份。
+
+已有数据卷不要删除。先按下文“已有数据库升级”处理，不能重新生成一个数据库管理员密码来替代原密码。外部 PostgreSQL 安装需要先完成基线和增量表结构，再由管理员执行相同权限迁移。[数据库初始化说明](../backend/deploy/db-init/README.md)
 
 ## 2. 启动 Java 服务
 
-让 `JAVA_HOME` 指向 JDK 25，确认 `mvn -v` 显示 Java 25。保留上一步的环境变量。
+让 `JAVA_HOME` 指向 JDK 25，确认 `mvn -v` 显示 Java 25。启动脚本自动读取根目录 `.env`，并只向子进程分发各自需要的数据库与服务签名凭据，不传建库密码。
+
+客服服务验证三个 `SUPPORTFLOW_CUSTOMER_*_SECRET` 密钥。实时、运营、租户服务分别只使用自己的密钥；这些密钥与 AI 签名密钥及 JWT 密钥独立。部署时同步更新客服服务和三个调用方，进程间使用内部网络和加密传输。
+
+平台的数据库结构升级使用独立的 `SUPPORTFLOW_CUSTOMER_MIGRATION_USER` 和 `SUPPORTFLOW_CUSTOMER_MIGRATION_PASSWORD`，由部署管理员配置。升级账号必须与 `spring.datasource.username` 指定的业务账号不同；未配置时，平台的结构升级操作会拒绝执行，不会借用业务连接池提升权限。普通客服流程不需要迁移凭据。
 
 ```powershell
 mvn -B -f backend/pom.xml clean package
@@ -31,18 +36,18 @@ python scripts/run-backend.py
 
 ## 3. 启动 Python AI 服务
 
-在新终端运行下列命令。把示例文件中的数据库密码换成第 1 步设置的值。连接串中的特殊字符应按 URL 规则编码。
+在根目录的新终端运行下列命令。启动脚本读取根目录的运行凭据，为 AI 和 KB 分别生成受限账号连接串，同时保留 `ai-service/.env` 的模型供应商配置。
 
 ```powershell
-cd ai-service
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt -r requirements-ai.txt
-Copy-Item .env.example .env
-# 编辑 .env 中的 SUPPORTFLOW_AI_DATABASE_URL 和 SUPPORTFLOW_AI_KB_DATABASE_URL 后启动。
-.\.venv\Scripts\python -m ai
+python -m venv ai-service/.venv
+.\ai-service\.venv\Scripts\python -m pip install -r ai-service/requirements.txt -r ai-service/requirements-ai.txt
+if (-not (Test-Path ai-service/.env)) { Copy-Item ai-service/.env.example ai-service/.env }
+.\ai-service\.venv\Scripts\python scripts/run-ai.py
 ```
 
-联调真实模型时，在 `.env` 填写供应商密钥，并把 `SUPPORTFLOW_AI_LLM_DEFAULT_PROVIDER` 设置为 `qwen` 或 `deepseek`。仅做启动检查时可只安装 `requirements.txt`，用 `/api/ai/health` 探活。供应商调用和文件解析依赖见 [AI 服务说明](../ai-service/README.md)。
+联调真实模型时，在 `ai-service/.env` 填写供应商密钥，并把 `SUPPORTFLOW_AI_LLM_DEFAULT_PROVIDER` 设置为 `qwen` 或 `deepseek`。仅做启动检查时可只安装 `requirements.txt`，用 `/api/ai/health` 探活。供应商调用和文件解析依赖见 [AI 服务说明](../ai-service/README.md)。
+
+AI 服务的四个签名密钥必须各自不同，每个至少 32 字节。网关、客服、运营和租户服务分别使用自己的密钥，AI 服务验证全部四个；这些值和模型供应商密钥、登录 JWT 签名密钥分开。缺少签名密钥时探活仍可用，其他 AI 请求会被拒绝。部署时按服务单独分发密钥，并限制 9100 端口只允许内部访问。
 
 ## 4. 创建本地平台管理员
 
@@ -74,6 +79,10 @@ node website/scripts/serve.mjs
 
 ```powershell
 mvn -B -f backend/pom.xml verify
+python scripts/test-customer-rls.py --with-ai
+python scripts/test-runtime-security.py
+python -m unittest discover -s scripts/security -p "unit_*.py" -v
+python scripts/test-security-flow.py
 npm --prefix frontend run build
 Push-Location ai-service
 .\.venv\Scripts\python -m pip install pytest
@@ -83,3 +92,32 @@ node website/scripts/build.mjs
 ```
 
 运行时可检查 `http://localhost:9090/actuator/health`、`http://localhost:9100/api/ai/health`，并从网站渠道发起访客消息，在工作台验证回复与人工接待。模型、附件以及外部渠道需要各自的运行配置。
+
+RLS 和运行权限脚本使用独立的 PostgreSQL 17 容器并自动清理。`test-customer-rls.py --with-ai` 验证真实 JDBC 连接复用、事务回滚和 KB 隔离；`test-runtime-security.py` 验证新库及带历史数据的旧库重复升级、空/PLATFORM 拒绝、历史宽松策略重放、文件迁移和权限最小化。测试用的数据库管理员仅用于准备样本与读取验收结果。
+
+完整服务回归另需 `python -m pip install -r scripts/security/requirements.txt`，先完成 Java 打包，再执行 `python scripts/test-security-flow.py`。它分别启动新库和旧库升级后的七个 Java 服务、Python AI、PostgreSQL、RustFS，验证企业申请/审核、文件权限、平台工单、知识入库/双租户检索、访客 WebSocket 与机器人回复。使用随机凭据、合成数据和离线模型，不连接真实模型，不验收外部微信、邮箱或话务系统。需要空闲的 15432、19000、19090、9091–9096、9100 端口；运行期间不要同时启动另一套本地 SupportFlow。日志位于 `.local/security-services/`，场景结束后自动清理测试容器、数据卷和管理员临时口令。
+
+## 已有数据库升级
+
+以下脚本用于本仓库 Compose 管理、已完成基线表结构的数据库。先停止业务进程并备份六库，保留原管理员密码；将其填入根目录 `.env` 的 `SUPPORTFLOW_DB_PASSWORD`。运行 `python scripts/setup-local-env.py` 只补充八个新的运行密码和服务密钥。备份示例（其他五库同理）：
+
+```powershell
+New-Item -ItemType Directory -Force .local/backups | Out-Null
+docker compose exec -T postgres pg_dump -U supportflow -Fc customer_db -f /tmp/customer-before-p0.dump
+docker compose cp postgres:/tmp/customer-before-p0.dump .local/backups/customer-before-p0.dump
+python scripts/upgrade-runtime-security.py
+```
+
+升级不删除数据卷。它安装受控查询函数、迁移证照命名空间、替换 RLS 并配置八个分离账号，可重复执行。证照保留原文件 ID、业务引用和对象存储 key，仅按上传人转换 `tenant_code=L+用户ID的36进制`。如有效证照缺少可核实的正整数 `creator`，迁移会回滚并报错，必须由管理员先核对补齐，不能把未知附件分配给任意用户。`L` 命名空间为附件保留，业务租户由现有 `T` 编码生成器产生。
+
+升级后同步部署 Java、Python 和前端，使用 `run-backend.py`、`run-ai.py` 启动，并重跑核心/异常回归。不要通过恢复超级用户、BYPASSRLS、空租户放行或关闭 FORCE RLS 来兼容旧版本。需要回退时先停服务，使用经验证的备份恢复到隔离环境；旧应用版本不能直接作为严格权限配置下的回滚版本。v31 面向共享 `customer_db.public`；独立 schema 的平台升级请求会明确拒绝，需管理员单独部署与验收。
+
+平台审核证照、平台支持工单、AI 质量聚合使用独立角色，必须先写 `platform_access_audit` 才能执行业务，结束/失败再写回执。该角色不能读取会话、知识库原文或私有聊天附件。普通业务账号即使将租户变量设成 `PLATFORM` 也不会获得跨租户权限。数据库租户变量仍由可信应用身份设置，不能防御数据库运行账号本身被攻破后主动伪造其他有效租户变量；部署还需保护数据库凭据和内部网络。
+
+该函数只返回一个有效、未过期、仍启用的渠道密钥对应的租户；不会返回渠道配置或开放整表读取。跨租户重复密钥会被拒绝。函数由迁移管理员持有，普通角色不能修改它；公开执行权限已撤销，知识库账号也没有执行权限。
+
+聊天图片上传需要 `X-Visitor-Token` 中的访客会话身份，或同租户的企业登录身份；读取还必须携带 `sessionNo`，文件必须属于该会话。图片地址不再是可匿名访问的链接。前端使用带身份的请求加载图片，再通过浏览器临时地址显示与预览，令牌不进入图片 URL。历史图片没有业务关联 ID 时，服务端严格核对原有租户及会话目录。机器人头像继续公开显示，`public-bot-avatar.sql` 提供只读投影，仅允许读取头像业务类型及头像目录中的有效资源。
+
+原生渠道的 App、邮件回调、呼叫中心事件和 TTS 必须配置相应的回调签名密钥；缺少密钥会拒绝请求。公众号与小程序的明文推送必须带有效 `signature`；加密推送必须带有效 `msg_signature`。不再支持“验签失败但继续处理”的联调方式。无效推送会按微信接口的既有约定返回 `success`，但不会进入会话处理或产生业务副作用。
+
+`.github/workflows/verification.yml` 配置 Java 全模块验证、独立 PostgreSQL 隔离测试、AI 授权测试和前端构建。AI 测试隔离本机配置与在线模型凭据，不依赖人工填密钥。还会运行新旧数据库升级及真实服务链路回归，远程结果以具体 GitHub Actions 运行记录为准。

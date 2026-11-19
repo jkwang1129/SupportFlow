@@ -62,6 +62,8 @@ public class EnterpriseLicenseFileController {
                 ? MediaType.APPLICATION_OCTET_STREAM
                 : MediaType.parseMediaType(content.mimeType());
         return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .header("X-Content-Type-Options", "nosniff")
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename*=UTF-8''" + encoded)
                 .contentType(mediaType)
                 .body(content.inputStream().readAllBytes());

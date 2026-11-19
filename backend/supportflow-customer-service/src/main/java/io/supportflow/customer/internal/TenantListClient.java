@@ -9,7 +9,6 @@ import org.springframework.web.client.RestClient;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * tenant-service 内部客户端：拿全部租户编码。
@@ -17,8 +16,7 @@ import java.util.Objects;
  * <p>用在哪：平台公告要推送给**所有**租户的通知中心，而租户清单的权威来源在 tenant_db，
  * customer-service 不该自己去猜（比如按"有会话数据的租户"来推，就会漏掉新开通还没产生会话的企业）。</p>
  *
- * <p>拿不到就返回空列表：公告推送是旁路动作，宁可不推（并在日志里留痕），
- * 也不能因为 tenant-service 抖一下就让"发布公告"整个失败。</p>
+ * <p>拿不到就返回空列表，当前批次的工作跳过，不执行无租户的数据操作。</p>
  */
 @Component
 public class TenantListClient {
@@ -44,9 +42,11 @@ public class TenantListClient {
             if (!(data instanceof List<?> list)) {
                 return List.of();
             }
-            return list.stream().filter(Objects::nonNull).map(String::valueOf).toList();
+            return list.stream().filter(String.class::isInstance).map(String.class::cast)
+                    .filter(code -> code.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,15}"))
+                    .filter(code -> !"PLATFORM".equalsIgnoreCase(code)).distinct().toList();
         } catch (Exception e) {
-            log.warn("查询租户清单失败（公告本次不推送）error={}", e.getMessage());
+            log.warn("查询租户清单失败，本轮跳过 error={}", e.getMessage());
             return List.of();
         }
     }

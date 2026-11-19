@@ -44,11 +44,11 @@ public class MiniAppCallbackService {
     }
 
     /** 客服消息 / 事件推送（JSON；安全模式时 body 是 {"Encrypt":"…","ToUserName":"…"}）。 */
-    public String receive(String appId, String body, String msgSignature,
+    public String receive(String appId, String body, String signature, String msgSignature,
                           String timestamp, String nonce) {
         WeChatChannelConfig config = requireMiniApp(appId);
         try {
-            String plain = plainBody(config, body, msgSignature, timestamp, nonce);
+            String plain = plainBody(config, body, signature, msgSignature, timestamp, nonce);
             return inboundService.handleJson(appId, plain, false);
         } catch (Exception e) {
             log.warn("小程序客服消息处理失败 appId={} error={}", appId, e.getMessage());
@@ -69,7 +69,7 @@ public class MiniAppCallbackService {
         return config;
     }
 
-    private String plainBody(WeChatChannelConfig config, String body, String msgSignature,
+    private String plainBody(WeChatChannelConfig config, String body, String signature, String msgSignature,
                              String timestamp, String nonce) {
         if (body == null || body.isBlank()) {
             return "{}";
@@ -81,8 +81,8 @@ public class MiniAppCallbackService {
             throw new BizException(40001, "小程序消息不是合法 JSON");
         }
         if (!node.has("Encrypt")) {
-            if (!WeChatCrypt.checkSignature(config.getToken(), null, timestamp, nonce)) {
-                log.debug("小程序明文消息未带 signature，按配置放行 appId={}", config.getAppId());
+            if (!WeChatCrypt.checkSignature(config.getToken(), signature, timestamp, nonce)) {
+                throw new BizException(40301, "小程序消息签名校验失败");
             }
             return body;
         }

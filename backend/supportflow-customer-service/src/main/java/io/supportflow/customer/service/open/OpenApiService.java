@@ -1,6 +1,7 @@
 package io.supportflow.customer.service.open;
 
 import io.supportflow.common.exception.BizException;
+import io.supportflow.common.context.TenantContext;
 import io.supportflow.customer.dto.open.OpenApiOverviewVO;
 import io.supportflow.customer.entity.Customer;
 import io.supportflow.customer.entity.Session;
@@ -59,6 +60,10 @@ public class OpenApiService {
             throw new BizException(40101, "API 密钥无效、已停用或已过期");
         }
 
+        return TenantContext.bind(tenantCode, () -> overviewForTenant(tenantCode));
+    }
+
+    private OpenApiOverviewVO overviewForTenant(String tenantCode) {
         long sessions = sessionMapper.selectCount(Wrappers.<Session>lambdaQuery()
                 .eq(Session::getTenantCode, tenantCode)
                 .eq(Session::getDeleted, false));

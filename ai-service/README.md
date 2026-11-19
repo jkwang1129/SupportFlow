@@ -6,10 +6,14 @@ FastAPI 应用入口为 [ai/main.py](ai/main.py)，默认在 `127.0.0.1:9100` �
 python -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt -r requirements-ai.txt
 cp .env.example .env
-.venv/bin/python -m ai
+cd ..
+python scripts/setup-local-env.py
+ai-service/.venv/bin/python scripts/run-ai.py
 ```
 
-Windows 使用 `.venv\Scripts\python` 和 `Copy-Item`。根据 [.env.example](.env.example) 指定 `ai_db`、`customer_db` 和模型配置。接口存活可以只安装基础依赖后用 `GET /api/ai/health` 检查。LangGraph、LlamaIndex 和文件解析依赖位于 [requirements-ai.txt](requirements-ai.txt)。未配置真实模型时，可用已有的规则与检索兜底路径联调。
+Windows 使用 `ai-service\.venv\Scripts\python` 和 `Copy-Item`。根据 [.env.example](.env.example) 配置模型；数据库和内部签名配置由根目录本机配置提供。AI 与 KB 分别使用受限账号，启动时拒绝超级用户、BYPASSRLS 或表所有者。先按本地运行说明完成数据库初始化/升级。接口存活可以只安装基础依赖后用 `GET /api/ai/health` 检查。LangGraph、LlamaIndex 和文件解析依赖位于 [requirements-ai.txt](requirements-ai.txt)。未配置真实模型时，可用已有的规则与检索兜底路径联调。
+
+只有 `GET /api/ai/health` 对匿名请求开放。下表接口由 Java 服务签名调用；浏览器经网关登录后只可访问企业控制台白名单。启用 AI 业务前请按[本地运行说明](../docs/local-development.md)配置四个独立服务密钥。这些密钥与模型供应商密钥无关。
 
 | 接口 | 用途 |
 | --- | --- |

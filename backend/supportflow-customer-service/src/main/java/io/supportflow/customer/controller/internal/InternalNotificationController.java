@@ -1,13 +1,17 @@
 package io.supportflow.customer.controller.internal;
 
 import io.supportflow.common.api.ApiResponse;
+import io.supportflow.common.auth.CustomerInternalCredential.Caller;
 import io.supportflow.customer.dto.internal.BroadcastBody;
 import io.supportflow.customer.dto.internal.BroadcastResultVO;
 import io.supportflow.customer.dto.internal.PublishBody;
 import io.supportflow.customer.dto.internal.PublishResultVO;
 import io.supportflow.customer.service.notification.NotificationBroadcastService;
+import io.supportflow.customer.security.CustomerInternalCall;
+import io.supportflow.customer.security.InternalCustomerEndpoint;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -18,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 控制器只接参数、包响应。</p>
  */
 @RestController
+@InternalCustomerEndpoint(Caller.OPS)
 @RequestMapping("/api/customer/internal/notifications")
 public class InternalNotificationController {
 
@@ -34,6 +39,7 @@ public class InternalNotificationController {
      * 推送失败不该把发布动作带崩（发布记录在公告列表里，运营可以重发一次）。</p>
      */
     @PostMapping("/broadcast")
+    @InternalCustomerEndpoint(value = Caller.OPS, tenantScoped = false)
     public ApiResponse<BroadcastResultVO> broadcast(@RequestBody BroadcastBody body) {
         return ApiResponse.ok(broadcastService.broadcast(body));
     }
@@ -45,7 +51,8 @@ public class InternalNotificationController {
      * 混一个接口进去迟早会有人传错参数把公告发给单个租户。</p>
      */
     @PostMapping("/publish")
-    public ApiResponse<PublishResultVO> publish(@RequestBody PublishBody body) {
-        return ApiResponse.ok(broadcastService.publish(body));
+    public ApiResponse<PublishResultVO> publish(@RequestAttribute(CustomerInternalCall.ATTRIBUTE) CustomerInternalCall call,
+                                               @RequestBody PublishBody body) {
+        return call.inTenant(body.tenantCode(), () -> ApiResponse.ok(broadcastService.publish(body)));
     }
 }
