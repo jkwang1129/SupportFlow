@@ -109,4 +109,5 @@ with (logs / "compose.log").open("wb") as output:
             with contextlib.suppress(subprocess.TimeoutExpired):
                 proc.wait(timeout=10)
         (logs / ".test-admin").unlink(missing_ok=True)
-        subprocess.run([*compose, "down", "-v"], cwd=root, env=env, stdout=output, stderr=subprocess.STDOUT, timeout=90)
+        subprocess.run([*compose, "--profile", "attachments", "down", "--remove-orphans", "-v"],
+                       cwd=root, env=env, stdout=output, stderr=subprocess.STDOUT, timeout=90, check=True)

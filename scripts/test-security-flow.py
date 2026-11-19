@@ -41,3 +41,8 @@ if __name__ == '__main__':
                     runtime.wait(timeout=15)
             if runtime.returncode:
                 raise SystemExit('Security runtime failed; see .local/security-services/runtime.log')
+            for command in (['docker','ps','-a','-q'], ['docker','volume','ls','-q'], ['docker','network','ls','-q']):
+                remaining = subprocess.check_output([*command,'--filter','label=com.docker.compose.project='+project],text=True).strip()
+                if remaining:
+                    raise RuntimeError('Disposable project resources survived cleanup: '+project)
+            print('Disposable containers, volumes and network removed', flush=True)

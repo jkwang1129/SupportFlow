@@ -63,3 +63,7 @@
 ## 提交范围
 
 本次只提交 P0 源码、自动化回归、部署配置和必要运行文档。原始文章、审查输入清单、简历草稿、评测原始资料与本机凭据留在本地。工作区中的 RAG 评测与已知引用校验缺口属于另一任务，不作为 P0 关闭依据。P1 的消息重复请求、并发、计费和持久化 Agent 仍需单独处理。
+
+远程复现：修复提交 `85a00ea` 的 [Verification](https://github.com/jkwang1129/SupportFlow/actions/runs/44460899354) 与记录提交 `28ad3cc` 的 [Verification](https://github.com/jkwang1129/SupportFlow/actions/runs/44461047485) 均成功，包含完整的新/旧库服务链路。
+
+验收脚本清理已补充显式附件 profile 和残留资源断言。本地再次运行新/旧库两套流程通过，确认容器、数据卷、网络与管理员临时口令全部清理。该收尾提交的远程结果仍以对应 Actions 记录为准。
