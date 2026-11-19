@@ -17,14 +17,21 @@ project = "supportflow-acceptance-" + secrets.token_hex(3)
 compose = ["docker", "compose", "--project-name", project]
 (logs / '.project-name').write_text(project, encoding='utf-8')
 legacy = '--legacy' in sys.argv
-if legacy:
+empty_init = '--empty-init' in sys.argv
+if legacy and empty_init:
+    raise RuntimeError('Legacy upgrade and empty initialization are separate acceptance scenarios')
+if legacy or empty_init:
     empty = logs / 'skip-init.sql'
     empty.write_text('-- Bootstrap baseline only; migration will follow in place.\n', encoding='utf-8')
-    override = logs / 'legacy-compose.json'
-    override.write_text(json.dumps({'services': {'postgres': {'volumes': [
-        {'type':'bind','source':str(empty),'target':'/docker-entrypoint-initdb.d/25-runtime-security.sql','read_only':True},
-        {'type':'bind','source':str(empty),'target':'/docker-entrypoint-initdb.d/40-runtime-roles.sql','read_only':True},
-    ]}}}), encoding='utf-8')
+    targets = ['25-runtime-security.sql','40-runtime-roles.sql']
+    if empty_init:
+        targets += ['10-supportflow.sql','20-channel-lookup.sql','21-public-avatar.sql','30-usage-batches.sql']
+    override = logs / ('empty-compose.json' if empty_init else 'legacy-compose.json')
+    override.write_text(json.dumps({'services': {'postgres': {
+        'volumes': [{'type':'bind','source':str(empty),'target':'/docker-entrypoint-initdb.d/'+target,'read_only':True}
+                    for target in targets],
+        'healthcheck': {'test':['CMD-SHELL','pg_isready -h 127.0.0.1 -U supportflow -d postgres']},
+    }}}), encoding='utf-8')
     compose += ['-f', str(root / 'compose.yaml'), '-f', str(override)]
 password = secrets.token_urlsafe(32)
 storage_key = secrets.token_urlsafe(32)
@@ -68,6 +75,10 @@ with (logs / "compose.log").open("wb") as output:
         subprocess.run([*compose, "up", "-d", "--wait", "postgres", "rustfs"], cwd=root, env=env,
                        stdout=output, stderr=subprocess.STDOUT, timeout=150, check=True)
         print("Acceptance database and attachment storage ready", flush=True)
+        if empty_init:
+            subprocess.run([sys.executable,'scripts/db-migrate.py','init'],cwd=root,env=env,
+                           stdout=output,stderr=subprocess.STDOUT,check=True,timeout=90)
+            print('Fresh six-database CLI initialization and actual schema verification passed',flush=True)
         commands = [*compose, 'exec', '-T', '-e', 'PGPASSWORD']
         for role in ('USER','TENANT','CUSTOMER','BILLING','OPS','AI','KB','CUSTOMER_PLATFORM'):
             commands += ['-e', f'SUPPORTFLOW_{role}_DB_PASSWORD']

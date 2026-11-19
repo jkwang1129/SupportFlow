@@ -48,3 +48,11 @@ CLI verify 与升级入口使用只读连接，设置语句 5 秒/锁 2 秒 time
 完整服务历史夹具改为模拟已知旧策略被改宽，由原迁移替换；未知额外策略在新的真实 SQL 负面集里必须使 verify 失败。独立 P0 RLS 回归仍保留“额外 permissive 策略不能突破 restrictive guard”，没有撤销安全负面覆盖。
 
 无业务数据/DDL 变更。回退工具/契约应保持同版本；不能修改历史 checksum 或关闭 RLS 回退。此检查不代替 owner/grants/触发器/扩展版本/业务数据/备份审计，安全验收和生产运维仍有独立职责。统一 init 留下一子批次。
+
+## 后续子批次 6：统一初始化入口与阶段 A 退出
+
+init/migrate/verify 使用同一 CLI。init 只对六个应用库全部不存在的服务器生效，复用原 monolithic baseline 的数据库段，使用 quoted identifiers 受控建库；全局 advisory lock 防并发初始化。每库基线/种子处于独立事务，之后通过相同 manifest 增量和只读 desired-state 校验。不得把 CREATE DATABASE/六库包装成伪原子事务；中途失败保留完成库和已创建库，报出状态并拒绝自动覆盖重试。
+
+角色/密码 provisioning 继续是唯一的 40-runtime-roles.sql，init 结果显式声明未配置运行身份。默认 Compose 已初始化的环境使用 migrate/本地 Compose 升级助手；独立空服务器 init 后显式在同一服务器执行角色脚本。应用不能继承管理员身份。完整服务验收新增空 PostgreSQL → 实际 init CLI → 角色配置 → 校验 → 受限 Java/Python 核心流程，与默认新库和历史升级并行作为三种部署路径。
+
+回退不删除库/历史/卷；init 是新增入口，可回到先前 Compose 初始化入口，但不能用旧非幂等 SQL 覆盖已有库。部分初始化需要管理员核对并恢复到独立干净环境或制定明确恢复方案；自动跨库恢复、备份与生产 runbook 留阶段 E。阶段 A 的本地条件通过，下一项为 B1 持久化 Runtime；远程 CI/实际生产不因此完成。

@@ -194,3 +194,17 @@ python scripts/report-rag-contract.py --junit .local/implementation/final-python
 历史库服务夹具现在模拟已知 file_meta_tenant_isolation 被改宽，由原增量替换；未知额外策略则应阻断 verify，不能自动信任。原独立 P0 测试的额外宽松策略/strict guard 覆盖保留。本子批次没有修改任何已应用 SQL 或 checksum。
 
 当前检查范围为登记 public 应用结构及受控函数；迁移历史另验，不含全部授权/owner/触发器/扩展版本/业务数据和备份。运行期 Readiness 仍是最小结构 gate，不将单次 metadata 检查称生产性能数据。PR-7 还剩统一 init，阶段 A 尚未退出；本地成果不等于远程 CI 或真实上线。
+
+## PR-7 子批次 6：统一 init/migrate/verify 与本地阶段 A 退出
+
+基线 a2bbecd。新增 database_init.py、test-database-init.py，CLI 接入 init，CI 加入初始化负面用例；实际服务夹具增加空服务器经 CLI 初始化路径。原 SQL 和已登记 checksum 未修改，单独的角色/密码 provisioning 继续保留。详细设计/失败状态/回退见 ADR-0002 与迁移说明。
+
+实际验证：
+
+- `python scripts/test-database-init.py`：两套独立空 PG17。第一套执行真实 CLI init，六库 **87 张表**通过实际结构核验；重复 init 拒绝、后续 migrate 无待执行版本、verify 六库成功；无关 postgres 哨兵与业务种子行数保留。覆盖 init 锁竞争、无 CREATEDB 身份拒绝和错误 source 控制语法。第二套注入 billing 基线除零，SQLSTATE 22012；该库 DDL 全部回滚，前序 AI 库/全部六个已创建数据库保留，部分状态重跑明确拒绝。输出 `.local/implementation/pr7-init-final.log`。
+- `python scripts/db-migrate.py init --database customer_db`：拒绝单库 init，实际 exit_code=2，未开始数据库操作。输出 `pr7-init-args.log`。
+- `python scripts/test-security-flow.py`：**默认 Compose 新库、历史库升级、空服务器经实际 CLI init 三套完整服务**均通过；五个 Java 数据服务继续使用受限账号，六库历史只读，平台审计匹配，原核心/双租户/媒体权限/知识入库/访客 WS/签名计费链路不退化。每套 15 次 Java 结构/权限故障注入，共 **45 次执行**通过，修复后恢复，无业务数据泄露；三套容器/卷/网络清理。输出 `pr7-init-services.log`。
+
+init 本身不配置运行密码、不启动业务，不保证跨库原子性或自动恢复部分建库；生产备份/恢复/部署/运行指标仍属 M12/阶段 E。Java 本批未修改，最近 clean verify 结果见子批次 3。未推送，不声称远程 CI 通过。
+
+阶段 A 的本地退出条件现已满足；PR-7 在本地开发/升级和登记结构范围关闭。PR-8/9/10、M01/03/04 的 Runtime/工具/审批仍未实现，下一阶段按 B1 → B2 → B3 推进。RAG 首批拒答不代表事实支持问题已解决，后续仍按 C/D 做质量与回放；没有生产流量或客户收益数据。

@@ -41,6 +41,8 @@ jobs:
         run: python scripts/test-schema-baselines.py
       - name: Verify actual schema, index and RLS drift rejection
         run: python scripts/test-schema-drift.py
+      - name: Verify fresh initialization and refusal to overwrite existing databases
+        run: python scripts/test-database-init.py
       - name: Verify AI service authorization
         working-directory: ai-service
         run: python -m pytest -q --junitxml=../.local/verification/ai-tests.xml

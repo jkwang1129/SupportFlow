@@ -142,7 +142,7 @@ python scripts/upgrade-runtime-security.py
 
 `python scripts/upgrade-runtime-security.py` 现通过版本化 Runner 安装已登记的客服/计费增量，再独立配置运行角色并验证。结构历史与 checksum 位于各库 supportflow_schema_history；运行账号只能读取本库历史。仅检查：`python scripts/db-migrate.py verify`。该命令不会执行 DDL，并核对 current-schema.json 中的实际结构/索引/RLS。已应用脚本变更、历史缺口或并发迁移会拒绝继续，不能删除历史绕过。
 
-清单、事务/多库失败语义和未覆盖项见 [迁移说明](../backend/deploy/migrations/README.md)。当前尚未完成统一 init，PR-7 仍未关闭。
+清单、事务/多库失败语义和未覆盖项见 [迁移说明](../backend/deploy/migrations/README.md)。统一 init/migrate/verify 及本地新建/升级/结构与账号验收已具备，生产部署与备份恢复另归阶段 E。
 
 ## Java 存活与就绪
 
@@ -155,3 +155,5 @@ python scripts/upgrade-runtime-security.py
 AI/User/Tenant/Ops 也已纳入同一清单：首次 migrate 验证基线表/列类型、索引和约束后登记 001，保留数据；后续 baseline 不重放，但 verify 另核对当前结构漂移。不得把首次采纳验证当成持续漂移检测。`python scripts/test-schema-baselines.py` 使用隔离 PG 重现四库采纳及不兼容拒绝。契约生成、权限及回退边界见迁移说明。
 
 `python scripts/db-migrate.py verify` 的当前结构契约登记六库 87 张应用表、1 个视图和 4 个受控函数，检查实际列类型/默认值、索引/约束、RLS ENABLE/FORCE 与完整策略。额外未知策略也会阻断，不能通过直接覆盖快照放行。`python scripts/test-schema-drift.py` 在隔离 PG 中验证结构/权限策略故障拒绝。范围、合法演进和未覆盖权限项见迁移说明；这不是备份恢复或完整生产验收。
+
+对于不经 Compose 自动初始化的独立空 PostgreSQL，可用 `python scripts/db-migrate.py init` 完成六库结构、版本和实际结构核验。只要目标库任意一个已存在就拒绝覆盖；已有环境使用 migrate/verify。init 不处理运行密码，随后须在同一服务器显式执行 40-runtime-roles.sql，再 verify 后启动受限身份服务。现有本地 Compose 用户继续使用原升级助手；该助手是本地 Compose 专用入口。部分初始化失败不自动删库，处理方式见迁移说明。完整服务验收现在包含默认新库、历史升级和空服务器经 CLI init 三种路径。

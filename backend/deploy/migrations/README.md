@@ -4,6 +4,7 @@
 
 ```powershell
 python -m pip install "psycopg[binary]>=3.1,<4"
+python scripts/db-migrate.py init  # 仅用于六个应用库全部不存在的空 PostgreSQL
 python scripts/db-migrate.py migrate
 python scripts/db-migrate.py verify
 python scripts/db-migrate.py verify --database customer_db
@@ -26,7 +27,7 @@ python scripts/db-migrate.py verify --database customer_db
 
 ## 尚未覆盖
 
-当前六库均有版本计划：客服四条增量、计费一条增量，其余四库各一条基线采纳。AI 与五个 Java 数据服务已有只读 Readiness。统一 init 命令仍属于 PR-7 后续子批次；不能据此宣布整个六库迁移与生产部署已经验收完成。
+当前六库均有版本计划：客服四条增量、计费一条增量，其余四库各一条基线采纳。AI 与五个 Java 数据服务已有只读 Readiness。统一 init/migrate/verify 已具备本地验收；备份恢复、生产部署与运维仍需阶段 E 实测，不能据此宣布生产验收完成。
 
 ## 四库基线采纳
 
@@ -49,3 +50,13 @@ AI/User/Tenant/Ops 的 `001` 为 baseline 操作，不执行建表 SQL。JSON �
 复现 `python scripts/test-schema-drift.py`：六库只读正例、14 个实际 SQL 漂移故障、3 个 catalog 元数据负面例、旧 desired-state/新 manifest 不一致、实际 CLI 失败和修复后通过。测试只操作独立 PG17，事务回滚故障，不修改本机业务库。
 
 合法改表时先增加新迁移，再用 `python scripts/test-schema-drift.py --write-new-contract --output .local/schema-candidate.json` 从隔离初始化/升级生成候选，审查差异后更新 current-schema.json 并跑全部验收。候选文件已存在时拒绝覆盖。不得修改历史 SQL/checksum、关闭检测，或从有未知漂移的真实数据库直接覆盖契约来让测试变绿。
+
+## 统一 init / migrate / verify
+
+`init` 复用原 db-init.sql 的六个数据库段，以受控数据库名创建库，不执行旧 psql 建库前导。管理员必须有 CREATEDB 和安装 pgvector 等所需权限；运行身份不能初始化。全局 session advisory lock 避免并发初始化。只要六个目标库任意一个已存在，即在创建/改表前拒绝，不能覆盖已有或部分完成环境。`--database` 仅供 migrate/verify，init 必须初始化全部六库。
+
+每库基线 DDL 和种子数据在独立事务中完成，然后使用相同 manifest migrate 和只读结构 verify。CREATE DATABASE 和多个数据库不构成一个事务；失败库基线回滚、前序完成库保留，不自动 DROP DATABASE。部分完成状态会明确报错并拒绝再次 init；管理员必须核对状态，恢复到独立干净环境重新初始化或制定受审查的恢复步骤，不能靠删除已有业务库/卷重试。已有环境只用 migrate/verify。
+
+init 只承担结构和版本，不配置运行密码，结果明确标记 NOT_PROVISIONED_BY_INIT。运行角色/密码 provisioning 仍使用唯一的 40-runtime-roles.sql，不进入迁移历史。默认本地 Compose 已自动创建六库，应继续使用本地 Compose 专用 upgrade-runtime-security.py 完成版本登记/角色配置/验证，不要在已有 Compose 上再次 init。独立空 PostgreSQL 使用 init 后，管理员通过 psql 在同一目标服务器执行该角色脚本，再 verify 后启动应用；不能把本地 Compose 专用升级助手用于其他远端服务器。应用进程仍只获得各自受限凭据。
+
+`python scripts/test-database-init.py` 验证真实 CLI 空库初始化、87 张表核验、重复初始化拒绝、无关数据与种子保留、锁竞争、无 CREATEDB 运行身份拒绝及中途 SQL 失败回滚。`python scripts/test-security-flow.py` 另验证默认新库、历史库升级、空服务器经 CLI init 三套真实 Java/Python 服务与受限账号业务闭环，所有数据均为隔离合成验收。

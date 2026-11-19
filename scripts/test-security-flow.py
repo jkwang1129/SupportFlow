@@ -10,7 +10,7 @@ if __name__ == '__main__':
     logs = ROOT / '.local/security-services'
     logs.mkdir(parents=True, exist_ok=True)
     stop = logs / 'stop'
-    for scenario in ([], ['--legacy']):
+    for scenario in ([], ['--legacy'], ['--empty-init']):
         stop.unlink(missing_ok=True)
         with (logs / 'runtime.log').open('wb') as log:
             runtime = subprocess.Popen([sys.executable, 'scripts/security/acceptance_runtime.py', *scenario],
@@ -46,7 +46,8 @@ if __name__ == '__main__':
                     assert history == ['1','t','t','f','f','f'], (database,history)
                 print('Six database migration histories verified; baseline history receipts are read-only for runtime roles', flush=True)
                 print('Observed five restricted Java database identities; mandatory platform audit receipts matched', flush=True)
-                print(('LEGACY UPGRADE' if scenario else 'FRESH DEFAULT') + ': full security flow passed', flush=True)
+                label = 'FRESH CLI INIT' if '--empty-init' in scenario else ('LEGACY UPGRADE' if scenario else 'FRESH DEFAULT')
+                print(label + ': full security flow passed', flush=True)
             finally:
                 stop.touch()
                 try:
