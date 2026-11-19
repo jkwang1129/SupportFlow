@@ -12,7 +12,6 @@ import io.supportflow.billing.dto.OrderCreatedVO;
 import io.supportflow.billing.dto.OrderPaidVO;
 import io.supportflow.billing.dto.PublicPlanVO;
 import io.supportflow.billing.dto.UsageCurrentVO;
-import io.supportflow.billing.dto.UsageReport;
 import io.supportflow.billing.entity.BillingStatement;
 import io.supportflow.billing.entity.Plan;
 import io.supportflow.billing.service.BillingService;
@@ -262,29 +261,12 @@ public class BillingController {
         return ApiResponse.ok(statementBatchService.generateForActiveTenants(user, cycle));
     }
 
-    /**
-     * 用量上报（内部）：由 customer-service（会话/消息/AI 调用）或网关侧计量调用。
-     * 幂等累加，同一天重复上报只是加上去。
-     */
     /** 开通免费版试用（内部）：企业审核通过后由 tenant-service 调用，让新租户能直接试用 */
     @PostMapping("/internal/tenants/{tenantCode}/trial")
     public ApiResponse<FreeTrialVO> startTrial(
             @PathVariable String tenantCode,
             @RequestParam(required = false) Integer days) {
         return ApiResponse.ok(billingService.startFreeTrial(tenantCode, days));
-    }
-
-    /**
-     * 用量上报（内部）：由 customer-service（会话 / 消息 / AI 调用）或网关侧计量调用。
-     * 幂等累加，同一天重复上报只是加上去。
-     */
-    @PostMapping("/internal/usage/report")
-    public ApiResponse<AcceptedCountVO> reportUsage(@RequestBody UsageReport body) {
-        usageMeterService.report(body.tenantCode(),
-                body.statDate() == null ? LocalDate.now() : body.statDate(),
-                body.sessions(), body.messages(), body.aiCalls(), body.seats(),
-                body.storageGb() == null ? BigDecimal.ZERO : body.storageGb());
-        return ApiResponse.ok(new AcceptedCountVO(1));
     }
 
     /** 企业侧只能看自己的；平台账号必须显式给 tenantCode */

@@ -110,3 +110,20 @@ with test.socket(visitor["visitorToken"]) as ws:
 ai_log = (test.artifacts / "ai.log").read_text(encoding="utf-8", errors="replace")
 assert 'POST /api/ai/v1/agent/brain HTTP/1.1" 200' in ai_log, "AI brain did not accept the Java request"
 test.note("Java customer to Python brain", "visitor WebSocket sent a message, the protected brain returned HTTP 200, and a bot reply arrived")
+
+# The actual scheduler/client must obtain a matching business receipt, not merely HTTP 200.
+for _ in range(40):
+    usage = test.api("GET", "/billing/usage", a)
+    if int(usage["messages"]) >= 2 and int(usage["sessions"]) >= 1 and int(usage["aiCalls"]) >= 1:
+        break
+    time.sleep(1)
+else:
+    raise AssertionError("Customer usage did not reach the authenticated billing batch endpoint")
+import uuid
+from datetime import date
+unsigned_batch = {"batchId":str(uuid.uuid4()),"tenantCode":tenant,"statDate":date.today().isoformat(),
+                  "sessions":0,"messages":0,"aiCalls":0,"seats":0,"storageGb":0}
+assert test.client.post("/billing/internal/usage/report",json=unsigned_batch).status_code == 403
+assert httpx.post("http://127.0.0.1:9094/api/billing/internal/usage/report",json=unsigned_batch,
+                  timeout=5,trust_env=False).status_code == 403
+test.note("Authenticated metering", "actual customer scheduler persisted and delivered usage; unsigned gateway/direct writes rejected")

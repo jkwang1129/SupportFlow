@@ -13,6 +13,7 @@ def main():
     required += [f"SUPPORTFLOW_{role}_DB_PASSWORD" for role in ("USER", "TENANT", "CUSTOMER", "BILLING", "OPS", "AI", "KB", "CUSTOMER_PLATFORM")]
     required += [f"SUPPORTFLOW_AI_{role}_SECRET" for role in ("GATEWAY", "CUSTOMER", "OPS", "TENANT")]
     required += [f"SUPPORTFLOW_CUSTOMER_{role}_SECRET" for role in ("REALTIME", "OPS", "TENANT")]
+    required += ["SUPPORTFLOW_BILLING_CUSTOMER_SECRET"]
     additions = [f"{key}={secrets.token_urlsafe(48)}" for key in required if key not in names]
     if additions:
         with path.open("a", encoding="utf-8") as f:

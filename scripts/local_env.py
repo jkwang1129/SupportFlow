@@ -50,4 +50,6 @@ def runtime_environment(service, source=None):
             source.pop(key)
         elif key == 'SUPPORTFLOW_JWT_SECRET' and own == 'AI':
             source.pop(key)
+        elif key == 'SUPPORTFLOW_BILLING_CUSTOMER_SECRET' and own not in {'CUSTOMER', 'BILLING'}:
+            source.pop(key)
     return source

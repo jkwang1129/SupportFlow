@@ -11,7 +11,7 @@ python scripts/setup-local-env.py
 docker compose up -d --wait postgres
 ```
 
-新建空数据卷会依次执行六库基线、渠道查询/公开头像函数、v31 严格 RLS、运行账号配置。`supportflow` 仅用于建库与迁移，表仍由它持有；Java 各服务使用 `supportflow_user/tenant/customer/billing/ops`，AI 使用 `supportflow_ai`，知识检索使用 `supportflow_kb`，平台限定操作使用 `supportflow_customer_platform`。八个运行账号都不是 owner、超级用户或 BYPASSRLS；不能建库、建角色或执行表 DDL。账号仅能连接自己的数据库，customer/KB/平台三者分别获得不同权限。不要手动把管理员账号填到应用连接配置中；客服和 AI 会拒绝危险的运行身份。
+新建空数据卷会依次执行六库基线、渠道查询/公开头像函数、v31 严格 RLS、计费批次账本/待发记录、运行账号配置。`supportflow` 仅用于建库与迁移，表仍由它持有；Java 各服务使用 `supportflow_user/tenant/customer/billing/ops`，AI 使用 `supportflow_ai`，知识检索使用 `supportflow_kb`，平台限定操作使用 `supportflow_customer_platform`。八个运行账号都不是 owner、超级用户或 BYPASSRLS；不能建库、建角色或执行表 DDL。账号仅能连接自己的数据库，customer/KB/平台三者分别获得不同权限。不要手动把管理员账号填到应用连接配置中；客服和 AI 会拒绝危险的运行身份。
 
 已有数据卷不要删除。先按下文“已有数据库升级”处理，不能重新生成一个数据库管理员密码来替代原密码。外部 PostgreSQL 安装需要先完成基线和增量表结构，再由管理员执行相同权限迁移。[数据库初始化说明](../backend/deploy/db-init/README.md)
 
@@ -121,3 +121,11 @@ python scripts/upgrade-runtime-security.py
 原生渠道的 App、邮件回调、呼叫中心事件和 TTS 必须配置相应的回调签名密钥；缺少密钥会拒绝请求。公众号与小程序的明文推送必须带有效 `signature`；加密推送必须带有效 `msg_signature`。不再支持“验签失败但继续处理”的联调方式。无效推送会按微信接口的既有约定返回 `success`，但不会进入会话处理或产生业务副作用。
 
 `.github/workflows/verification.yml` 配置 Java 全模块验证、独立 PostgreSQL 隔离测试、AI 授权测试和前端构建。AI 测试隔离本机配置与在线模型凭据，不依赖人工填密钥。还会运行新旧数据库升级及真实服务链路回归，远程结果以具体 GitHub Actions 运行记录为准。
+
+## 计费批次协议
+
+客服用量通过稳定 UUID 批次上报。先在 customer_db 的 billing_usage_outbox 保存待发记录，再由独立签名的内部请求写 billing_db；接收端的 billing_usage_batch 账本与日统计同事务提交。网络重试及重启恢复沿用批次 ID 和原业务日期。HTTP 200 的业务拒绝不视为确认。
+
+已有环境先备份并停业务，运行 `python scripts/setup-local-env.py` 补充独立的 `SUPPORTFLOW_BILLING_CUSTOMER_SECRET`，再执行 `python scripts/upgrade-runtime-security.py` 安装 `30-usage-batches.sql` 和最小授权，最后同步部署客服与计费。该密钥只分发给这两个服务；不能用旧无认证/无 batchId 的协议继续累加。新 Compose 空卷自动执行同一迁移。
+
+重放验收：`python scripts/test-usage-batches.py`，另有 `python scripts/test-security-flow.py` 的实际调度、落账及匿名拒绝用例。设计和回滚见 [ADR-0001](decisions/0001-usage-batch-delivery.md)。原始内存计数尚未形成并保存批次时仍可能因进程崩溃丢失；网关的 tenant_usage_daily 请求计数是另一条链路，未因本次计费改造获得去重保证。

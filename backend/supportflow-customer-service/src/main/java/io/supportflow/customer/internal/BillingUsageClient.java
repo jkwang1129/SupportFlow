@@ -7,8 +7,13 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
-import java.math.BigDecimal;
-import java.time.LocalDate;
+import io.supportflow.common.billing.UsageBatch;
+import io.supportflow.common.auth.UsageBatchCredential;
+import java.time.Clock;
+import java.time.Duration;
+import java.net.http.HttpClient;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import java.util.Map;
 
 /**
  * billing-service 内部客户端：把业务用量（会话 / 消息 / AI 调用 / 席位 / 存储）报给计费。
@@ -24,31 +29,29 @@ public class BillingUsageClient {
     private static final Logger log = LoggerFactory.getLogger(BillingUsageClient.class);
 
     private final RestClient restClient;
+    private final String secret;
 
-    public BillingUsageClient(@Value("${supportflow.billing.internal-base-url}") String baseUrl) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+    public BillingUsageClient(@Value("${supportflow.billing.internal-base-url}") String baseUrl,
+                              @Value("${SUPPORTFLOW_BILLING_CUSTOMER_SECRET:}") String secret) {
+        var factory = new JdkClientHttpRequestFactory(HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build());
+        factory.setReadTimeout(Duration.ofSeconds(3));
+        this.restClient = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
+        this.secret = secret;
     }
 
-    /** 上报一条当天用量（billing 侧按 (租户, 日期) 幂等累加） */
-    public boolean report(String tenantCode, LocalDate statDate, long sessions, long messages,
-                          long aiCalls, long seats, BigDecimal storageGb) {
+    /** A business receipt must identify this exact batch; HTTP 200 alone is not acceptance. */
+    public boolean report(UsageBatch batch) {
         try {
-            restClient.post()
-                    .uri("/api/billing/internal/usage/report")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new UsageBody(tenantCode, statDate, sessions, messages, aiCalls, seats, storageGb))
-                    .retrieve()
-                    .toBodilessEntity();
-            return true;
+            Map<?, ?> response = restClient.post().uri(UsageBatchCredential.PATH)
+                    .header(UsageBatchCredential.HEADER, UsageBatchCredential.sign(secret, batch, Clock.systemUTC()))
+                    .contentType(MediaType.APPLICATION_JSON).body(batch).retrieve().body(Map.class);
+            if (response == null || !(response.get("code") instanceof Number code) || code.intValue() != 0)
+                return false;
+            return response.get("data") instanceof Map<?, ?> receipt && Boolean.TRUE.equals(receipt.get("accepted"))
+                    && batch.batchId().equals(receipt.get("batchId"));
         } catch (Exception e) {
-            log.warn("用量上报失败 tenant={} sessions={} messages={} aiCalls={} error={}",
-                    tenantCode, sessions, messages, aiCalls, e.getMessage());
+            log.warn("用量上报失败 tenant={} batch={} error={}", batch.tenantCode(), batch.batchId(), e.getClass().getSimpleName());
             return false;
         }
-    }
-
-    /** 与 billing 侧 UsageReport 一一对应 */
-    record UsageBody(String tenantCode, LocalDate statDate, long sessions, long messages,
-                     long aiCalls, long seats, BigDecimal storageGb) {
     }
 }

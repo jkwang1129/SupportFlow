@@ -108,3 +108,18 @@ python scripts/report-rag-contract.py --junit .local/implementation/final-python
 ## 分批提交
 
 2026-11-19 按任务拆分本地提交：PR-3 `08bc0d2`；PR-4 `e98eda8`；PR-5 `80e94a6`。PR-12 拒答与契约门禁、能力盘点和综合回归记录随下一独立提交保存。本轮不包含原始文章、两份改造输入、简历和历史评测原始资料。
+
+## A4 / PR-6：客服计费批次（2026-11-19）
+
+设计：[ADR-0001](decisions/0001-usage-batch-delivery.md)。修改公共 UsageBatch/签名、billing 内部上报控制器/UsageMeterService/Mapper、客服 Collector/Reporter/Client 与 BillingUsageOutbox；新增 30-usage-batches.sql，接入 Compose/升级脚本、最小授权和凭据分发、CI 与回归测试。
+
+- 旧代码真 PostgreSQL：同一份用量 3 的批次重报 9 次，实际累计 **27**，应为 3；首批测试 4 失败、1 通过。原始输出 `.local/implementation/pr6-before.log`。
+- 修复后账本去重和日统计同事务；同键异内容拒绝，聚合 SQL 失败回滚批次记录。客服先持久化批次，直到收到同 ID 的明确业务确认才删除；未知落库结果、远端响应丢失及本地确认失败都保留原 ID/日期。每租户最多一条持久化待发记录，避免故障时无界积压。
+- `python scripts/test-usage-batches.py`：**Outbox 8、计费账本 6，共 14 项真 PG 用例通过**；受限非 owner 账号、严格 RLS、跨租户拒绝、并发竞争、重建 Reporter 后恢复、账本不可删除。脚本重复迁移两次并清理容器。输出 `pr6-postgres-final.log`。
+- `mvn -B -f backend/pom.xml verify`：九模块通过，包含 **签名/参数 3 项、实际本地 HTTP 客户端 4 项**。随后新增计数并发收尾测试，专项 `BillingUsageCollectorTest,BillingUsageClientTest` **5 项通过**；8 个线程各累加 1000 次、并发 drain 后每类计数均 8000，仅为合成正确性测试。输出 `pr6-java.log`、`pr6-counter-client.log`。
+- 凭据分发单元测试 **3 项通过**；新密钥只到客服和计费，已通过 setup-local-env 补充本机配置，没有显示/提交密钥。
+- `python scripts/test-security-flow.py`：**新库/旧库两套实际服务通过**；客服定时任务确实完成签名上报和账本落账；网关与直连匿名写入均 HTTP 403；原企业开通、平台工单、媒体权限、知识检索、访客 WebSocket/机器人流程保持通过。运行账号不能删除去重账本；容器/卷/网络已清理。输出 `pr6-services.log`。测试脚本最初把现有 API 的 Long 字符串当整数比较，纠正后重跑通过，未改变 API 数字序列化契约。
+
+边界：原始内存增量/尚未落库的候选仍可能在崩溃时丢失；这批保证已持久化批次的幂等重报，不是业务事件到计费的端到端 exactly-once。停用/删除租户的待发记录保留供管理核查。网关请求量进入 tenant_usage_daily，是另一条链路，后续单独改造。认证/永久内容冲突不会丢弃批次，需修正配置或管理员核查；完整死信运营界面尚无。
+
+迁移及回滚见运行指南和 ADR。已有数据库先备份、停业务，安装同一 SQL/最小授权后同步部署发送与接收端；不能退回无签名、无批次协议或清空账本。后续 PR-7 将该增量纳入版本化迁移。未推送，不将本地结果称远程 CI 成功或生产表现。

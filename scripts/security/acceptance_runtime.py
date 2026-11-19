@@ -43,6 +43,9 @@ env["SUPPORTFLOW_AI_KB_DATABASE_URL"] = f"postgresql://supportflow_kb:{env['SUPP
 
 env.update({f"SUPPORTFLOW_AI_{role}_SECRET": secrets.token_urlsafe(48) for role in ("GATEWAY","CUSTOMER","OPS","TENANT")})
 env.update({f"SUPPORTFLOW_CUSTOMER_{role}_SECRET": secrets.token_urlsafe(48) for role in ("REALTIME","OPS","TENANT")})
+env["SUPPORTFLOW_BILLING_CUSTOMER_SECRET"] = secrets.token_urlsafe(48)
+env["SUPPORTFLOW_USAGE_REPORT_MS"] = "1000"
+env["SUPPORTFLOW_BILLING_USAGE_REPORT_INITIAL_DELAY_MS"] = "1000"
 env.update(PYTHONPATH=str(root / "ai-service"), SUPPORTFLOW_AI_LLM_DEFAULT_PROVIDER="mock", SUPPORTFLOW_AI_LOG_LEVEL="INFO")
 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 children = []

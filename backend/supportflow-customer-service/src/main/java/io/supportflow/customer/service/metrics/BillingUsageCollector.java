@@ -6,15 +6,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.LongAdder;
+import java.util.concurrent.atomic.AtomicLong;
 import io.supportflow.customer.dto.metrics.Usage;
 
 /**
  * 业务用量计数（内存增量）。
  *
- * <p>billing 的用量接口是**增量累加**语义（同一天重复上报只是把数字加上去），
- * 所以这里只维护「自上次上报以来的增量」，由 {@link BillingUsageReporter} 定期取走并清零。
- * 好处是请求链路上只有一次 {@link LongAdder} 自增，不会为了计量去写库、也不会拖慢会话链路。</p>
+ * <p>这里只维护尚未组成批次的增量，由 {@link BillingUsageReporter} 定期取走，
+ * 生成稳定 ID 后保存到 Outbox。原始计数阶段没有持久化保证。</p>
  *
  * <p>口径与 {@code UsageMeterService} 的说明一致：</p>
  * <ul>
@@ -25,34 +24,33 @@ import io.supportflow.customer.dto.metrics.Usage;
  *
  * <p>已知取舍：进程重启会丢掉「还没上报的那一分钟」的增量。要做到不丢，
  * 得先把增量落到本地表再上报（outbox 模式）。本项目的用途是套餐超量提示与月度账单，
- * 内存增量足够，口径也与网关侧上报的用量保持一致（同样是内存累加 + 定时上报）。</p>
+ * 原始内存增量不是持久化账本；形成并保存 Outbox 批次后才具备崩溃后的重报能力。</p>
  */
 @Component
 public class BillingUsageCollector {
 
-    /** 租户 → 增量计数器；租户数量级是「几百」，用 ConcurrentHashMap 足够 */
+    /** 租户 → 尚未形成持久化批次的增量计数器。 */
     private final ConcurrentHashMap<String, TenantCounters> counters = new ConcurrentHashMap<>();
 
     /** 客户进线开了一次会话 */
     public void countSession(String tenantCode) {
-        countersOf(tenantCode).sessions.increment();
+        countersOf(tenantCode).sessions.incrementAndGet();
     }
 
     /** 落库了一条消息（客户 / 坐席 / 机器人） */
     public void countMessage(String tenantCode) {
-        countersOf(tenantCode).messages.increment();
+        countersOf(tenantCode).messages.incrementAndGet();
     }
 
     /** 调了一次 AI 能力（客服大脑 / 质检 / 检索 / 视觉） */
     public void countAiCall(String tenantCode) {
-        countersOf(tenantCode).aiCalls.increment();
+        countersOf(tenantCode).aiCalls.incrementAndGet();
     }
 
     /**
      * 取走并清零所有增量。
      *
-     * <p>先取走再上报：上报失败也不至于把同一段增量重复累加（宁可少算一次，
-     * 也不能让一次网络抖动把账单算重）。</p>
+     * <p>调用者必须保留已取出的数据直到批次入库，不能失败后换 ID 再形成同一份增量。</p>
      */
     public Map<String, Usage> drain() {
         Map<String, Usage> snapshot = new HashMap<>();
@@ -70,6 +68,11 @@ public class BillingUsageCollector {
         return Set.copyOf(counters.keySet());
     }
 
+    public Usage drain(String tenantCode) {
+        TenantCounters value = counters.get(tenantCode);
+        return value == null ? new Usage(0, 0, 0) : value.drain();
+    }
+
     private TenantCounters countersOf(String tenantCode) {
         if (tenantCode == null || tenantCode.isBlank()) {
             // 拿不到租户（未认证 / 内部任务）就不计数：用量必须挂在某个租户上才有意义
@@ -83,13 +86,12 @@ public class BillingUsageCollector {
 
     private static final class TenantCounters {
 
-        private final LongAdder sessions = new LongAdder();
-        private final LongAdder messages = new LongAdder();
-        private final LongAdder aiCalls = new LongAdder();
+        private final AtomicLong sessions = new AtomicLong();
+        private final AtomicLong messages = new AtomicLong();
+        private final AtomicLong aiCalls = new AtomicLong();
 
         private Usage drain() {
-            // LongAdder.sumThenReset() 在并发自增下既不丢也不重复
-            return new Usage(sessions.sumThenReset(), messages.sumThenReset(), aiCalls.sumThenReset());
+            return new Usage(sessions.getAndSet(0), messages.getAndSet(0), aiCalls.getAndSet(0));
         }
     }
 }

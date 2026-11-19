@@ -19,6 +19,11 @@ import java.util.Map;
 @Mapper
 public interface BillingMapper {
 
+    String insertUsageBatch(@Param("batch") io.supportflow.common.billing.UsageBatch batch,
+                            @Param("fingerprint") String fingerprint);
+
+    String usageBatchFingerprint(@Param("tenantCode") String tenantCode, @Param("batchId") String batchId);
+
     // ------------------------------------------------------------------ 用量计量
 
     /** 按天累加用量（同一租户同一天 UPSERT，重复上报不会写重） */

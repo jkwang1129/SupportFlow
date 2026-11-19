@@ -7,6 +7,7 @@ SupportFlow 使用六个 PostgreSQL 数据库。初始化需要 PostgreSQL 17、
 | `db-init.sql` | 新环境的一次性初始化。从 `postgres` 开始，创建并切换六个库，再执行各库的结构和基础数据。 |
 | `ai_db.sql` 至 `user_db.sql` | 各库的独立脚本，也可用于按库检查和部署。 |
 | `25-runtime-security.sql` | 执行 customer 服务资源目录中的 v31 RLS 与平台权限迁移。 |
+| `30-usage-batches.sql` | 客服计费批次账本与租户隔离的待发记录，新建及升级共用。 |
 | `40-runtime-roles.sql` | 从环境读取八个独立密码，配置非 owner、非超级用户的运行账号及最小授权。 |
 
 从仓库根目录运行以下命令。也可使用 [Compose 启动流程](../../../docs/local-development.md#1-初始化数据库)在空卷上自动初始化。

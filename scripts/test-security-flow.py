@@ -30,6 +30,9 @@ if __name__ == '__main__':
                 assert {'supportflow_user','supportflow_customer','supportflow_tenant','supportflow_billing','supportflow_ops'} <= identities, identities
                 audit = subprocess.check_output([*psql,"SELECT count(*) FILTER(WHERE phase='START'),count(*) FILTER(WHERE phase='END') FROM platform_access_audit"],text=True).strip().split('|')
                 assert int(audit[0]) >= 6 and audit[0] == audit[1], audit
+                billing_psql = ['docker','exec',project+'-postgres-1','psql','-U','supportflow','-d','billing_db','-XqAt','-c']
+                ledger = subprocess.check_output([*billing_psql,"SELECT count(*),has_table_privilege('supportflow_billing','billing_usage_batch','DELETE') FROM billing_usage_batch"],text=True).strip().split('|')
+                assert int(ledger[0]) >= 1 and ledger[1] == 'f', ledger
                 print('Observed five restricted Java database identities; mandatory platform audit receipts matched', flush=True)
                 print(('LEGACY UPGRADE' if scenario else 'FRESH DEFAULT') + ': full security flow passed', flush=True)
             finally:

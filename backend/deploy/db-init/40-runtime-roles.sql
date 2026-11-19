@@ -71,6 +71,11 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO supportflow_billing;
 GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO supportflow_billing;
 GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO supportflow_billing;
+DO $$ BEGIN
+ IF to_regclass('public.billing_usage_batch') IS NOT NULL THEN
+   REVOKE UPDATE,DELETE,TRUNCATE ON public.billing_usage_batch FROM supportflow_billing;
+ END IF;
+END $$;
 \connect ops_db
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform;

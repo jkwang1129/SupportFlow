@@ -9,6 +9,8 @@ import io.supportflow.billing.internal.TenantPlanClient;
 import io.supportflow.billing.mapper.BillingMapper;
 import io.supportflow.billing.mapper.PlanMapper;
 import io.supportflow.common.id.SnowflakeIdGenerator;
+import io.supportflow.common.billing.UsageBatch;
+import io.supportflow.common.exception.BizException;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,19 +55,21 @@ public class UsageMeterService {
         this.idGenerator = idGenerator;
     }
 
-    /** 上报一条用量（幂等累加；同一天重复上报只是把数字加上去） */
+    /** Deduplication and aggregate mutation commit or roll back together. */
     @Transactional
-    public void report(String tenantCode, LocalDate statDate, long sessions, long messages,
-                       long aiCalls, int seats, BigDecimal storageGb) {
-        if (tenantCode == null || tenantCode.isBlank()) {
-            return;
+    public void report(UsageBatch batch) {
+        if (batch == null) throw new BizException(40001, "缺少用量批次");
+        String fingerprint = batch.fingerprint();
+        if (billingMapper.insertUsageBatch(batch, fingerprint) == null) {
+            if (!fingerprint.equals(billingMapper.usageBatchFingerprint(batch.tenantCode(), batch.batchId()))) {
+                throw new BizException(40901, "同一用量批次的内容发生变化");
+            }
+            return; // known committed batch, including retries after a lost response
         }
-        billingMapper.upsertUsage(idGenerator.nextId(), tenantCode,
-                statDate == null ? LocalDate.now() : statDate,
-                sessions, messages, aiCalls, seats,
-                storageGb == null ? BigDecimal.ZERO : storageGb);
+        billingMapper.upsertUsage(idGenerator.nextId(), batch.tenantCode(), batch.statDate(),
+                batch.sessions(), batch.messages(), batch.aiCalls(), batch.seats(), batch.storageGb());
         log.debug("用量上报 tenant={} date={} sessions={} messages={} aiCalls={}",
-                tenantCode, statDate, sessions, messages, aiCalls);
+                batch.tenantCode(), batch.statDate(), batch.sessions(), batch.messages(), batch.aiCalls());
     }
 
     /**

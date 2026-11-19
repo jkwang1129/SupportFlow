@@ -119,6 +119,12 @@ GRANT SELECT (id, tenant_code, title, status, is_deleted) ON public.kb_document 
 GRANT SELECT ON public.tenant_rls_status TO supportflow_customer_tenant;
 GRANT SELECT, INSERT ON public.schema_upgrade_log TO supportflow_customer_tenant;
 
+DO $$ BEGIN
+ IF to_regclass('public.billing_usage_outbox') IS NOT NULL THEN
+   GRANT SELECT, INSERT, DELETE ON public.billing_usage_outbox TO supportflow_customer_tenant;
+ END IF;
+END $$;
+
 DO $$
 DECLARE
     table_name name;

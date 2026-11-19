@@ -16,7 +16,7 @@
 | PR-3 会话串行 | 本轮已实现且专项/全量验证通过 | `BotBrainService`、`SessionSerialExecutor`；`BotBrainConcurrencyTest`、`SessionSerialExecutorTest` 共 6 项 | 旧代码固定调度最大并发 2；修复后为 1。仅单进程互斥，跨 Worker 顺序仍归 PR-8。A1 完成 |
 | PR-4 消息幂等 | 本轮已实现且真实 PG 验证通过 | `SessionService#appendMessage`、两个 Mapper；`SessionMessagePostgresTest` 7 项 | 原 25P02、回滚计费问题已复现后修复；含关闭竞争、跨租户和软删除键。持久化计量/任务仍在 PR-6/8。A2 完成 |
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
-| PR-6 计费去重 | 部分实现，缺批次幂等 | `BillingMapper.xml#upsertUsage`；`BillingUsageCollector`、`BillingUsageReporter`、网关用量上报 | 日统计唯一键不能去重；内存 drain/重启丢增量亦需明确。稳定批次、事务去重、发送方重试。A4 |
+| PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
 | PR-7 版本化迁移 | 部分实现 | `backend/deploy/db-init`、`scripts/upgrade-runtime-security.py` 已可新建/升级严格角色；`ai/core/schema_guard.py` 仍引用缺失目录/脚本，异常仅警告 | 统一 init/migrate/verify、版本校验、受限账号无 DDL、readiness、旧库数据保留。A5 |
 | PR-8 持久化 Run | 未实现 | `SessionService#scheduleBotReply` 提交后投递内存线程池；`ai/workers/consumer.py` 占位 | Run/Step/Outbox、租约与 fencing、事件幂等、预算、取消、跨 Worker 会话串行。B1 |
 | PR-9 Tool Calling | 未实现通用层 | `ai/agents/brain.py` 固定图；Java 工单/知识 API 为可复用业务能力 | 内部 Registry/Executor、可信主体、Schema、只读和写工具、结果验证；MCP 只做适配。B2 |

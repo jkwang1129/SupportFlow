@@ -6,6 +6,12 @@ from local_env import runtime_environment
 
 
 class RuntimeEnvironmentTest(unittest.TestCase):
+    def test_metering_signing_key_only_reaches_customer_and_billing(self):
+        source = {'SUPPORTFLOW_BILLING_CUSTOMER_SECRET': 'synthetic-metering'}
+        for service in ('gateway','customer','ops','tenant','realtime','user','ai','billing'):
+            filtered = runtime_environment(service+'-service', source)
+            self.assertEqual('SUPPORTFLOW_BILLING_CUSTOMER_SECRET' in filtered, service in ('customer','billing'))
+
     def test_runtime_never_receives_bootstrap_or_foreign_database_credentials(self):
         roles = ('USER','TENANT','CUSTOMER','BILLING','OPS','AI','KB','CUSTOMER_PLATFORM')
         source = {f'SUPPORTFLOW_{r}_DB_PASSWORD':'synthetic-'+r for r in roles}

@@ -24,6 +24,7 @@ def main():
         (ROOT / "backend/deploy/db-init/channel-tenant-lookup.sql").read_text(encoding="utf-8"),
         (ROOT / "backend/deploy/db-init/public-bot-avatar.sql").read_text(encoding="utf-8"),
         (ROOT / "backend/supportflow-customer-service/src/main/resources/schema/customer_db_runtime_security.sql").read_text(encoding="utf-8"),
+        (ROOT / "backend/deploy/db-init/30-usage-batches.sql").read_text(encoding="utf-8"),
         (ROOT / "backend/deploy/db-init/40-runtime-roles.sql").read_text(encoding="utf-8"),
     ])
     subprocess.run(commands, cwd=ROOT, env=environment, input=content, text=True, encoding="utf-8", check=True)
