@@ -23,6 +23,8 @@ if __name__ == '__main__':
                 import re
                 if not re.fullmatch(r'supportflow-acceptance-[0-9a-f]{6}',project):
                     raise RuntimeError('Invalid disposable project identity')
+                from security.java_readiness import verify_java_readiness
+                verify_java_readiness(project)
                 psql = ['docker','exec',project+'-postgres-1','psql','-U','supportflow','-d','customer_db','-XqAt','-c']
                 observed = subprocess.check_output([*psql,"SELECT DISTINCT usename FROM pg_stat_activity WHERE backend_type='client backend' AND pid<>pg_backend_pid()"],text=True)
                 identities = set(observed.splitlines())

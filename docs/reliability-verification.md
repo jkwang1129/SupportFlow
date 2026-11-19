@@ -152,3 +152,16 @@ python scripts/report-rag-contract.py --junit .local/implementation/final-python
 部署步骤与恢复见 backend/deploy/migrations/README.md。新建六库后也应通过升级入口登记现有增量。多库不构成一个原子事务：前库已成功、后库失败时保留前库结果，停止业务并修复后重跑，从待执行版本继续；不要删除历史、改 checksum 或恢复宽松 RLS 回退。无生产吞吐/耗时改进声明。
 
 范围：当前登记的是 customer_db/billing_db 的五个现有增量单元；verify 核对历史/checksum，不代表全量 schema/index/RLS 漂移检查。其他四库基线采纳、统一 init、Java Readiness 仍待下一子批次，PR-7 尚未整体关闭。
+
+## PR-7 子批次 3：五个 Java 数据服务 Readiness
+
+基线 7c6a7ac。修改 common 的只读 SchemaReadiness、JDBC 后置自动配置与 Servlet gate，五个数据服务的最小 schema 契约和 Actuator 分组；TenantSchemaGuard 委托同一检查器，移除重复 SchemaMapper 和不存在的迁移脚本提示。Gateway/Realtime 无本地 DB，不注册 schema gate。设计、边界与回滚见 ADR-0002 及运行指南。
+
+实际验证：
+
+- `mvn -B -f backend/pom.xml clean verify`：九模块成功，新增 SchemaReadinessTest **7 项通过**；覆盖全部登记列、数据库异常脱敏、只读/权限感知/查询 timeout、未就绪不进入处理器、探针可达、就绪正常放行、无 DataSource 不安装配置。普通 Maven 跳过的 PG 集成用例不计为通过。输出 `.local/implementation/pr7-java-ready-clean-build.log`。
+- `python scripts/test-security-flow.py`：**新库/历史库两套完整服务通过**，每套五个数据服务各注入缺列、缺表和撤销 SELECT（保留 INSERT）三类故障，共 **30 个故障场景执行**。每次核对 Readiness=503、Liveness=200、业务 gate=503；修复后探针恢复 200、业务 gate 重新放行，无需重启。最终输出 `pr7-java-ready-final-services.log`。
+- 原网关/内部鉴权、企业开通审核、平台权限、私有媒体、双租户知识入库查询、访客 WebSocket/机器人及签名计费链路保持通过；实际五个 Java 数据服务均使用受限角色，审计回执匹配。两套测试容器/数据卷/网络已清理。
+- 初次单元测试受本地 JDK 25 无法动态附加 Mockito agent 影响，复用仓库现有 mock-maker-subclass 配置后重跑；这不是产品缺陷复现。新旧库首次故障回归通过后，因为移除重复检查器和补充恢复断言，最终对代码进行了 clean 构建及完整重跑。
+
+本批只读检查最小表/列与 schema USAGE/列 SELECT 权限，不执行 DDL、不读取业务行；每请求查询，不声称性能改善。没有覆盖完整类型/索引/RLS 漂移、所有网络故障或所有下游依赖。PR-7 尚未关闭，下一批为其他四库基线采纳，然后统一 init 与结构核验。无需数据迁移；回退时同步回退公共配置/契约和探针部署设置，不能扩大数据库权限。

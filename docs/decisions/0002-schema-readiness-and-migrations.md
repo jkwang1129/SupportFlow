@@ -22,3 +22,11 @@
 ## 后续子批次 2
 
 customer_db/billing_db 增量现已进入 manifest + checksum/事务/锁 Runner，接入原升级入口和实际服务验收，详见 `backend/deploy/migrations/README.md`。这是后续增量，不改变上述只读 Readiness 子批次的验证范围；Java、其他四库基线及全量 schema 漂移检查仍待后续实施。
+
+## 后续子批次 3：Java 就绪闸门
+
+复用现有 Actuator，公共 JDBC 后置自动配置为五个数据服务注册 schema HealthIndicator 与 Servlet gate；不为无数据库的 Gateway/Realtime 增加虚假 schema 检查。使用每服务最小表/列契约，查询 PG catalog 并检查 schema USAGE 和列 SELECT 权限。表在 information_schema 可见并不能证明可读，因此不将 INSERT/UPDATE 当读取权限。TenantSchemaGuard 保留启动诊断，但委托同一检查器，删除重复的 SchemaMapper 和失效的根目录/迁移脚本提示。
+
+Liveness 不依赖数据库；Readiness 与业务 gate 均不缓存，故障修复后自动恢复。查询设置 2 秒 timeout，连接池 timeout 继承现有配置；该值不是所有网络故障下的绝对端到端上限。未测量元数据查询的性能影响，不声称全量 schema/index/RLS 漂移检测或所有下游依赖检查。故障响应只提供状态和通用提示，不含对象名/DSN/SQL/密钥。
+
+无需数据库 DDL。需要回退时同步回退公共自动配置、服务契约、探针分组和流量闸门，并使用前一版兼容的探针配置；会恢复结构错误时仍接流量的风险，不能提高数据库身份权限回退。PR-7 尚缺其他四库基线、统一 init 与完整漂移核验。

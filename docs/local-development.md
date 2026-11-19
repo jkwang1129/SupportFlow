@@ -143,3 +143,11 @@ python scripts/upgrade-runtime-security.py
 `python scripts/upgrade-runtime-security.py` 现通过版本化 Runner 安装已登记的客服/计费增量，再独立配置运行角色并验证。结构历史与 checksum 位于各库 supportflow_schema_history；运行账号只能读取本库历史。仅检查：`python scripts/db-migrate.py verify`。该命令不会执行 DDL。已应用脚本变更、历史缺口或并发迁移会拒绝继续，不能删除历史绕过。
 
 清单、事务/多库失败语义和未覆盖项见 [迁移说明](../backend/deploy/migrations/README.md)。当前尚未完成其他四库基线采纳、统一 init、全量结构漂移检测和 Java Readiness，PR-7 仍未关闭。
+
+## Java 存活与就绪
+
+五个数据库服务（User/Tenant/Customer/Billing/Ops，9091～9095）使用现有 Actuator：`/actuator/health/liveness` 只检查进程存活；`/actuator/health/readiness` 合并应用就绪状态与本服务的 `schema/readiness.properties` 最小结构契约。缺表、缺列、缺少读取权限或数据库连接/查询异常时返回 503；`/api/*` 同时返回通用 503 和 Retry-After，不进入业务处理器。修复后下次请求重新检查，无需重启。
+
+检查只读 PG 元数据，不读取租户业务行，不执行 DDL。探测使用业务连接池及受限身份；语句 timeout 配置 2 秒，连接池借用 timeout 仍由各服务配置控制。每个请求都会检查，尚未测量负载下的开销；该实现不是全量类型、索引、版本或 RLS 漂移检测。原有启动身份防护保留，启动失败时不能承诺探针已经开放。Gateway/Realtime 没有本地数据库，未安装这道 schema gate，也不代表下游依赖已就绪。
+
+`python scripts/test-security-flow.py` 在新库和历史库两套完整服务中，分别对五个数据库注入缺列、缺表和撤销 SELECT（保留 INSERT）故障，检查存活、就绪、业务拒绝与修复后恢复；仅操作有严格命名校验的隔离验收项目。不要在真实数据库上手动执行故障注入。

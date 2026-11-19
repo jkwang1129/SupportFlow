@@ -56,6 +56,16 @@ supportflow:
     frontend-url: ${SUPPORTFLOW_MEMBER_FRONTEND_URL:http://localhost:5173}
 
 management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          include: readinessState,schema
+        liveness:
+          include: livenessState
   endpoints:
     web:
       exposure:
