@@ -1,6 +1,6 @@
-# 已登记的增量迁移
+# 版本化迁移与基线采纳
 
-`manifest.json` 是目前 customer_db/billing_db 增量的版本清单。SQL 继续引用仓库中已有的唯一执行文件，不复制第二套内容。首次升级会执行可重复的现有增量并登记版本；后续校验 checksum，已应用 SQL 不再重复执行。
+`manifest.json` 登记 customer_db/billing_db 增量，以及 ai_db/user_db/tenant_db/ops_db 的既有结构基线。SQL 继续引用仓库中已有的唯一执行文件，不复制第二套内容。首次升级会执行可重复的现有增量并登记版本；后续校验 checksum，已应用 SQL 不再重复执行。
 
 ```powershell
 python -m pip install "psycopg[binary]>=3.1,<4"
@@ -26,4 +26,14 @@ python scripts/db-migrate.py verify --database customer_db
 
 ## 尚未覆盖
 
-当前增量仅登记 customer_db/billing_db 的现有五个数据库迁移单元。其他四库基线版本采纳、全量类型/索引/RLS 漂移检测、统一 init 命令、Java Readiness 仍属于 PR-7 后续子批次；不能据此宣布整个六库迁移与生产部署已经验收完成。
+当前六库均有版本计划：客服四条增量、计费一条增量，其余四库各一条基线采纳。AI 与五个 Java 数据服务已有只读 Readiness。全量持续类型/索引/RLS 漂移检测与统一 init 命令仍属于 PR-7 后续子批次；不能据此宣布整个六库迁移与生产部署已经验收完成。
+
+## 四库基线采纳
+
+AI/User/Tenant/Ops 的 `001` 为 baseline 操作，不执行建表 SQL。JSON 契约位于 baselines/，由隔离 PostgreSQL 17 实际运行原 `db-init.sql` 后读取 PG catalog 生成，附源文件路径与 SHA256。首次采纳要求登记的表、列类型、非空约束、索引定义/有效状态与表约束匹配，额外对象允许存在；缺失或不一致拒绝登记。通过后只写 checksum 历史回执，保留既有数据，不重放非幂等 CREATE TABLE。运行角色不能执行采纳，也不能修改回执。
+
+契约属于不可改写的历史版本。`--write-new-contracts` 只用于首次生成缺失文件，已存在即失败，不能覆盖契约来绕过错误。日常验收运行 `python scripts/test-schema-baselines.py`；该脚本启动独立 PG，检查 35 张表基线和原始种子表行数保留，注入缺表/缺列/类型/索引不兼容，检查失败不写历史。Runner 通用事务、checksum、锁、权限与 CLI 用例见 `python scripts/test-versioned-migrations.py`。
+
+这是首次采纳时的兼容检查。已经应用的 baseline 不会在每次 migrate/verify 重放结构检查；后续 verify 仍只核历史/checksum。现有 AI/Java Readiness 只核最小结构/读取权限，均不能替代后续完整漂移检查。基线不声称 RLS/权限正确，原受限角色和严格隔离验收继续独立运行。
+
+回退需停业务并使用已测试的版本；本批扩展了历史计划，退到仅认识两库的工具后不可用于核对四库。保留四库历史，不能删除行或改 checksum 来退版本。业务结构不因采纳发生改变；数据库内容恢复始终使用独立验证的备份，不自动清库。

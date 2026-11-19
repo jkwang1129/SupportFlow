@@ -1,0 +1,533 @@
+{
+  "format": 1,
+  "database": "user_db",
+  "tables": {
+    "login_log": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "user_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "login_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "ip": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "device": {
+          "type": "character varying(128)",
+          "not_null": false
+        },
+        "browser": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "region": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "result": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "login_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "idx_login_log_tenant_user_time": {
+          "definition": "CREATE INDEX idx_login_log_tenant_user_time ON public.login_log USING btree (tenant_code, user_id, login_time)",
+          "valid": true
+        },
+        "login_log_pkey": {
+          "definition": "CREATE UNIQUE INDEX login_log_pkey ON public.login_log USING btree (id)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_login_log_login_type": "CHECK ((login_type = ANY (ARRAY[1, 2, 3])))",
+        "ck_login_log_result": "CHECK ((result = ANY (ARRAY[1, 2, 3])))",
+        "login_log_pkey": "PRIMARY KEY (id)"
+      }
+    },
+    "member_invite": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "invite_code": {
+          "type": "character varying(32)",
+          "not_null": true
+        },
+        "inviter_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "role_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "invitee_phone": {
+          "type": "character varying(20)",
+          "not_null": false
+        },
+        "invitee_email": {
+          "type": "character varying(128)",
+          "not_null": false
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "used_by": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "used_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "expire_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "idx_member_invite_tenant_status": {
+          "definition": "CREATE INDEX idx_member_invite_tenant_status ON public.member_invite USING btree (tenant_code, status)",
+          "valid": true
+        },
+        "member_invite_pkey": {
+          "definition": "CREATE UNIQUE INDEX member_invite_pkey ON public.member_invite USING btree (id)",
+          "valid": true
+        },
+        "uk_member_invite_code": {
+          "definition": "CREATE UNIQUE INDEX uk_member_invite_code ON public.member_invite USING btree (tenant_code, invite_code)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_member_invite_status": "CHECK ((status = ANY (ARRAY[1, 2, 3])))",
+        "member_invite_pkey": "PRIMARY KEY (id)",
+        "uk_member_invite_code": "UNIQUE (tenant_code, invite_code)"
+      }
+    },
+    "sys_permission": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "perm_code": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "perm_name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "perm_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "parent_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "sort_no": {
+          "type": "integer",
+          "not_null": false
+        },
+        "is_enabled": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "sys_permission_pkey": {
+          "definition": "CREATE UNIQUE INDEX sys_permission_pkey ON public.sys_permission USING btree (id)",
+          "valid": true
+        },
+        "uk_perm_code": {
+          "definition": "CREATE UNIQUE INDEX uk_perm_code ON public.sys_permission USING btree (perm_code)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_sys_permission_perm_type": "CHECK ((perm_type = ANY (ARRAY[1, 2, 3])))",
+        "sys_permission_pkey": "PRIMARY KEY (id)",
+        "uk_perm_code": "UNIQUE (perm_code)"
+      }
+    },
+    "sys_role": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "role_code": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "role_name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "role_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "is_fixed": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "is_enabled": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "remark": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "sys_role_pkey": {
+          "definition": "CREATE UNIQUE INDEX sys_role_pkey ON public.sys_role USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_role_code": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_role_code ON public.sys_role USING btree (tenant_code, role_code)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_sys_role_role_type": "CHECK ((role_type = ANY (ARRAY[1, 2])))",
+        "sys_role_pkey": "PRIMARY KEY (id)",
+        "uk_tenant_role_code": "UNIQUE (tenant_code, role_code)"
+      }
+    },
+    "sys_role_permission": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "role_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "perm_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "idx_sys_role_permission_perm_id": {
+          "definition": "CREATE INDEX idx_sys_role_permission_perm_id ON public.sys_role_permission USING btree (perm_id)",
+          "valid": true
+        },
+        "sys_role_permission_pkey": {
+          "definition": "CREATE UNIQUE INDEX sys_role_permission_pkey ON public.sys_role_permission USING btree (id)",
+          "valid": true
+        },
+        "uk_role_perm": {
+          "definition": "CREATE UNIQUE INDEX uk_role_perm ON public.sys_role_permission USING btree (role_id, perm_id)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "sys_role_permission_pkey": "PRIMARY KEY (id)",
+        "uk_role_perm": "UNIQUE (role_id, perm_id)"
+      }
+    },
+    "sys_user": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "user_no": {
+          "type": "character varying(32)",
+          "not_null": true
+        },
+        "name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "phone": {
+          "type": "character varying(20)",
+          "not_null": false
+        },
+        "email": {
+          "type": "character varying(128)",
+          "not_null": false
+        },
+        "password": {
+          "type": "character varying(128)",
+          "not_null": false
+        },
+        "avatar": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "user_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "last_login_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "idx_sys_user_tenant_status": {
+          "definition": "CREATE INDEX idx_sys_user_tenant_status ON public.sys_user USING btree (tenant_code, status)",
+          "valid": true
+        },
+        "sys_user_pkey": {
+          "definition": "CREATE UNIQUE INDEX sys_user_pkey ON public.sys_user USING btree (id)",
+          "valid": true
+        },
+        "uk_user_no": {
+          "definition": "CREATE UNIQUE INDEX uk_user_no ON public.sys_user USING btree (user_no)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_sys_user_status": "CHECK ((status = ANY (ARRAY[1, 2, 3])))",
+        "ck_sys_user_user_type": "CHECK ((user_type = ANY (ARRAY[1, 2])))",
+        "sys_user_pkey": "PRIMARY KEY (id)",
+        "uk_user_no": "UNIQUE (user_no)"
+      }
+    },
+    "sys_user_role": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "user_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "role_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "idx_sys_user_role_role_id": {
+          "definition": "CREATE INDEX idx_sys_user_role_role_id ON public.sys_user_role USING btree (role_id)",
+          "valid": true
+        },
+        "sys_user_role_pkey": {
+          "definition": "CREATE UNIQUE INDEX sys_user_role_pkey ON public.sys_user_role USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_user_role": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_user_role ON public.sys_user_role USING btree (tenant_code, user_id, role_id)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "sys_user_role_pkey": "PRIMARY KEY (id)",
+        "uk_tenant_user_role": "UNIQUE (tenant_code, user_id, role_id)"
+      }
+    },
+    "tenant_member": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "user_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "join_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "idx_tenant_member_user_id": {
+          "definition": "CREATE INDEX idx_tenant_member_user_id ON public.tenant_member USING btree (user_id)",
+          "valid": true
+        },
+        "tenant_member_pkey": {
+          "definition": "CREATE UNIQUE INDEX tenant_member_pkey ON public.tenant_member USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_user": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_user ON public.tenant_member USING btree (tenant_code, user_id)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_tenant_member_status": "CHECK ((status = ANY (ARRAY[1, 2])))",
+        "tenant_member_pkey": "PRIMARY KEY (id)",
+        "uk_tenant_user": "UNIQUE (tenant_code, user_id)"
+      }
+    }
+  },
+  "source": {
+    "path": "backend/deploy/db-init/db-init.sql",
+    "sha256": "4c67730d6dd66c697336d3dbe687acaa2adb29e5dcf206a4a0f0a5d29c4cd498"
+  }
+}

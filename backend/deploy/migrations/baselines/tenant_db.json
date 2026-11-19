@@ -1,0 +1,624 @@
+{
+  "format": 1,
+  "database": "tenant_db",
+  "tables": {
+    "enterprise": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "enterprise_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": false
+        },
+        "company_name": {
+          "type": "character varying(128)",
+          "not_null": true
+        },
+        "industry": {
+          "type": "character varying(32)",
+          "not_null": false
+        },
+        "scale": {
+          "type": "character varying(32)",
+          "not_null": false
+        },
+        "license_no": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "register_address": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "legal_person": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "license_file_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "contact_name": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "contact_phone": {
+          "type": "character varying(20)",
+          "not_null": false
+        },
+        "contact_email": {
+          "type": "character varying(128)",
+          "not_null": false
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "enterprise_pkey": {
+          "definition": "CREATE UNIQUE INDEX enterprise_pkey ON public.enterprise USING btree (id)",
+          "valid": true
+        },
+        "idx_enterprise_status_create_time": {
+          "definition": "CREATE INDEX idx_enterprise_status_create_time ON public.enterprise USING btree (status, create_time)",
+          "valid": true
+        },
+        "uk_enterprise_code": {
+          "definition": "CREATE UNIQUE INDEX uk_enterprise_code ON public.enterprise USING btree (enterprise_code)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_enterprise_code_len": "CHECK ((char_length((enterprise_code)::text) = 16))",
+        "ck_enterprise_status": "CHECK ((status = ANY (ARRAY[1, 2, 3, 4])))",
+        "enterprise_pkey": "PRIMARY KEY (id)",
+        "uk_enterprise_code": "UNIQUE (enterprise_code)"
+      }
+    },
+    "enterprise_review": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "enterprise_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": false
+        },
+        "apply_no": {
+          "type": "character varying(32)",
+          "not_null": true
+        },
+        "version_no": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "applicant_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "company_name": {
+          "type": "character varying(128)",
+          "not_null": true
+        },
+        "industry": {
+          "type": "character varying(32)",
+          "not_null": false
+        },
+        "scale": {
+          "type": "character varying(32)",
+          "not_null": false
+        },
+        "contact_name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "contact_phone": {
+          "type": "character varying(20)",
+          "not_null": false
+        },
+        "contact_email": {
+          "type": "character varying(128)",
+          "not_null": false
+        },
+        "license_no": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "register_address": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "legal_person": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "license_file_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "reviewer_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "review_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "reject_reason": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "submit_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "enterprise_review_pkey": {
+          "definition": "CREATE UNIQUE INDEX enterprise_review_pkey ON public.enterprise_review USING btree (id)",
+          "valid": true
+        },
+        "idx_enterprise_review_tenant_status": {
+          "definition": "CREATE INDEX idx_enterprise_review_tenant_status ON public.enterprise_review USING btree (tenant_code, status)",
+          "valid": true
+        },
+        "uk_enterprise_review_enterprise_version": {
+          "definition": "CREATE UNIQUE INDEX uk_enterprise_review_enterprise_version ON public.enterprise_review USING btree (enterprise_id, version_no)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_enterprise_review_status": "CHECK ((status = ANY (ARRAY[1, 2, 3])))",
+        "enterprise_review_pkey": "PRIMARY KEY (id)",
+        "uk_enterprise_review_enterprise_version": "UNIQUE (enterprise_id, version_no)"
+      }
+    },
+    "tenant": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "enterprise_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "plan_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "expire_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "isolation_mode": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "schema_name": {
+          "type": "character varying(63)",
+          "not_null": false
+        },
+        "db_version": {
+          "type": "integer",
+          "not_null": true
+        },
+        "upgraded_at": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        }
+      },
+      "indexes": {
+        "idx_tenant_enterprise": {
+          "definition": "CREATE INDEX idx_tenant_enterprise ON public.tenant USING btree (enterprise_id)",
+          "valid": true
+        },
+        "idx_tenant_status_create_time": {
+          "definition": "CREATE INDEX idx_tenant_status_create_time ON public.tenant USING btree (status, create_time)",
+          "valid": true
+        },
+        "tenant_pkey": {
+          "definition": "CREATE UNIQUE INDEX tenant_pkey ON public.tenant USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_code": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_code ON public.tenant USING btree (tenant_code)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_tenant_code_len": "CHECK ((char_length((tenant_code)::text) = 16))",
+        "ck_tenant_isolation_mode": "CHECK ((isolation_mode = ANY (ARRAY[1, 2, 3])))",
+        "ck_tenant_status": "CHECK ((status = ANY (ARRAY[1, 2, 3, 4])))",
+        "tenant_pkey": "PRIMARY KEY (id)",
+        "uk_tenant_code": "UNIQUE (tenant_code)"
+      }
+    },
+    "tenant_quota": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "qps_limit": {
+          "type": "integer",
+          "not_null": true
+        },
+        "daily_request_limit": {
+          "type": "integer",
+          "not_null": true
+        },
+        "daily_session_limit": {
+          "type": "integer",
+          "not_null": true
+        },
+        "ai_daily_limit": {
+          "type": "integer",
+          "not_null": true
+        },
+        "enabled": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "remark": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "tenant_quota_pkey": {
+          "definition": "CREATE UNIQUE INDEX tenant_quota_pkey ON public.tenant_quota USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_quota": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_quota ON public.tenant_quota USING btree (tenant_code)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_tenant_quota_positive": "CHECK (((qps_limit >= 0) AND (daily_request_limit >= 0) AND (daily_session_limit >= 0) AND (ai_daily_limit >= 0)))",
+        "tenant_quota_pkey": "PRIMARY KEY (id)",
+        "uk_tenant_quota": "UNIQUE (tenant_code)"
+      }
+    },
+    "tenant_schema_upgrade": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "target_schema": {
+          "type": "character varying(63)",
+          "not_null": true
+        },
+        "from_version": {
+          "type": "integer",
+          "not_null": true
+        },
+        "to_version": {
+          "type": "integer",
+          "not_null": true
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "script_count": {
+          "type": "integer",
+          "not_null": true
+        },
+        "applied_scripts": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "message": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "duration_ms": {
+          "type": "integer",
+          "not_null": true
+        },
+        "operator_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "operator_name": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "started_at": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "finished_at": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "idx_tenant_schema_upgrade_tenant": {
+          "definition": "CREATE INDEX idx_tenant_schema_upgrade_tenant ON public.tenant_schema_upgrade USING btree (tenant_code, started_at DESC)",
+          "valid": true
+        },
+        "tenant_schema_upgrade_pkey": {
+          "definition": "CREATE UNIQUE INDEX tenant_schema_upgrade_pkey ON public.tenant_schema_upgrade USING btree (id)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_tenant_schema_upgrade_status": "CHECK ((status = ANY (ARRAY[1, 2, 3])))",
+        "tenant_schema_upgrade_pkey": "PRIMARY KEY (id)"
+      }
+    },
+    "tenant_security_event": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "event_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "detail": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "request_uri": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "request_method": {
+          "type": "character varying(8)",
+          "not_null": false
+        },
+        "client_ip": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "token_tenant": {
+          "type": "character varying(16)",
+          "not_null": false
+        },
+        "operator_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "operator_name": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "event_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "handle_status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "handle_remark": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "handler_name": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "handle_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        }
+      },
+      "indexes": {
+        "idx_tenant_security_event_handle": {
+          "definition": "CREATE INDEX idx_tenant_security_event_handle ON public.tenant_security_event USING btree (handle_status, event_time DESC)",
+          "valid": true
+        },
+        "idx_tenant_security_event_tenant_type": {
+          "definition": "CREATE INDEX idx_tenant_security_event_tenant_type ON public.tenant_security_event USING btree (tenant_code, event_type, event_time DESC)",
+          "valid": true
+        },
+        "idx_tenant_security_event_time": {
+          "definition": "CREATE INDEX idx_tenant_security_event_time ON public.tenant_security_event USING btree (event_time DESC)",
+          "valid": true
+        },
+        "tenant_security_event_pkey": {
+          "definition": "CREATE UNIQUE INDEX tenant_security_event_pkey ON public.tenant_security_event USING btree (id)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_tenant_security_event_handle": "CHECK ((handle_status = ANY (ARRAY[1, 2, 3])))",
+        "ck_tenant_security_event_type": "CHECK ((event_type = ANY (ARRAY[1, 2, 3, 4])))",
+        "tenant_security_event_pkey": "PRIMARY KEY (id)"
+      }
+    },
+    "tenant_usage_daily": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "stat_date": {
+          "type": "date",
+          "not_null": true
+        },
+        "request_count": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "rejected_count": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "session_count": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "ai_call_count": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "idx_tenant_usage_daily_date": {
+          "definition": "CREATE INDEX idx_tenant_usage_daily_date ON public.tenant_usage_daily USING btree (stat_date DESC, tenant_code)",
+          "valid": true
+        },
+        "tenant_usage_daily_pkey": {
+          "definition": "CREATE UNIQUE INDEX tenant_usage_daily_pkey ON public.tenant_usage_daily USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_usage_daily": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_usage_daily ON public.tenant_usage_daily USING btree (tenant_code, stat_date)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "tenant_usage_daily_pkey": "PRIMARY KEY (id)",
+        "uk_tenant_usage_daily": "UNIQUE (tenant_code, stat_date)"
+      }
+    }
+  },
+  "source": {
+    "path": "backend/deploy/db-init/db-init.sql",
+    "sha256": "4c67730d6dd66c697336d3dbe687acaa2adb29e5dcf206a4a0f0a5d29c4cd498"
+  }
+}

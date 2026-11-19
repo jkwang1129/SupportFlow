@@ -39,6 +39,12 @@ if __name__ == '__main__':
                 assert versions == ['4','t','f'], versions
                 billing_versions = subprocess.check_output([*billing_psql,"SELECT count(*),has_table_privilege('supportflow_billing','supportflow_schema_history','UPDATE') FROM supportflow_schema_history"],text=True).strip().split('|')
                 assert billing_versions == ['1','f'], billing_versions
+                for database in ('ai','user','tenant','ops'):
+                    command = ['docker','exec',project+'-postgres-1','psql','-U','supportflow','-d',database+'_db','-XqAt','-c']
+                    history = subprocess.check_output([*command,
+                        f"SELECT count(*),bool_and(length(checksum)=64),has_table_privilege('supportflow_{database}','supportflow_schema_history','SELECT'),has_table_privilege('supportflow_{database}','supportflow_schema_history','INSERT'),has_table_privilege('supportflow_{database}','supportflow_schema_history','UPDATE'),has_table_privilege('supportflow_{database}','supportflow_schema_history','DELETE') FROM supportflow_schema_history"],text=True).strip().split('|')
+                    assert history == ['1','t','t','f','f','f'], (database,history)
+                print('Six database migration histories verified; baseline history receipts are read-only for runtime roles', flush=True)
                 print('Observed five restricted Java database identities; mandatory platform audit receipts matched', flush=True)
                 print(('LEGACY UPGRADE' if scenario else 'FRESH DEFAULT') + ': full security flow passed', flush=True)
             finally:

@@ -37,6 +37,8 @@ jobs:
         run: python scripts/test-usage-batches.py
       - name: Verify versioned SQL migrations and rollback
         run: python scripts/test-versioned-migrations.py
+      - name: Verify four database baseline adoption and incompatibility rejection
+        run: python scripts/test-schema-baselines.py
       - name: Verify AI service authorization
         working-directory: ai-service
         run: python -m pytest -q --junitxml=../.local/verification/ai-tests.xml

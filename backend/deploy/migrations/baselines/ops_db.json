@@ -1,0 +1,947 @@
+{
+  "format": 1,
+  "database": "ops_db",
+  "tables": {
+    "announcement": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "title": {
+          "type": "character varying(128)",
+          "not_null": true
+        },
+        "content": {
+          "type": "text",
+          "not_null": false
+        },
+        "announce_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "publish_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "announcement_pkey": {
+          "definition": "CREATE UNIQUE INDEX announcement_pkey ON public.announcement USING btree (id)",
+          "valid": true
+        },
+        "idx_announcement_status_time": {
+          "definition": "CREATE INDEX idx_announcement_status_time ON public.announcement USING btree (status, publish_time)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "announcement_pkey": "PRIMARY KEY (id)",
+        "ck_announcement_announce_type": "CHECK ((announce_type = ANY (ARRAY[1, 2, 3])))",
+        "ck_announcement_status": "CHECK ((status = ANY (ARRAY[1, 2, 3])))"
+      }
+    },
+    "api_key": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "key_name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "api_key": {
+          "type": "character varying(128)",
+          "not_null": true
+        },
+        "permissions": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "last_used_at": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "expire_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "key_prefix": {
+          "type": "character varying(24)",
+          "not_null": false
+        },
+        "call_count": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "remark": {
+          "type": "character varying(255)",
+          "not_null": false
+        }
+      },
+      "indexes": {
+        "api_key_pkey": {
+          "definition": "CREATE UNIQUE INDEX api_key_pkey ON public.api_key USING btree (id)",
+          "valid": true
+        },
+        "idx_api_key_tenant_status": {
+          "definition": "CREATE INDEX idx_api_key_tenant_status ON public.api_key USING btree (tenant_code, status)",
+          "valid": true
+        },
+        "uk_api_key_value": {
+          "definition": "CREATE UNIQUE INDEX uk_api_key_value ON public.api_key USING btree (tenant_code, api_key)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "api_key_pkey": "PRIMARY KEY (id)",
+        "ck_api_key_status": "CHECK ((status = ANY (ARRAY[1, 2])))",
+        "uk_api_key_value": "UNIQUE (tenant_code, api_key)"
+      }
+    },
+    "audit_log": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "operator_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "module": {
+          "type": "character varying(32)",
+          "not_null": true
+        },
+        "action": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "target_type": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "target_id": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "result": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "detail": {
+          "type": "character varying(1024)",
+          "not_null": false
+        },
+        "ip": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "request_id": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "audit_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "operator_name": {
+          "type": "character varying(64)",
+          "not_null": false
+        }
+      },
+      "indexes": {
+        "audit_log_pkey": {
+          "definition": "CREATE UNIQUE INDEX audit_log_pkey ON public.audit_log USING btree (id)",
+          "valid": true
+        },
+        "idx_audit_log_module_time": {
+          "definition": "CREATE INDEX idx_audit_log_module_time ON public.audit_log USING btree (module, audit_time DESC)",
+          "valid": true
+        },
+        "idx_audit_log_operator_time": {
+          "definition": "CREATE INDEX idx_audit_log_operator_time ON public.audit_log USING btree (operator_id, audit_time)",
+          "valid": true
+        },
+        "idx_audit_log_result_time": {
+          "definition": "CREATE INDEX idx_audit_log_result_time ON public.audit_log USING btree (result, audit_time DESC)",
+          "valid": true
+        },
+        "idx_audit_log_tenant_time": {
+          "definition": "CREATE INDEX idx_audit_log_tenant_time ON public.audit_log USING btree (tenant_code, audit_time)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "audit_log_pkey": "PRIMARY KEY (id)",
+        "ck_audit_log_result": "CHECK ((result = ANY (ARRAY[1, 2])))"
+      }
+    },
+    "customer_success": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "health_score": {
+          "type": "smallint",
+          "not_null": false
+        },
+        "renew_risk": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "expand_opportunity": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "cs_owner": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "last_visit_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "next_visit_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "remark": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "cs_owner_name": {
+          "type": "character varying(64)",
+          "not_null": false
+        }
+      },
+      "indexes": {
+        "customer_success_pkey": {
+          "definition": "CREATE UNIQUE INDEX customer_success_pkey ON public.customer_success USING btree (id)",
+          "valid": true
+        },
+        "uk_customer_success_tenant": {
+          "definition": "CREATE UNIQUE INDEX uk_customer_success_tenant ON public.customer_success USING btree (tenant_code)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_customer_success_expand": "CHECK ((expand_opportunity = ANY (ARRAY[1, 2])))",
+        "ck_customer_success_health": "CHECK (((health_score IS NULL) OR ((health_score >= 0) AND (health_score <= 100))))",
+        "ck_customer_success_risk": "CHECK ((renew_risk = ANY (ARRAY[1, 2, 3])))",
+        "customer_success_pkey": "PRIMARY KEY (id)",
+        "uk_customer_success_tenant": "UNIQUE (tenant_code)"
+      }
+    },
+    "customer_success_task": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "company_name": {
+          "type": "character varying(128)",
+          "not_null": false
+        },
+        "task_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "title": {
+          "type": "character varying(128)",
+          "not_null": true
+        },
+        "owner_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "owner_name": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "due_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "result": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "finish_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "customer_success_task_pkey": {
+          "definition": "CREATE UNIQUE INDEX customer_success_task_pkey ON public.customer_success_task USING btree (id)",
+          "valid": true
+        },
+        "idx_cs_task_status_due": {
+          "definition": "CREATE INDEX idx_cs_task_status_due ON public.customer_success_task USING btree (status, due_time DESC)",
+          "valid": true
+        },
+        "idx_cs_task_tenant": {
+          "definition": "CREATE INDEX idx_cs_task_tenant ON public.customer_success_task USING btree (tenant_code, status)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_cs_task_status": "CHECK ((status = ANY (ARRAY[1, 2, 3])))",
+        "ck_cs_task_type": "CHECK ((task_type = ANY (ARRAY[1, 2, 3, 4])))",
+        "customer_success_task_pkey": "PRIMARY KEY (id)"
+      }
+    },
+    "data_export": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "export_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "scope_json": {
+          "type": "json",
+          "not_null": false
+        },
+        "file_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "requester_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "approver_id": {
+          "type": "bigint",
+          "not_null": false
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "reject_reason": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "request_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "approve_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "export_rows": {
+          "type": "integer",
+          "not_null": false
+        },
+        "export_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        }
+      },
+      "indexes": {
+        "data_export_pkey": {
+          "definition": "CREATE UNIQUE INDEX data_export_pkey ON public.data_export USING btree (id)",
+          "valid": true
+        },
+        "idx_data_export_status_time": {
+          "definition": "CREATE INDEX idx_data_export_status_time ON public.data_export USING btree (status, request_time DESC)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_data_export_status": "CHECK ((status = ANY (ARRAY[1, 2, 3])))",
+        "ck_data_export_type": "CHECK ((export_type = ANY (ARRAY[1, 2, 3, 4])))",
+        "data_export_pkey": "PRIMARY KEY (id)"
+      }
+    },
+    "observability_alert_event": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "rule_id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "rule_name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "metric": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "level": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": false
+        },
+        "metric_value": {
+          "type": "numeric(14,4)",
+          "not_null": true
+        },
+        "threshold": {
+          "type": "numeric(14,4)",
+          "not_null": true
+        },
+        "window_days": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "stat_date": {
+          "type": "date",
+          "not_null": true
+        },
+        "detail": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "handle_status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "handle_remark": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "handler_name": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "handle_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "notified": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "event_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "idx_observability_alert_event_status": {
+          "definition": "CREATE INDEX idx_observability_alert_event_status ON public.observability_alert_event USING btree (handle_status, event_time DESC)",
+          "valid": true
+        },
+        "observability_alert_event_pkey": {
+          "definition": "CREATE UNIQUE INDEX observability_alert_event_pkey ON public.observability_alert_event USING btree (id)",
+          "valid": true
+        },
+        "uk_observability_alert_event_daily": {
+          "definition": "CREATE UNIQUE INDEX uk_observability_alert_event_daily ON public.observability_alert_event USING btree (rule_id, COALESCE(tenant_code, ''::character varying), stat_date)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_observability_alert_event_level": "CHECK (((level >= 1) AND (level <= 3)))",
+        "ck_observability_alert_event_status": "CHECK ((handle_status = ANY (ARRAY[1, 2, 3])))",
+        "observability_alert_event_pkey": "PRIMARY KEY (id)"
+      }
+    },
+    "observability_alert_rule": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "rule_name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "metric": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "window_days": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "compare_op": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "threshold": {
+          "type": "numeric(14,4)",
+          "not_null": true
+        },
+        "level": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "scope": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "notify_tenant": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "is_enabled": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "remark": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "observability_alert_rule_pkey": {
+          "definition": "CREATE UNIQUE INDEX observability_alert_rule_pkey ON public.observability_alert_rule USING btree (id)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_observability_alert_rule_level": "CHECK (((level >= 1) AND (level <= 3)))",
+        "ck_observability_alert_rule_metric": "CHECK (((metric >= 1) AND (metric <= 5)))",
+        "ck_observability_alert_rule_op": "CHECK ((compare_op = ANY (ARRAY[1, 2])))",
+        "ck_observability_alert_rule_scope": "CHECK ((scope = ANY (ARRAY[1, 2])))",
+        "ck_observability_alert_rule_window": "CHECK (((window_days >= 1) AND (window_days <= 90)))",
+        "observability_alert_rule_pkey": "PRIMARY KEY (id)"
+      }
+    },
+    "register_config": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "allow_register": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "need_review": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "trial_days": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "config_json": {
+          "type": "json",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "register_config_pkey": {
+          "definition": "CREATE UNIQUE INDEX register_config_pkey ON public.register_config USING btree (id)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "register_config_pkey": "PRIMARY KEY (id)"
+      }
+    },
+    "security_policy": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "login_fail_threshold": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "login_lock_minutes": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "ip_whitelist_enabled": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "ip_whitelist": {
+          "type": "character varying(512)",
+          "not_null": true
+        },
+        "export_need_approval": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "watermark_enabled": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "session_timeout_minutes": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "two_factor_required": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "two_factor_scope": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "security_policy_pkey": {
+          "definition": "CREATE UNIQUE INDEX security_policy_pkey ON public.security_policy USING btree (id)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_security_policy_fail": "CHECK (((login_fail_threshold >= 0) AND (login_fail_threshold <= 20)))",
+        "ck_security_policy_lock": "CHECK (((login_lock_minutes >= 0) AND (login_lock_minutes <= 1440)))",
+        "ck_security_policy_timeout": "CHECK (((session_timeout_minutes >= 5) AND (session_timeout_minutes <= 1440)))",
+        "ck_security_policy_two_factor_scope": "CHECK ((two_factor_scope = ANY (ARRAY[1, 2])))",
+        "security_policy_pkey": "PRIMARY KEY (id)"
+      }
+    },
+    "site_config": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "section_key": {
+          "type": "character varying(32)",
+          "not_null": true
+        },
+        "config_json": {
+          "type": "json",
+          "not_null": true
+        },
+        "version_no": {
+          "type": "integer",
+          "not_null": true
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "published_at": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "site_config_pkey": {
+          "definition": "CREATE UNIQUE INDEX site_config_pkey ON public.site_config USING btree (id)",
+          "valid": true
+        },
+        "uk_section_version": {
+          "definition": "CREATE UNIQUE INDEX uk_section_version ON public.site_config USING btree (section_key, version_no)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_site_config_status": "CHECK ((status = ANY (ARRAY[1, 2])))",
+        "site_config_pkey": "PRIMARY KEY (id)",
+        "uk_section_version": "UNIQUE (section_key, version_no)"
+      }
+    },
+    "tenant_cost_budget": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "monthly_budget": {
+          "type": "numeric(12,2)",
+          "not_null": true
+        },
+        "alert_ratio": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "over_action": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "is_enabled": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "remark": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "tenant_cost_budget_pkey": {
+          "definition": "CREATE UNIQUE INDEX tenant_cost_budget_pkey ON public.tenant_cost_budget USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_cost_budget_tenant": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_cost_budget_tenant ON public.tenant_cost_budget USING btree (tenant_code) WHERE (is_deleted = false)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_tenant_cost_budget_action": "CHECK ((over_action = ANY (ARRAY[1, 2, 3])))",
+        "ck_tenant_cost_budget_amount": "CHECK ((monthly_budget >= (0)::numeric))",
+        "ck_tenant_cost_budget_ratio": "CHECK (((alert_ratio >= 1) AND (alert_ratio <= 100)))",
+        "tenant_cost_budget_pkey": "PRIMARY KEY (id)"
+      }
+    }
+  },
+  "source": {
+    "path": "backend/deploy/db-init/db-init.sql",
+    "sha256": "4c67730d6dd66c697336d3dbe687acaa2adb29e5dcf206a4a0f0a5d29c4cd498"
+  }
+}

@@ -24,6 +24,9 @@ class MigrationParserTest(unittest.TestCase):
         plans=load_plan()
         self.assertEqual(["001","002","003","004"],[m.version for m in plans["customer_db"]])
         self.assertEqual(["001"],[m.version for m in plans["billing_db"]])
+        for database in ("ai_db", "user_db", "tenant_db", "ops_db"):
+            self.assertEqual(["001"], [m.version for m in plans[database]])
+            self.assertEqual("baseline", plans[database][0].kind)
         for plan in plans.values():
             for migration in plan:
                 self.assertNotIn("\\connect",migration.content)
@@ -43,6 +46,24 @@ class MigrationParserTest(unittest.TestCase):
         c=Migration("customer_db","001","test","test.sql","SELECT 2;\n")
         self.assertEqual(a.checksum,b.checksum)
         self.assertNotEqual(a.checksum,c.checksum)
+
+    def test_baseline_contracts_are_versioned_and_contain_no_executable_statements(self):
+        for database, plan in load_plan().items():
+            for migration in plan:
+                if migration.kind == "baseline":
+                    contract = json.loads(migration.content)
+                    self.assertEqual(database, contract["database"])
+                    self.assertEqual(1, contract["format"])
+                    self.assertTrue(contract["tables"])
+                    self.assertEqual(64, len(contract["source"]["sha256"]))
+
+    def test_unknown_migration_kind_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest=Path(directory)/"manifest.json"
+            manifest.write_text(json.dumps({"format":1,"migrations":[{"database":"ai_db","version":"001",
+                                "kind":"shell","name":"invalid","source":"backend/deploy/db-init/db-init.sql"}]}),encoding="utf-8")
+            with self.assertRaisesRegex(MigrationError,"Unsupported migration kind"):
+                load_plan(manifest)
 
 
 @unittest.skipUnless(os.getenv("SUPPORTFLOW_MIGRATIONS_TEST_URL"),"requires disposable migration database")
@@ -105,9 +126,13 @@ class MigrationPostgresTest(unittest.TestCase):
         info=psycopg.conninfo.conninfo_to_dict(os.environ["SUPPORTFLOW_MIGRATIONS_TEST_URL"])
         info["dbname"]="ai_db"
         with psycopg.connect(**info,autocommit=True) as other:
-            with self.assertRaisesRegex(MigrationError,"history is absent"):
-                run_plan(other,[],verify=True)
-            self.assertEqual((None,),other.execute("SELECT to_regclass('supportflow_schema_history')").fetchone())
+            other.execute("ALTER TABLE supportflow_schema_history RENAME TO supportflow_history_test_backup")
+            try:
+                with self.assertRaisesRegex(MigrationError,"history is absent"):
+                    run_plan(other,[],verify=True)
+                self.assertEqual((None,),other.execute("SELECT to_regclass('supportflow_schema_history')").fetchone())
+            finally:
+                other.execute("ALTER TABLE supportflow_history_test_backup RENAME TO supportflow_schema_history")
 
     def test_an_existing_transaction_cannot_turn_migration_commits_into_savepoints(self):
         self.connection.execute("BEGIN")

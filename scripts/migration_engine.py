@@ -31,6 +31,7 @@ class Migration:
     name: str
     source: str
     content: str
+    kind: str = "sql"
 
     @property
     def checksum(self):
@@ -76,10 +77,17 @@ def load_plan(path=None):
         if database not in DATABASES or not re.fullmatch(r"[0-9]{3}", item["version"]):
             raise MigrationError("Invalid database or version in manifest")
         source = (ROOT / item["source"]).resolve()
-        if ROOT not in source.parents or ROOT / "backend" not in source.parents or source.suffix != ".sql":
+        kind = item.get("kind", "sql")
+        if kind not in {"sql", "baseline"}:
+            raise MigrationError("Unsupported migration kind")
+        suffix = ".json" if kind == "baseline" else ".sql"
+        if ROOT not in source.parents or ROOT / "backend" not in source.parents or source.suffix != suffix:
             raise MigrationError("Migration source must be a repository backend SQL file")
+        if kind == "baseline" and ROOT / "backend/deploy/migrations/baselines" not in source.parents:
+            raise MigrationError("Baseline source must be a registered contract")
+        source_content = source.read_text(encoding="utf-8")
         migration = Migration(database, item["version"], item["name"], item["source"],
-                              database_section(source.read_text(encoding="utf-8"), database))
+                              source_content if kind == "baseline" else database_section(source_content, database), kind)
         plans.setdefault(database, []).append(migration)
     for plan in plans.values():
         versions = [migration.version for migration in plan]
@@ -144,7 +152,16 @@ def run_plan(connection, migrations, *, verify=False):
             try:
                 with connection.transaction():
                     connection.execute("SELECT set_config('lock_timeout','2000',true),set_config('statement_timeout','30000',true)")
-                    connection.execute(migration.content)
+                    if migration.kind == "sql":
+                        connection.execute(migration.content)
+                    elif migration.kind == "baseline":
+                        from schema_contract import validate_baseline
+                        try:
+                            validate_baseline(connection, migration.content)
+                        except (ValueError, KeyError, TypeError) as failure:
+                            raise MigrationError(f"Baseline {database}/{migration.version} rejected: {failure}") from None
+                    else:
+                        raise MigrationError("Unsupported migration kind")
                     connection.execute("""INSERT INTO public.supportflow_schema_history(version,name,checksum,source)
                         VALUES(%s,%s,%s,%s)""", (migration.version,migration.name,migration.checksum,migration.source))
             except psycopg.Error as error:

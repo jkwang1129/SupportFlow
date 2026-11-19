@@ -1,0 +1,694 @@
+{
+  "format": 1,
+  "database": "ai_db",
+  "tables": {
+    "ai_usage_record": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "model_key": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "scene": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "input_tokens": {
+          "type": "integer",
+          "not_null": true
+        },
+        "output_tokens": {
+          "type": "integer",
+          "not_null": true
+        },
+        "cost_amount": {
+          "type": "numeric(12,4)",
+          "not_null": true
+        },
+        "latency_ms": {
+          "type": "integer",
+          "not_null": false
+        },
+        "is_success": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "request_id": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "stat_date": {
+          "type": "date",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "remark": {
+          "type": "character varying(64)",
+          "not_null": false
+        }
+      },
+      "indexes": {
+        "ai_usage_record_pkey": {
+          "definition": "CREATE UNIQUE INDEX ai_usage_record_pkey ON public.ai_usage_record USING btree (id)",
+          "valid": true
+        },
+        "idx_ai_usage_record_request_id": {
+          "definition": "CREATE INDEX idx_ai_usage_record_request_id ON public.ai_usage_record USING btree (request_id)",
+          "valid": true
+        },
+        "idx_ai_usage_record_stat_date": {
+          "definition": "CREATE INDEX idx_ai_usage_record_stat_date ON public.ai_usage_record USING btree (stat_date DESC, tenant_code)",
+          "valid": true
+        },
+        "idx_ai_usage_record_tenant_model_date": {
+          "definition": "CREATE INDEX idx_ai_usage_record_tenant_model_date ON public.ai_usage_record USING btree (tenant_code, model_key, stat_date)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ai_usage_record_pkey": "PRIMARY KEY (id)",
+        "ck_ai_usage_record_scene": "CHECK ((scene = ANY (ARRAY[1, 2, 3])))"
+      }
+    },
+    "bot_dialogue": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "session_no": {
+          "type": "character varying(40)",
+          "not_null": true
+        },
+        "turn_count": {
+          "type": "integer",
+          "not_null": true
+        },
+        "unresolved_rounds": {
+          "type": "integer",
+          "not_null": true
+        },
+        "last_intent": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "last_intent_code": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "last_confidence": {
+          "type": "numeric(5,2)",
+          "not_null": false
+        },
+        "last_emotion": {
+          "type": "character varying(20)",
+          "not_null": false
+        },
+        "emotion_score": {
+          "type": "numeric(5,2)",
+          "not_null": false
+        },
+        "slots": {
+          "type": "text",
+          "not_null": false
+        },
+        "transferred": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "transfer_reason": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "last_message": {
+          "type": "character varying(500)",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "bot_dialogue_pkey": {
+          "definition": "CREATE UNIQUE INDEX bot_dialogue_pkey ON public.bot_dialogue USING btree (id)",
+          "valid": true
+        },
+        "idx_bot_dialogue_tenant_update": {
+          "definition": "CREATE INDEX idx_bot_dialogue_tenant_update ON public.bot_dialogue USING btree (tenant_code, update_time DESC)",
+          "valid": true
+        },
+        "uk_tenant_session_dialogue": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_session_dialogue ON public.bot_dialogue USING btree (tenant_code, session_no) WHERE (is_deleted = false)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "bot_dialogue_pkey": "PRIMARY KEY (id)"
+      }
+    },
+    "bot_intent": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "intent_code": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "confidence": {
+          "type": "numeric(5,2)",
+          "not_null": false
+        },
+        "hit_count": {
+          "type": "integer",
+          "not_null": true
+        },
+        "samples": {
+          "type": "text",
+          "not_null": false
+        },
+        "escalate": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "bot_intent_pkey": {
+          "definition": "CREATE UNIQUE INDEX bot_intent_pkey ON public.bot_intent USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_intent": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_intent ON public.bot_intent USING btree (tenant_code, intent_code)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "bot_intent_pkey": "PRIMARY KEY (id)",
+        "ck_bot_intent_status": "CHECK ((status = ANY (ARRAY[1, 2])))",
+        "uk_tenant_intent": "UNIQUE (tenant_code, intent_code)"
+      }
+    },
+    "bot_intent_sample": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "version_no": {
+          "type": "character varying(32)",
+          "not_null": true
+        },
+        "intent_code": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "intent_name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "sample": {
+          "type": "character varying(200)",
+          "not_null": true
+        },
+        "source": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "embedding": {
+          "type": "vector(1024)",
+          "not_null": false
+        },
+        "embedding_model": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "bot_intent_sample_pkey": {
+          "definition": "CREATE UNIQUE INDEX bot_intent_sample_pkey ON public.bot_intent_sample USING btree (id)",
+          "valid": true
+        },
+        "idx_bot_intent_sample_embedding": {
+          "definition": "CREATE INDEX idx_bot_intent_sample_embedding ON public.bot_intent_sample USING hnsw (embedding vector_cosine_ops)",
+          "valid": true
+        },
+        "idx_bot_intent_sample_version": {
+          "definition": "CREATE INDEX idx_bot_intent_sample_version ON public.bot_intent_sample USING btree (tenant_code, version_no)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "bot_intent_sample_pkey": "PRIMARY KEY (id)",
+        "ck_bot_intent_sample_source": "CHECK ((source = ANY (ARRAY[1, 2])))"
+      }
+    },
+    "bot_model": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "model_key": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "model_name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "provider": {
+          "type": "character varying(32)",
+          "not_null": true
+        },
+        "model_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "temperature": {
+          "type": "numeric(3,2)",
+          "not_null": true
+        },
+        "is_enabled": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "bot_model_pkey": {
+          "definition": "CREATE UNIQUE INDEX bot_model_pkey ON public.bot_model USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_model": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_model ON public.bot_model USING btree (tenant_code, model_key)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "bot_model_pkey": "PRIMARY KEY (id)",
+        "ck_bot_model_model_type": "CHECK ((model_type = ANY (ARRAY[1, 2, 3])))",
+        "uk_tenant_model": "UNIQUE (tenant_code, model_key)"
+      }
+    },
+    "bot_setting": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "bot_name": {
+          "type": "character varying(64)",
+          "not_null": true
+        },
+        "brand_name": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "avatar_url": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "welcome_message": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "fallback_message": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "transfer_prompt": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "is_enabled": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "model_key": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "temperature": {
+          "type": "numeric(3,2)",
+          "not_null": true
+        },
+        "reception_enabled": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "transfer_on_anger": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "transfer_after_unresolved": {
+          "type": "integer",
+          "not_null": true
+        },
+        "transfer_keywords": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "transfer_message": {
+          "type": "character varying(255)",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "bot_setting_pkey": {
+          "definition": "CREATE UNIQUE INDEX bot_setting_pkey ON public.bot_setting USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_bot_setting": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_bot_setting ON public.bot_setting USING btree (tenant_code)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "bot_setting_pkey": "PRIMARY KEY (id)",
+        "uk_tenant_bot_setting": "UNIQUE (tenant_code)"
+      }
+    },
+    "bot_version": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "version_no": {
+          "type": "character varying(32)",
+          "not_null": true
+        },
+        "train_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "base_model": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "accuracy": {
+          "type": "numeric(5,2)",
+          "not_null": false
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "publish_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "gray_percent": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "sample_count": {
+          "type": "integer",
+          "not_null": true
+        },
+        "intent_count": {
+          "type": "integer",
+          "not_null": true
+        },
+        "job_no": {
+          "type": "character varying(40)",
+          "not_null": false
+        },
+        "remark": {
+          "type": "character varying(255)",
+          "not_null": false
+        }
+      },
+      "indexes": {
+        "bot_version_pkey": {
+          "definition": "CREATE UNIQUE INDEX bot_version_pkey ON public.bot_version USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_version": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_version ON public.bot_version USING btree (tenant_code, version_no)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "bot_version_pkey": "PRIMARY KEY (id)",
+        "ck_bot_version_gray": "CHECK (((gray_percent >= 0) AND (gray_percent <= 100)))",
+        "ck_bot_version_status": "CHECK ((status = ANY (ARRAY[1, 2, 3, 4])))",
+        "ck_bot_version_train_type": "CHECK ((train_type = ANY (ARRAY[1, 2])))",
+        "uk_tenant_version": "UNIQUE (tenant_code, version_no)"
+      }
+    },
+    "training_job": {
+      "columns": {
+        "id": {
+          "type": "bigint",
+          "not_null": true
+        },
+        "tenant_code": {
+          "type": "character varying(16)",
+          "not_null": true
+        },
+        "job_no": {
+          "type": "character varying(40)",
+          "not_null": true
+        },
+        "job_type": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "status": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "progress": {
+          "type": "integer",
+          "not_null": true
+        },
+        "result_version": {
+          "type": "character varying(32)",
+          "not_null": false
+        },
+        "error_msg": {
+          "type": "character varying(512)",
+          "not_null": false
+        },
+        "start_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "finish_time": {
+          "type": "timestamp without time zone",
+          "not_null": false
+        },
+        "create_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "update_time": {
+          "type": "timestamp without time zone",
+          "not_null": true
+        },
+        "creator": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "editor": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "is_deleted": {
+          "type": "boolean",
+          "not_null": true
+        },
+        "mode": {
+          "type": "smallint",
+          "not_null": true
+        },
+        "phase": {
+          "type": "character varying(64)",
+          "not_null": false
+        },
+        "sample_count": {
+          "type": "integer",
+          "not_null": true
+        },
+        "intent_count": {
+          "type": "integer",
+          "not_null": true
+        },
+        "gray_percent": {
+          "type": "smallint",
+          "not_null": true
+        }
+      },
+      "indexes": {
+        "idx_training_job_tenant_status": {
+          "definition": "CREATE INDEX idx_training_job_tenant_status ON public.training_job USING btree (tenant_code, status)",
+          "valid": true
+        },
+        "training_job_pkey": {
+          "definition": "CREATE UNIQUE INDEX training_job_pkey ON public.training_job USING btree (id)",
+          "valid": true
+        },
+        "uk_tenant_job_no": {
+          "definition": "CREATE UNIQUE INDEX uk_tenant_job_no ON public.training_job USING btree (tenant_code, job_no)",
+          "valid": true
+        }
+      },
+      "constraints": {
+        "ck_training_job_gray": "CHECK (((gray_percent >= 0) AND (gray_percent <= 100)))",
+        "ck_training_job_job_type": "CHECK ((job_type = ANY (ARRAY[1, 2])))",
+        "ck_training_job_mode": "CHECK ((mode = ANY (ARRAY[1, 2])))",
+        "ck_training_job_status": "CHECK ((status = ANY (ARRAY[1, 2, 3, 4])))",
+        "training_job_pkey": "PRIMARY KEY (id)",
+        "uk_tenant_job_no": "UNIQUE (tenant_code, job_no)"
+      }
+    }
+  },
+  "source": {
+    "path": "backend/deploy/db-init/db-init.sql",
+    "sha256": "4c67730d6dd66c697336d3dbe687acaa2adb29e5dcf206a4a0f0a5d29c4cd498"
+  }
+}

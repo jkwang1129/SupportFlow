@@ -165,3 +165,17 @@ python scripts/report-rag-contract.py --junit .local/implementation/final-python
 - 初次单元测试受本地 JDK 25 无法动态附加 Mockito agent 影响，复用仓库现有 mock-maker-subclass 配置后重跑；这不是产品缺陷复现。新旧库首次故障回归通过后，因为移除重复检查器和补充恢复断言，最终对代码进行了 clean 构建及完整重跑。
 
 本批只读检查最小表/列与 schema USAGE/列 SELECT 权限，不执行 DDL、不读取业务行；每请求查询，不声称性能改善。没有覆盖完整类型/索引/RLS 漂移、所有网络故障或所有下游依赖。PR-7 尚未关闭，下一批为其他四库基线采纳，然后统一 init 与结构核验。无需数据迁移；回退时同步回退公共配置/契约和探针部署设置，不能扩大数据库权限。
+
+## PR-7 子批次 4：另外四库的基线采纳
+
+基线 c8b5a8d。新增 schema_contract.py、四个不可变 JSON 契约和 test-schema-baselines.py；扩展 manifest/Runner 的 baseline 操作、role provisioning 的历史权限及 CI。复用现有 SQL/事务/锁/checksum，不重建已有四库。修改迁移单测与实际服务历史断言以覆盖六库。设计和回退见 ADR-0002/迁移说明。
+
+实际验证：
+
+- `python scripts/test-schema-baselines.py --write-new-contracts`：首次在隔离 PG17 执行权威 init 后生成 AI 8、User 8、Tenant 7、Ops 12，共 **35 张表**的基线（列类型/非空、索引定义/有效状态、约束）；源 SQL SHA256 附在契约中。该选项拒绝覆盖已有文件，不是日常修复命令。输出 `.local/implementation/pr7-baselines-generate.log`。
+- `python scripts/test-schema-baselines.py`：四库首次采纳、重复 migrate、verify 通过，逐表核对种子数据行数不变；每库缺表/缺列/类型不匹配/索引不匹配以及 Runner 不兼容采纳五类负面场景，共 **20 类场景执行**，全部拒绝；失败不写历史、恢复后可采纳。输出 `pr7-baselines-final.log`。
+- `python scripts/test-versioned-migrations.py`：**17 项通过**（7 解析/清单 + 10 真 PG），以及实际六库 CLI migrate/verify、运行账号 CLI 拒绝。原 customer/billing 历史版本/checksum 没有改写；历史证照 ID/对象 key 保留。输出 `pr7-sixdb-migrations.log`。
+- `python scripts/test-runtime-security.py --with-ai-readiness`：新/旧库 **28+29=57 条数据库安全断言**仍通过，AI/KB Readiness 真 PG 用例各 **4 项**通过。输出 `pr7-sixdb-security.log`。
+- `python scripts/test-security-flow.py`：新/旧库完整实际服务和 Java Readiness 故障回归均通过；六库均有历史，新增四库历史各一条、checksum 64 位、本库运行账号可 SELECT 而不能 INSERT/UPDATE/DELETE。核心链路/隔离/签名计费不退化，容器/卷/网络清理。输出 `pr7-sixdb-services.log`。
+
+首次 baseline 只读验证结构，成功只新增历史回执，无业务数据/DDL 变更。后续历史 verify 不会重放历史结构快照，不等于持续漂移检查；也不证明 RLS/权限安全，后者继续由独立专项验收。PR-7 尚缺统一 init 与持续全量结构/索引/RLS 核验，阶段 A 仍未退出。没有生产流量、延迟或成本改善声明；本轮仅本地提交，无远程 CI 结论。

@@ -17,7 +17,7 @@
 | PR-4 消息幂等 | 本轮已实现且真实 PG 验证通过 | `SessionService#appendMessage`、两个 Mapper；`SessionMessagePostgresTest` 7 项 | 原 25P02、回滚计费问题已复现后修复；含关闭竞争、跨租户和软删除键。持久化计量/任务仍在 PR-6/8。A2 完成 |
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
-| PR-7 版本化迁移 | 部分实现：AI/五个 Java 数据服务 Ready + 两库增量版本化已验证 | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 其他四库基线版本采纳、全量 schema/index/RLS 验证和统一 init 仍待后续。A5 进行中 |
+| PR-7 版本化迁移 | 部分实现：AI/五个 Java 数据服务 Ready + 六库版本计划 | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 四库基线采纳已补齐；全量持续 schema/index/RLS 验证和统一 init 仍待后续。A5 进行中 |
 | PR-8 持久化 Run | 未实现 | `SessionService#scheduleBotReply` 提交后投递内存线程池；`ai/workers/consumer.py` 占位 | Run/Step/Outbox、租约与 fencing、事件幂等、预算、取消、跨 Worker 会话串行。B1 |
 | PR-9 Tool Calling | 未实现通用层 | `ai/agents/brain.py` 固定图；Java 工单/知识 API 为可复用业务能力 | 内部 Registry/Executor、可信主体、Schema、只读和写工具、结果验证；MCP 只做适配。B2 |
 | PR-10 Checkpoint/HITL | 未实现 | `brain.py`、`rag/graph.py` 均 `compile()` 无 checkpointer；`docs/architecture.md` 明示缺失 | 业务对话状态不能代替执行 checkpoint；审批绑定参数、恢复重新鉴权、未知副作用核验。B3 |

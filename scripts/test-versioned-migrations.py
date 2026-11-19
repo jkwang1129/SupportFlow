@@ -50,7 +50,7 @@ def main():
             result=subprocess.run([sys.executable,"scripts/db-migrate.py",command],cwd=ROOT,env=cli_environment,
                                   text=True,capture_output=True,check=True)
             report=json.loads(result.stdout)
-            assert {row['database'] for row in report}=={'customer_db','billing_db'}
+            assert {row['database'] for row in report}==set(load_plan())
             assert all(not row['applied'] for row in report)
         rejected=subprocess.run([sys.executable,"scripts/db-migrate.py","migrate","--database","customer_db"],cwd=ROOT,
                                 env={**cli_environment,"SUPPORTFLOW_MIGRATION_DB_USER":"migration_test_runtime",
@@ -59,7 +59,7 @@ def main():
         assert runtime_password not in rejected.stderr and password not in rejected.stderr
         subprocess.run([sys.executable,"-m","unittest","discover","-s","scripts/tests","-p","test_migration_engine.py","-v"],cwd=ROOT,check=True,
                        env={**os.environ,"SUPPORTFLOW_MIGRATIONS_TEST_URL":dsn("customer_db"),"SUPPORTFLOW_MIGRATIONS_RUNTIME_TEST_URL":runtime_dsn})
-        print("Versioned customer/billing migrations: initial apply, no-op repeat and verification passed; legacy file preserved",flush=True)
+        print("Versioned six-database plan: initial apply, no-op repeat and verification passed; legacy file preserved",flush=True)
     finally:
         subprocess.run(["docker","rm","--force","--volumes",name],check=True,stdout=subprocess.DEVNULL)
 

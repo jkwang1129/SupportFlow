@@ -113,5 +113,37 @@ DO $$ BEGIN
  END IF;
 END $$;
 
+\connect ai_db
+DO $$ BEGIN
+ IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   GRANT SELECT ON public.supportflow_schema_history TO supportflow_ai;
+ END IF;
+END $$;
+
+\connect user_db
+DO $$ BEGIN
+ IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   GRANT SELECT ON public.supportflow_schema_history TO supportflow_user;
+ END IF;
+END $$;
+
+\connect tenant_db
+DO $$ BEGIN
+ IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   GRANT SELECT ON public.supportflow_schema_history TO supportflow_tenant;
+ END IF;
+END $$;
+
+\connect ops_db
+DO $$ BEGIN
+ IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   GRANT SELECT ON public.supportflow_schema_history TO supportflow_ops;
+ END IF;
+END $$;
+
 -- Preserve the historical caller database after provisioning.
 \connect customer_db
