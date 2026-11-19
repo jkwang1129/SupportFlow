@@ -24,7 +24,8 @@ def disposable_postgres(*, initialize=True):
     try:
         address = subprocess.check_output(["docker", "port", name, "5432/tcp"], text=True).strip().splitlines()[0]
         environment = {**os.environ, "SUPPORTFLOW_DB_HOST": "127.0.0.1", "SUPPORTFLOW_DB_PORT": address.rsplit(":", 1)[1],
-                       "SUPPORTFLOW_DB_PASSWORD": password, "SUPPORTFLOW_MIGRATION_DB_USER": "supportflow"}
+                       "SUPPORTFLOW_DB_PASSWORD": password, "SUPPORTFLOW_MIGRATION_DB_USER": "supportflow",
+                       "SUPPORTFLOW_TEST_PG_CONTAINER": name}
         def connect(database, *, readonly=False):
             return psycopg.connect(host="127.0.0.1", port=environment["SUPPORTFLOW_DB_PORT"], dbname=database,
                                    user="supportflow", password=password, autocommit=True, connect_timeout=2,

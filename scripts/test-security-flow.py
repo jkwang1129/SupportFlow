@@ -43,7 +43,7 @@ if __name__ == '__main__':
                     command = ['docker','exec',project+'-postgres-1','psql','-U','supportflow','-d',database+'_db','-XqAt','-c']
                     history = subprocess.check_output([*command,
                         f"SELECT count(*),bool_and(length(checksum)=64),has_table_privilege('supportflow_{database}','supportflow_schema_history','SELECT'),has_table_privilege('supportflow_{database}','supportflow_schema_history','INSERT'),has_table_privilege('supportflow_{database}','supportflow_schema_history','UPDATE'),has_table_privilege('supportflow_{database}','supportflow_schema_history','DELETE') FROM supportflow_schema_history"],text=True).strip().split('|')
-                    assert history == ['1','t','t','f','f','f'], (database,history)
+                    assert history == ['2' if database=='ai' else '1','t','t','f','f','f'], (database,history)
                 print('Six database migration histories verified; baseline history receipts are read-only for runtime roles', flush=True)
                 print('Observed five restricted Java database identities; mandatory platform audit receipts matched', flush=True)
                 label = 'FRESH CLI INIT' if '--empty-init' in scenario else ('LEGACY UPGRADE' if scenario else 'FRESH DEFAULT')

@@ -41,7 +41,7 @@ AI/User/Tenant/Ops 的 `001` 为 baseline 操作，不执行建表 SQL。JSON �
 
 ## 当前实际结构漂移
 
-`python scripts/db-migrate.py verify` 同时核对六库历史和 current-schema.json 中登记的 **87 张应用表、1 个视图、4 个 supportflow_ 函数**。检查列集合、类型/默认值/非空/identity/generated、索引定义及有效状态、约束、RLS ENABLE/FORCE、策略集合/主体/操作/谓词，以及视图和受控函数定义。额外的未登记表/列/索引/约束/策略/视图/受控函数也会拒绝；不会自动把数据库当前状态登记为正确状态。迁移 manifest 的版本/checksum 必须与 desired-state 契约一致，避免新 SQL 配旧快照。
+`python scripts/db-migrate.py verify` 同时核对六库历史和 current-schema.json 中登记的 **89 张应用表、1 个视图、5 个 supportflow_ 函数**。检查列集合、类型/默认值/非空/identity/generated、索引定义及有效状态、约束、RLS ENABLE/FORCE、策略集合/主体/操作/谓词，以及视图和受控函数定义。额外的未登记表/列/索引/约束/策略/视图/受控函数也会拒绝；不会自动把数据库当前状态登记为正确状态。迁移 manifest 的版本/checksum 必须与 desired-state 契约一致，避免新 SQL 配旧快照。
 
 公开 schema 中的迁移历史表由独立历史/权限检查负责，pgvector 扩展函数不属于 supportflow_ 函数范围。此核验不覆盖所有授权、owner、触发器、扩展版本、业务数据、外部对象或备份；数据库身份/租户权限仍须运行独立安全测试。应用 Readiness 不会逐请求执行本完整检查；部署必须在启动业务前执行 verify，未知策略等漂移会停止发布。
 
@@ -59,4 +59,10 @@ AI/User/Tenant/Ops 的 `001` 为 baseline 操作，不执行建表 SQL。JSON �
 
 init 只承担结构和版本，不配置运行密码，结果明确标记 NOT_PROVISIONED_BY_INIT。运行角色/密码 provisioning 仍使用唯一的 40-runtime-roles.sql，不进入迁移历史。默认本地 Compose 已自动创建六库，应继续使用本地 Compose 专用 upgrade-runtime-security.py 完成版本登记/角色配置/验证，不要在已有 Compose 上再次 init。独立空 PostgreSQL 使用 init 后，管理员通过 psql 在同一目标服务器执行该角色脚本，再 verify 后启动应用；不能把本地 Compose 专用升级助手用于其他远端服务器。应用进程仍只获得各自受限凭据。
 
-`python scripts/test-database-init.py` 验证真实 CLI 空库初始化、87 张表核验、重复初始化拒绝、无关数据与种子保留、锁竞争、无 CREATEDB 运行身份拒绝及中途 SQL 失败回滚。`python scripts/test-security-flow.py` 另验证默认新库、历史库升级、空服务器经 CLI init 三套真实 Java/Python 服务与受限账号业务闭环，所有数据均为隔离合成验收。
+`python scripts/test-database-init.py` 验证真实 CLI 空库初始化、89 张表核验、重复初始化拒绝、无关数据与种子保留、锁竞争、无 CREATEDB 运行身份拒绝及中途 SQL 失败回滚。`python scripts/test-security-flow.py` 另验证默认新库、历史库升级、空服务器经 CLI init 三套真实 Java/Python 服务与受限账号业务闭环，所有数据均为隔离合成验收。
+
+## AI 002：Runtime 存储底座
+
+AI 001 是原 8 张表的历史基线，保持不变；002 新增 agent_run/agent_step 与受控队列发现函数。先 migrate，再通过唯一 40-runtime-roles.sql 给既有 AI 登录账号授予 NOLOGIN 能力组并收回删除/清空权限，最后 verify。该底座尚未接现有客服入口；不得因表已创建就切换任务路由。
+
+未知写步骤恢复/取消进入 SIDE_EFFECT_UNKNOWN 并阻断同会话后续任务，等待后续显式核验能力。回退时保留 Run/Step/历史，不删除表或改已应用 checksum；首批可停用新模块，原业务 Workflow 不受影响。细节见 docs/decisions/0003-durable-runtime-boundary.md 与 docs/reliability-verification.md。

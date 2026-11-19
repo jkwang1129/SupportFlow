@@ -17,8 +17,8 @@
 | PR-4 消息幂等 | 本轮已实现且真实 PG 验证通过 | `SessionService#appendMessage`、两个 Mapper；`SessionMessagePostgresTest` 7 项 | 原 25P02、回滚计费问题已复现后修复；含关闭竞争、跨租户和软删除键。持久化计量/任务仍在 PR-6/8。A2 完成 |
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
-| PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 登记的 87 张表/索引/RLS 核验、默认新库/历史升级/CLI init 实际服务已通过；生产备份/运维属 M12。A5 本地完成 |
-| PR-8 持久化 Run | 未实现 | `SessionService#scheduleBotReply` 提交后投递内存线程池；`ai/workers/consumer.py` 占位 | Run/Step/Outbox、租约与 fencing、事件幂等、预算、取消、跨 Worker 会话串行。B1 |
+| PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 登记的 89 张表/索引/RLS 核验、默认新库/历史升级/CLI init 实际服务已通过；生产备份/运维属 M12。A5 本地完成 |
+| PR-8 持久化 Run | 部分实现：Run/Step 存储原语 | `ai/runtime/{types,store}.py`、AI 002 版本迁移，受限账号真 PG 测试 | 已实现事件幂等/领取/心跳/fencing/计数预算/取消/未知写阻断；Worker、Java Outbox、业务入口与结果回写尚缺。B1 进行中 |
 | PR-9 Tool Calling | 未实现通用层 | `ai/agents/brain.py` 固定图；Java 工单/知识 API 为可复用业务能力 | 内部 Registry/Executor、可信主体、Schema、只读和写工具、结果验证；MCP 只做适配。B2 |
 | PR-10 Checkpoint/HITL | 未实现 | `brain.py`、`rag/graph.py` 均 `compile()` 无 checkpointer；`docs/architecture.md` 明示缺失 | 业务对话状态不能代替执行 checkpoint；审批绑定参数、恢复重新鉴权、未知副作用核验。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 缺统一 Run/Step、只读回放、工具/恢复数据集与 CI 质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
@@ -30,7 +30,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 
 | 模块 | 当前状态 | 可复用实现/证据 | 必须补齐及依赖 |
 | --- | --- | --- | --- |
-| M01 Reliable Runtime | 未实现目标 Runtime | 既有固定 Workflow、会话状态与 afterCommit；不能算 durable loop | PR-8/9/10；与 M11 共用租约、预算和有界调度。B |
+| M01 Reliable Runtime | 部分实现：持久化底座，未接业务 | `ai/runtime` 的 Run/Step、租约、fencing 和共享计数预算；不能算完整 durable loop | Worker/可靠投递/实际工具循环/恢复与审批；PR-8/9/10。B |
 | M02 Context Engineering | 部分实现 | `BotBrainService#buildHistory` 最近 12 条；`ai/agents/brain.py` slots/turns、`ai/services/brain.py` 对话持久化 | 统一构建器、可信/不可信分区、Token 上限、确定性事实、压缩/恢复对照。依赖 B checkpoint。C |
 | M03 Tool Calling/MCP | 未实现通用层 | 既有工单创建/查询、知识检索 Java API | 先内部工具与权限、后可信 MCP 适配；不重复写业务服务。B |
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、`ChatAttachmentAccess`、`LicensePrivilegeTest`、受限 DB 角色/平台审计 | 工具 Scope、资源和输出约束、注入负面集、限时参数审批、防重放；无任意代码需求，暂不建 Sandbox。A/B |
@@ -74,8 +74,8 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-19，PR-7 init 子批次后）
+## 当前执行位置（2026-11-19，B1 存储子批次）
 
 阶段 A 的本地退出条件已完成：A1/A2/A3 并发与事务、A4 客服计费批次、A5 六库迁移/Readiness/实际结构核验、A6 低证据拒答首批均有本地记录。网关 tenant_usage_daily 与尚未持久化原始计数的边界仍保留到 M11；RAG 事实支持/引用正文问题保留阶段 C，不冒充已完成。新旧服务与 CLI init 三条业务部署路径实测通过，未推送/远程 CI 尚未验证。
 
-下一项进入 B1：先记录 Runtime 状态/幂等键/租约 fencing/预算与 Java 业务事务边界 ADR，再实现最小持久化 Run/Step 和故障测试，随后接入可靠投递。B1 未完成前，不将存储表、固定 Workflow 或状态枚举称为完整 Agent Runtime；B2/B3 的工具授权、MCP 适配、审批与 Checkpoint 仍待实现。阶段 C～F 状态不变。
+B1 的 ADR-0003 与 Run/Step 存储首批已落地，实际测试见阶段验收。当前六库 desired-state 增至 89 张表/1 视图/5 个受控函数，原四库历史基线不改。下一批接 Worker，再接 Java 同事务 Outbox、受鉴权的接收入口和结果幂等回写。B1 未完成前，不将存储表、固定 Workflow 或状态枚举称为完整 Agent Runtime；B2/B3 的工具授权、MCP 适配、审批与 Checkpoint 仍待实现。阶段 C～F 状态不变。

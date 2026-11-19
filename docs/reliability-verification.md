@@ -208,3 +208,25 @@ python scripts/report-rag-contract.py --junit .local/implementation/final-python
 init 本身不配置运行密码、不启动业务，不保证跨库原子性或自动恢复部分建库；生产备份/恢复/部署/运行指标仍属 M12/阶段 E。Java 本批未修改，最近 clean verify 结果见子批次 3。未推送，不声称远程 CI 通过。
 
 阶段 A 的本地退出条件现已满足；PR-7 在本地开发/升级和登记结构范围关闭。PR-8/9/10、M01/03/04 的 Runtime/工具/审批仍未实现，下一阶段按 B1 → B2 → B3 推进。RAG 首批拒答不代表事实支持问题已解决，后续仍按 C/D 做质量与回放；没有生产流量或客户收益数据。
+
+## B1 子批次 1：持久化 Run/Step 存储原语（2026-11-19）
+
+基线 bd4da8c。新增 ai/runtime/{types,store}.py、AI 002 SQL、ADR-0003、34 项类型/真 PG 测试及 test-agent-runtime.py；更新能力组授权、迁移历史保护、manifest/current-schema、依赖受表数影响的夹具与 CI。PR-8/M01 只部分实现，没有接 Worker、API、Java Outbox、动态工具循环、HITL 或完整 Checkpoint。
+
+设计：按 tenant/source_event_id 幂等和不可变输入哈希；租户有界积压准入；同会话递增序列入队，数据库部分唯一索引/领取锁保持一个 RUNNING；数据库时钟、租约、递增 fencing；预留 Step 时原子扣步骤/模型/工具预算，接管/重试不重置。失联调用标 UNKNOWN；WRITE 未知结果进入 SIDE_EFFECT_UNKNOWN 并阻断同会话后续事件，独立会话仍可进展。取消不能谎称撤销已有写。持久化只存白名单业务引用，不接收 JWT/原始 prompt/工具参数正文。
+
+实际验证（本机 Python 3.11.5、pytest 9.2.0、Docker PostgreSQL17/pgvector、随机受限 AI 凭据，合成数据、无模型调用）：
+
+- `python scripts/test-agent-runtime.py`：**34 passed**，其中类型/输入16项、受限角色真PG18项。含8路重复入队/竞争领取/独立会话、40条阻塞会话不饿死独立会话、旧 fence 六类写回拒绝、重建 store 不重置预算、重试预算不双扣、取消/完成10轮竞争、超时、未知写阻断、RLS/错误租户/额外宽松策略/DELETE/TRUNCATE/DDL/管理员SET ROLE/队列函数权限拒绝。另3类危险能力角色（LOGIN/BYPASSRLS/CREATEROLE）各由迁移和provisioning拒绝，共6次负面执行。原始日志 `.local/implementation/b1-runtime-final.log`，JUnit `.local/verification/runtime-store.xml`。
+- 初轮 **33 passed/1 failed**：deadline先到而租约未到的故障没有被领取器收敛为终态；修正领取和队列发现条件后全量重跑通过。保留 `b1-runtime-first.log`，没有删除失败样本。
+- `python scripts/test-versioned-migrations.py`：**17项通过**及实际CLI，日志 `b1-migrations.log`；`test-schema-drift.py`：**89表/1视图/5函数**匹配，14个SQL故障和3个元数据异常拒绝，CLI失败/修复通过，日志 `b1-schema-drift.log`。历史四库baseline35表保持不变；desired-state仅新增AI两表/一函数和002checksum。
+- `python scripts/test-schema-baselines.py`：四库基线采纳/重复/verify、20类负面执行通过，日志 `b1-baselines.log`。夹具明确只验证不可变001基线，新增002由完整迁移/漂移测试负责。
+- `python scripts/test-database-init.py`：89表空库初始化、重复拒绝、权限/锁/失败库回滚和部分状态保留通过，日志 `b1-init.log`。
+- `python scripts/test-runtime-security.py --with-ai-readiness`：原**57条**新旧库安全断言及每套**4项**AI Readiness真PG通过，日志 `b1-security.log`。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-ai.xml`：**62 passed、24 skipped、1 xfailed**。24跳过为18项Runtime PG、4项Readiness PG和2项KB PG，Runtime/Readiness由上述专用脚本执行，KB另属原测试；已知引用正文xfail继续保留，不计成功。
+
+迁移/回滚：AI 002走既有权威迁移；运行组NOLOGIN/非owner/无管理员能力、仅新表S/I/U，AI登录沿用已有凭据。先migrate、唯一角色provisioning、verify再启动业务，不把业务进程变迁移管理员。保留Run/Step/版本回执，回退不DROP/清表/改checksum；首批未接业务，可停用新模块保留原客服Workflow。
+
+剩余风险：这里只是存储API，store重建不等于真实Worker进程恢复或端到端业务恢复；尚无源端Outbox/顺序派发/结果幂等入口。旧进程物理调用可能继续，fencing只拒绝失效写回，最终写工具必须再鉴权/幂等/核验。未知写目前需要保留待核查，显式恢复界面属B3。队列按已收到事件序列处理，不能修复未收到的更早消息。只有调用计数/重试/时间硬限制，Token/成本硬预算、公平调度与量化性能均未验收。不报告生产流量、准确率或费用收益；CI新增门禁尚未在远端运行。
+
+- B1 存储改动后的 `python scripts/test-security-flow.py` 最终三条路径均通过：默认新库、历史库升级、CLI init；每套15次Java Readiness故障，共45次执行，原企业开通/平台审核/媒体/RLS/知识检索/访客WS机器人/签名计费链路保持通过，AI历史002已登记。日志 `.local/implementation/b1-services-retry.log`。首次运行出现服务启动阶段PG连接异常，未完成验收，记录 `b1-services.log`；并行PG夹具结束后完整重跑通过，原因未确认，不冒充已定位产品问题。三套隔离容器/卷/网络已清理。Java源码本批未改，复用前述clean verify产物；本轮没有重新声称Java全量构建。

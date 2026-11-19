@@ -1,6 +1,21 @@
 -- psql-only provisioning. Password values come from the process environment, not CLI arguments.
 \set ON_ERROR_STOP on
 \connect postgres
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT FROM pg_roles WHERE rolname='supportflow_agent_runtime') THEN
+   CREATE ROLE supportflow_agent_runtime NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION;
+ END IF;
+END $$;
+DO $$ BEGIN
+ IF EXISTS(SELECT FROM pg_roles r WHERE r.rolname='supportflow_agent_runtime' AND
+     (r.rolcanlogin OR r.rolsuper OR r.rolbypassrls OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication
+      OR EXISTS(SELECT FROM pg_auth_members WHERE member=r.oid)
+      OR EXISTS(SELECT FROM pg_class WHERE relowner=r.oid)
+      OR EXISTS(SELECT FROM pg_database WHERE datdba=r.oid)
+      OR EXISTS(SELECT FROM pg_namespace WHERE nspowner=r.oid))) THEN
+   RAISE EXCEPTION 'Agent runtime capability must be non-login, non-owner and non-administrative';
+ END IF;
+END $$;
 \getenv user_pw SUPPORTFLOW_USER_DB_PASSWORD
 \getenv tenant_pw SUPPORTFLOW_TENANT_DB_PASSWORD
 \getenv customer_pw SUPPORTFLOW_CUSTOMER_DB_PASSWORD
@@ -23,6 +38,7 @@ DO $$ BEGIN
          OR EXISTS(SELECT FROM pg_auth_members m JOIN pg_roles g ON g.oid=m.roleid WHERE m.member=pg_roles.oid
             AND NOT ((pg_roles.rolname='supportflow_customer' AND g.rolname='supportflow_customer_tenant')
                  OR (pg_roles.rolname='supportflow_kb' AND g.rolname='supportflow_kb_tenant')
+                 OR (pg_roles.rolname='supportflow_ai' AND g.rolname='supportflow_agent_runtime')
                  OR (pg_roles.rolname='supportflow_customer_platform' AND g.rolname='supportflow_platform_access'))))) THEN
    RAISE EXCEPTION 'Runtime identities must not own objects or have administrative flags';
  END IF;
@@ -47,6 +63,7 @@ GRANT CONNECT ON DATABASE ai_db TO supportflow_ai;
 GRANT supportflow_customer_tenant TO supportflow_customer;
 GRANT supportflow_kb_tenant TO supportflow_kb;
 GRANT supportflow_platform_access TO supportflow_customer_platform;
+GRANT supportflow_agent_runtime TO supportflow_ai;
 \connect user_db
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform;
@@ -91,6 +108,11 @@ REVOKE ALL ON SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO supportflow_ai;
 GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO supportflow_ai;
+DO $$ BEGIN
+ IF to_regclass('public.agent_run') IS NOT NULL THEN
+   REVOKE DELETE,TRUNCATE ON public.agent_run,public.agent_step FROM supportflow_ai,supportflow_agent_runtime;
+ END IF;
+END $$;
 GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO supportflow_ai;
 \connect customer_db
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform;
@@ -100,7 +122,7 @@ REVOKE ALL ON SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow
 \connect customer_db
 DO $$ BEGIN
  IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
-   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access,supportflow_agent_runtime;
    GRANT SELECT ON public.supportflow_schema_history TO supportflow_customer;
  END IF;
 END $$;
@@ -108,7 +130,7 @@ END $$;
 \connect billing_db
 DO $$ BEGIN
  IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
-   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access,supportflow_agent_runtime;
    GRANT SELECT ON public.supportflow_schema_history TO supportflow_billing;
  END IF;
 END $$;
@@ -116,7 +138,7 @@ END $$;
 \connect ai_db
 DO $$ BEGIN
  IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
-   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access,supportflow_agent_runtime;
    GRANT SELECT ON public.supportflow_schema_history TO supportflow_ai;
  END IF;
 END $$;
@@ -124,7 +146,7 @@ END $$;
 \connect user_db
 DO $$ BEGIN
  IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
-   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access,supportflow_agent_runtime;
    GRANT SELECT ON public.supportflow_schema_history TO supportflow_user;
  END IF;
 END $$;
@@ -132,7 +154,7 @@ END $$;
 \connect tenant_db
 DO $$ BEGIN
  IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
-   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access,supportflow_agent_runtime;
    GRANT SELECT ON public.supportflow_schema_history TO supportflow_tenant;
  END IF;
 END $$;
@@ -140,7 +162,7 @@ END $$;
 \connect ops_db
 DO $$ BEGIN
  IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
-   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access;
+   REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access,supportflow_agent_runtime;
    GRANT SELECT ON public.supportflow_schema_history TO supportflow_ops;
  END IF;
 END $$;

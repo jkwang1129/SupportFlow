@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DATABASES = {"customer_db", "billing_db", "ai_db", "tenant_db", "user_db", "ops_db"}
 RUNTIME_ROLES = [f"supportflow_{role}" for role in (
     "user", "tenant", "customer", "billing", "ops", "ai", "kb", "customer_platform",
-    "customer_tenant", "kb_tenant", "platform_access")]
+    "customer_tenant", "kb_tenant", "platform_access", "agent_runtime")]
 
 
 class MigrationError(RuntimeError):

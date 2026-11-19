@@ -59,8 +59,8 @@ def main():
                 print(f"Created immutable baseline contract: {database}, {len(content['tables'])} tables", flush=True)
             return
         for database in TARGETS:
-            plan = load_plan()[database]
-            assert len(plan) == 1 and plan[0].kind == "baseline"
+            plan = [load_plan()[database][0]]
+            assert plan[0].kind == "baseline"
             with connect(database) as connection:
                 validate_baseline(connection, plan[0].content)
                 # Existing seed data must survive adoption; use deterministic row counts

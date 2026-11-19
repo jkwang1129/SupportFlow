@@ -3,8 +3,440 @@
     "ai_db": {
       "database": "ai_db",
       "format": 1,
-      "functions": {},
+      "functions": {
+        "supportflow_agent_due_tenants(p_limit integer)": "CREATE OR REPLACE FUNCTION public.supportflow_agent_due_tenants(p_limit integer)\n RETURNS TABLE(tenant_code character varying)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n SELECT r.tenant_code FROM public.agent_run r\n WHERE ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())\n    OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))\n AND NOT EXISTS(SELECT 1 FROM public.agent_run earlier WHERE earlier.tenant_code=r.tenant_code AND earlier.session_no=r.session_no\n    AND earlier.run_id<>r.run_id AND (earlier.state='RUNNING' OR\n       (earlier.event_seq<r.event_seq AND (earlier.state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR earlier.error_code='SIDE_EFFECT_UNKNOWN'))))\n GROUP BY r.tenant_code ORDER BY min(r.created_at),r.tenant_code\n LIMIT greatest(1,least(coalesce(p_limit,32),100))\n$function$\n"
+      },
       "tables": {
+        "agent_run": {
+          "columns": {
+            "attempt": {
+              "default": "0",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "cancel_requested": {
+              "default": "false",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "boolean"
+            },
+            "created_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "deadline_at": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "error_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "character varying(64)"
+            },
+            "event_seq": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "fence": {
+              "default": "0",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "finished_at": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "timestamp with time zone"
+            },
+            "input_hash": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "lease_until": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "timestamp with time zone"
+            },
+            "max_model_calls": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "max_retries": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "max_steps": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "max_tool_calls": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "message_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "model_calls": {
+              "default": "0",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "owner": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "character varying(64)"
+            },
+            "principal_ref": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(96)"
+            },
+            "ready_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "result_ref": {
+              "default": "'{}'::jsonb",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "jsonb"
+            },
+            "retry_count": {
+              "default": "0",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "run_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "runtime_version": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(32)"
+            },
+            "session_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            },
+            "source_event_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "state": {
+              "default": "'PENDING'::character varying",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "step_count": {
+              "default": "0",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "tool_calls": {
+              "default": "0",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "trace_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            },
+            "updated_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            }
+          },
+          "constraints": {
+            "agent_run_attempt_check": "CHECK ((attempt >= 0))",
+            "agent_run_check": "CHECK (((step_count >= 0) AND (step_count <= max_steps)))",
+            "agent_run_check1": "CHECK (((model_calls >= 0) AND (model_calls <= max_model_calls)))",
+            "agent_run_check2": "CHECK (((tool_calls >= 0) AND (tool_calls <= max_tool_calls)))",
+            "agent_run_check3": "CHECK (((retry_count >= 0) AND (retry_count <= max_retries)))",
+            "agent_run_check4": "CHECK ((((state)::text = 'RUNNING'::text) = ((owner IS NOT NULL) AND (lease_until IS NOT NULL))))",
+            "agent_run_event_seq_check": "CHECK ((event_seq > 0))",
+            "agent_run_fence_check": "CHECK ((fence >= 0))",
+            "agent_run_max_model_calls_check": "CHECK (((max_model_calls >= 0) AND (max_model_calls <= 100)))",
+            "agent_run_max_retries_check": "CHECK (((max_retries >= 0) AND (max_retries <= 10)))",
+            "agent_run_max_steps_check": "CHECK (((max_steps >= 1) AND (max_steps <= 100)))",
+            "agent_run_max_tool_calls_check": "CHECK (((max_tool_calls >= 0) AND (max_tool_calls <= 100)))",
+            "agent_run_message_id_check": "CHECK ((message_id > 0))",
+            "agent_run_pkey": "PRIMARY KEY (tenant_code, run_id)",
+            "agent_run_state_check": "CHECK (((state)::text = ANY ((ARRAY['PENDING'::character varying, 'RUNNING'::character varying, 'RETRY_WAIT'::character varying, 'SUCCEEDED'::character varying, 'FAILED'::character varying, 'CANCELLED'::character varying])::text[])))",
+            "agent_run_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
+            "agent_run_tenant_code_session_no_event_seq_key": "UNIQUE (tenant_code, session_no, event_seq)",
+            "agent_run_tenant_code_source_event_id_key": "UNIQUE (tenant_code, source_event_id)"
+          },
+          "indexes": {
+            "agent_run_expired_lease": {
+              "definition": "CREATE INDEX agent_run_expired_lease ON public.agent_run USING btree (lease_until) WHERE ((state)::text = 'RUNNING'::text)",
+              "valid": true
+            },
+            "agent_run_one_running_session": {
+              "definition": "CREATE UNIQUE INDEX agent_run_one_running_session ON public.agent_run USING btree (tenant_code, session_no) WHERE ((state)::text = 'RUNNING'::text)",
+              "valid": true
+            },
+            "agent_run_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_run_pkey ON public.agent_run USING btree (tenant_code, run_id)",
+              "valid": true
+            },
+            "agent_run_ready_queue": {
+              "definition": "CREATE INDEX agent_run_ready_queue ON public.agent_run USING btree (tenant_code, ready_at, event_seq) WHERE ((state)::text = ANY ((ARRAY['PENDING'::character varying, 'RETRY_WAIT'::character varying])::text[]))",
+              "valid": true
+            },
+            "agent_run_tenant_code_session_no_event_seq_key": {
+              "definition": "CREATE UNIQUE INDEX agent_run_tenant_code_session_no_event_seq_key ON public.agent_run USING btree (tenant_code, session_no, event_seq)",
+              "valid": true
+            },
+            "agent_run_tenant_code_source_event_id_key": {
+              "definition": "CREATE UNIQUE INDEX agent_run_tenant_code_source_event_id_key ON public.agent_run USING btree (tenant_code, source_event_id)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_runtime_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_runtime_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
+        "agent_step": {
+          "columns": {
+            "completed_at": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "timestamp with time zone"
+            },
+            "created_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "effect": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(8)"
+            },
+            "fence": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "intent_hash": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "intent_ref": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "jsonb"
+            },
+            "kind": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "result_ref": {
+              "default": "'{}'::jsonb",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "jsonb"
+            },
+            "run_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "state": {
+              "default": "'RESERVED'::character varying",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "step_key": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            },
+            "step_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            }
+          },
+          "constraints": {
+            "agent_step_check": "CHECK (((((kind)::text = 'TOOL'::text) AND ((effect)::text = ANY ((ARRAY['READ'::character varying, 'WRITE'::character varying])::text[]))) OR (((kind)::text <> 'TOOL'::text) AND ((effect)::text = 'NONE'::text))))",
+            "agent_step_effect_check": "CHECK (((effect)::text = ANY ((ARRAY['NONE'::character varying, 'READ'::character varying, 'WRITE'::character varying])::text[])))",
+            "agent_step_kind_check": "CHECK (((kind)::text = ANY ((ARRAY['MODEL'::character varying, 'TOOL'::character varying, 'INTERNAL'::character varying])::text[])))",
+            "agent_step_pkey": "PRIMARY KEY (tenant_code, run_id, step_no)",
+            "agent_step_state_check": "CHECK (((state)::text = ANY ((ARRAY['RESERVED'::character varying, 'SUCCEEDED'::character varying, 'FAILED'::character varying, 'UNKNOWN'::character varying])::text[])))",
+            "agent_step_step_no_check": "CHECK ((step_no > 0))",
+            "agent_step_tenant_code_run_id_fkey": "FOREIGN KEY (tenant_code, run_id) REFERENCES agent_run(tenant_code, run_id)",
+            "agent_step_tenant_code_run_id_step_key_key": "UNIQUE (tenant_code, run_id, step_key)"
+          },
+          "indexes": {
+            "agent_step_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_step_pkey ON public.agent_step USING btree (tenant_code, run_id, step_no)",
+              "valid": true
+            },
+            "agent_step_tenant_code_run_id_step_key_key": {
+              "definition": "CREATE UNIQUE INDEX agent_step_tenant_code_run_id_step_key_key ON public.agent_step USING btree (tenant_code, run_id, step_key)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_runtime_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_runtime_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "ai_usage_record": {
           "columns": {
             "cost_amount": {
@@ -12056,6 +12488,10 @@
       {
         "checksum": "178d817dd2d2560455fc9e3beb3cb6984e96e4329cb4ef73e019c1dca269b757",
         "version": "001"
+      },
+      {
+        "checksum": "a0242920169783cad7f4996c9372e9084d454be8bfc5b2def52696761385d5f5",
+        "version": "002"
       }
     ],
     "billing_db": [
