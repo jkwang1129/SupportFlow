@@ -20,7 +20,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.concurrent.ExecutorService;
@@ -71,9 +70,10 @@ public class BotBrainService {
      *
      * <p>客户手快连发三条时，三条消息会各自触发一次机器人；
      * 并发跑三轮会出现"回复顺序乱、意图/情绪被后一轮覆盖"的问题。
-     * 单实例用对象锁就够（多实例部署要把这把锁换成 Redis 锁）。</p>
+     * 执行者和等待者均持有引用，最后一个退出才回收锁。
+     * 这里只保证单实例互斥；跨实例领取、顺序与恢复由持久化 Runtime 负责。</p>
      */
-    private final ConcurrentHashMap<String, Object> sessionLocks = new ConcurrentHashMap<>();
+    private final SessionSerialExecutor sessionTurns = new SessionSerialExecutor();
 
     /**
      * 机器人接待专用线程池。
@@ -177,19 +177,16 @@ public class BotBrainService {
     }
 
     void handleCustomerMessage(String tenantCode, String sessionNo, String extraContext) {
-        String lockKey = tenantCode + '#' + sessionNo;
-        Object lock = sessionLocks.computeIfAbsent(lockKey, key -> new Object());
         try {
-            synchronized (lock) {
-                TenantContext.run(tenantCode, () -> runOneTurn(tenantCode, sessionNo, extraContext));
-            }
+            sessionTurns.execute(tenantCode, sessionNo,
+                    () -> TenantContext.run(tenantCode, () -> runOneTurn(tenantCode, sessionNo, extraContext)));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("等待机器人会话轮次时被中断 tenant={} sessionNo={}", tenantCode, sessionNo);
         } catch (Exception e) {
             // 必须在这里兜住：这是线程池里的任务，异常跑出去只会打到 stderr，
             // 现象就是"机器人没回话"，日志里却没有一句"为什么"。
             log.error("机器人接待异常 tenant={} sessionNo={}", tenantCode, sessionNo, e);
-        } finally {
-            // 处理完就把锁摘掉，别让 Map 随着会话一直涨
-            sessionLocks.remove(lockKey);
         }
     }
 
