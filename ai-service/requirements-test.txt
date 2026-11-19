@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest==9.2.0
+# Exercise both real graph and dependency-free fallback, without the unrelated parser stack.
+langgraph==1.2.22

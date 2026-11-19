@@ -1,0 +1,19 @@
+{
+  "version": "rag-abstention-contract-v1",
+  "mode": "synthetic-retrieval-and-generation-stubs",
+  "scope": "Routing contract at existing thresholds, not semantic answer accuracy or real model quality",
+  "cases": [
+    {"id": "empty-vector", "mode": "vector", "scores": [], "generate": false},
+    {"id": "low-vector", "mode": "vector", "scores": [0.1], "generate": false},
+    {"id": "zero-vector", "mode": "vector", "scores": [0], "generate": false},
+    {"id": "below-vector-boundary", "mode": "vector", "scores": [0.349], "generate": false},
+    {"id": "vector-boundary", "mode": "vector", "scores": [0.35], "generate": true},
+    {"id": "sufficient-vector", "mode": "vector", "scores": [0.9], "generate": true},
+    {"id": "empty-keyword", "mode": "keyword", "scores": [], "generate": false},
+    {"id": "low-keyword", "mode": "keyword", "scores": [0.05], "generate": false},
+    {"id": "keyword-boundary", "mode": "keyword", "scores": [0.12], "generate": true},
+    {"id": "sufficient-keyword", "mode": "keyword-fallback", "scores": [0.8], "generate": true},
+    {"id": "retrieval-error", "mode": "error", "scores": [], "generate": false},
+    {"id": "rewrite-recovery", "mode": "vector", "scores": [0.1], "rewrite_scores": [0.9], "generate": true}
+  ]
+}

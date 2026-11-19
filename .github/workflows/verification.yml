@@ -23,16 +23,23 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: ai-service/requirements.txt
+          cache-dependency-path: |
+            ai-service/requirements.txt
+            ai-service/requirements-test.txt
+            scripts/security/requirements.txt
       - name: Install API test dependencies
-        run: python -m pip install -r scripts/security/requirements.txt pytest
+        run: python -m pip install -r scripts/security/requirements.txt -r ai-service/requirements-test.txt
       - name: Verify all Java modules
         run: mvn -B -f backend/pom.xml verify
       - name: Verify PostgreSQL tenant isolation and knowledge store
         run: python scripts/test-customer-rls.py --with-ai
       - name: Verify AI service authorization
         working-directory: ai-service
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=../.local/verification/ai-tests.xml
+      - name: Verify RAG abstention contract gate
+        run: python scripts/report-rag-contract.py --junit .local/verification/ai-tests.xml --output .local/verification/rag-contract.json
+      - name: Verify evaluation gate negative cases
+        run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
       - name: Verify fresh and legacy runtime database privileges
         run: python scripts/test-runtime-security.py
       - name: Verify runtime credential distribution
@@ -45,6 +52,14 @@ jobs:
         with:
           name: java-test-reports
           path: backend/**/target/surefire-reports/
+          retention-days: 7
+      - name: Preserve AI test and contract reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-test-reports
+          path: .local/verification/
+          include-hidden-files: true
           retention-days: 7
 
   frontend:

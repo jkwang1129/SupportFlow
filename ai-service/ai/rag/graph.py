@@ -8,8 +8,9 @@
 流程图：
 
     retrieve ──▶ grade ──┬─(够)──▶ answer ──▶ verify ──▶ END
-                ▲        └─(不够)─▶ rewrite ──┘
-                └────────────────────┘（最多改写一次，防死循环）
+                ▲        ├─(不够且有预算)─▶ rewrite ──┐
+                └─────────────────────────────────┘
+                         └─(不够且预算耗尽)─▶ abstain ──▶ END
 
 没装 langgraph 时退化成同样步骤的线性实现（`_linear_flow`），
 差别只是"没有显式的图"，流程和结果一致——服务不会因为少一个包就不可用。
@@ -21,6 +22,7 @@ import logging
 from typing import Any, TypedDict
 
 from ..config import get_settings
+from ..core.trace import get_trace_id
 from . import retriever
 from .store import query_terms
 
@@ -59,13 +61,15 @@ class RagState(TypedDict, total=False):
     rounds: int           # 已经改写了几次
     answer: str
     citations: list[dict]
+    abstention_reason: str
     steps: list[dict]     # 每一步的执行记录，前端展示"编排过程"用
 
 
 def _step(state: RagState, node: str, detail: str, **extra: Any) -> list[dict]:
     """记一条执行轨迹（累加，不覆盖）。"""
     steps = list(state.get("steps") or [])
-    steps.append({"node": node, "detail": detail, **extra})
+    steps.append({"node": node, "detail": detail, "sequence": len(steps) + 1,
+                  "traceId": get_trace_id() or None, "schemaVersion": 1, **extra})
     return steps
 
 
@@ -166,12 +170,24 @@ def node_verify(state: RagState) -> dict:
     }
 
 
+def node_abstain(state: RagState) -> dict:
+    """Deterministic policy: exhausted evidence budget cannot enter generation."""
+    reason = "retrieval_unavailable" if state.get("mode") == "error" else "insufficient_evidence"
+    return {
+        "answer": "当前知识库资料不足，无法可靠回答这个问题。请补充问题细节，或联系人工客服处理。",
+        "citations": [],
+        "enough": False,
+        "abstention_reason": reason,
+        "steps": _step(state, "abstain", "资料不足，停止生成并提示澄清或联系人工", reason=reason),
+    }
+
+
 def _route_after_grade(state: RagState) -> str:
     if state.get("enough"):
         return "answer"
     if int(state.get("rounds") or 0) < MAX_REWRITE_ROUNDS:
         return "rewrite"
-    return "answer"  # 改写过了还是不够：也让模型基于现有资料回答（回答里会说明依据不足）
+    return "abstain"
 
 
 # --------------------------------------------------------------------------- 图
@@ -199,14 +215,16 @@ def _build_graph():
     builder.add_node("rewrite", node_rewrite)
     builder.add_node("answer", node_answer)
     builder.add_node("verify", node_verify)
+    builder.add_node("abstain", node_abstain)
 
     builder.set_entry_point("retrieve")
     builder.add_edge("retrieve", "grade")
     builder.add_conditional_edges("grade", _route_after_grade,
-                                  {"answer": "answer", "rewrite": "rewrite"})
+                                  {"answer": "answer", "rewrite": "rewrite", "abstain": "abstain"})
     builder.add_edge("rewrite", "retrieve")
     builder.add_edge("answer", "verify")
     builder.add_edge("verify", END)
+    builder.add_edge("abstain", END)
     return builder.compile()
 
 
@@ -243,6 +261,9 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
         "mode": final.get("mode"),
         "engine": engine_name(),
         "enough": bool(final.get("enough")),
+        "decision": "answer" if final.get("enough") else "abstain",
+        "abstention_reason": final.get("abstention_reason") or None,
+        "trace_id": get_trace_id() or None,
         "steps": final.get("steps") or [],
     }
 
@@ -255,6 +276,9 @@ async def _linear_flow(state: RagState) -> RagState:
         state.update(node_rewrite(state))
         state.update(node_retrieve(state))
         state.update(node_grade(state))
-    state.update(await node_answer(state))
-    state.update(node_verify(state))
+    if state.get("enough"):
+        state.update(await node_answer(state))
+        state.update(node_verify(state))
+    else:
+        state.update(node_abstain(state))
     return state
