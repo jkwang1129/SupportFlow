@@ -22,7 +22,7 @@ class MigrationParserTest(unittest.TestCase):
 
     def test_manifest_has_explicit_ordered_database_plans(self):
         plans=load_plan()
-        self.assertEqual(["001","002","003","004"],[m.version for m in plans["customer_db"]])
+        self.assertEqual(["001","002","003","004","005"],[m.version for m in plans["customer_db"]])
         self.assertEqual(["001"],[m.version for m in plans["billing_db"]])
         for database in ("ai_db", "user_db", "tenant_db", "ops_db"):
             self.assertEqual(["001","002"] if database=='ai_db' else ["001"], [m.version for m in plans[database]])
@@ -71,16 +71,17 @@ class MigrationPostgresTest(unittest.TestCase):
     def setUp(self):
         self.connection=psycopg.connect(os.environ["SUPPORTFLOW_MIGRATIONS_TEST_URL"],autocommit=True)
         self.base=load_plan()["customer_db"]
+        self.next_version=f"{int(self.base[-1].version)+1:03d}"
         run_plan(self.connection,self.base,verify=True)
 
     def tearDown(self):
         # Only the isolated fixture owns these synthetic objects; business tables are never cleared.
-        self.connection.execute("DELETE FROM supportflow_schema_history WHERE version>'004'")
+        self.connection.execute("DELETE FROM supportflow_schema_history WHERE version>%s",(self.base[-1].version,))
         self.connection.execute("DROP TABLE IF EXISTS supportflow_migration_test_effect")
         self.connection.close()
 
     def added(self,content):
-        return [*self.base,Migration("customer_db","005","synthetic transaction fault","fixture.sql",content)]
+        return [*self.base,Migration("customer_db",self.next_version,"synthetic transaction fault","fixture.sql",content)]
 
     def test_applied_migrations_are_noops_and_data_is_preserved(self):
         self.assertEqual([],run_plan(self.connection,self.base)["applied"])
@@ -91,9 +92,9 @@ class MigrationPostgresTest(unittest.TestCase):
         failed=self.added("CREATE TABLE supportflow_migration_test_effect(value int); INSERT INTO supportflow_migration_test_effect VALUES(1); SELECT 1/0;")
         with self.assertRaises(MigrationError): run_plan(self.connection,failed)
         self.assertEqual((None,),self.connection.execute("SELECT to_regclass('supportflow_migration_test_effect')").fetchone())
-        self.assertEqual((0,),self.connection.execute("SELECT count(*) FROM supportflow_schema_history WHERE version='005'").fetchone())
+        self.assertEqual((0,),self.connection.execute("SELECT count(*) FROM supportflow_schema_history WHERE version=%s",(self.next_version,)).fetchone())
         corrected=self.added("CREATE TABLE supportflow_migration_test_effect(value int); INSERT INTO supportflow_migration_test_effect VALUES(1);")
-        self.assertEqual(["005"],run_plan(self.connection,corrected)["applied"])
+        self.assertEqual([self.next_version],run_plan(self.connection,corrected)["applied"])
         self.assertEqual([],run_plan(self.connection,corrected)["applied"])
         self.assertEqual([(1,)],self.connection.execute("SELECT value FROM supportflow_migration_test_effect").fetchall())
 
@@ -144,7 +145,7 @@ class MigrationPostgresTest(unittest.TestCase):
 
     def test_a_gap_in_history_is_rejected_before_applying_any_pending_sql(self):
         plan=self.added("CREATE TABLE supportflow_migration_test_effect(value int);")
-        later=Migration("customer_db","006","synthetic out of order","fixture.sql","SELECT 1;")
+        later=Migration("customer_db",f"{int(self.next_version)+1:03d}","synthetic out of order","fixture.sql","SELECT 1;")
         self.connection.execute("INSERT INTO supportflow_schema_history(version,name,checksum,source) VALUES(%s,%s,%s,%s)",
                                 (later.version,later.name,later.checksum,later.source))
         with self.assertRaisesRegex(MigrationError,"contiguous"):

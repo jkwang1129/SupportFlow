@@ -2721,6 +2721,203 @@
             }
           }
         },
+        "agent_event_outbox": {
+          "columns": {
+            "attempts": {
+              "default": "0",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "created_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "delivered_at": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "timestamp with time zone"
+            },
+            "error_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "character varying(64)"
+            },
+            "event_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "event_seq": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "fence": {
+              "default": "0",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "lease_until": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "timestamp with time zone"
+            },
+            "message_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "owner": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "character varying(64)"
+            },
+            "principal_ref": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(96)"
+            },
+            "ready_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "run_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "uuid"
+            },
+            "runtime_version": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(32)"
+            },
+            "session_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "session_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            },
+            "state": {
+              "default": "'PENDING'::character varying",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "trace_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            }
+          },
+          "constraints": {
+            "agent_event_outbox_attempts_check": "CHECK (((attempts >= 0) AND (attempts <= 8)))",
+            "agent_event_outbox_check": "CHECK ((((state)::text = 'SENDING'::text) = ((owner IS NOT NULL) AND (lease_until IS NOT NULL))))",
+            "agent_event_outbox_check1": "CHECK ((((state)::text = 'DELIVERED'::text) = ((run_id IS NOT NULL) AND (delivered_at IS NOT NULL))))",
+            "agent_event_outbox_event_seq_check": "CHECK ((event_seq > 0))",
+            "agent_event_outbox_fence_check": "CHECK ((fence >= 0))",
+            "agent_event_outbox_message_id_fkey": "FOREIGN KEY (message_id) REFERENCES session_message(id)",
+            "agent_event_outbox_pkey": "PRIMARY KEY (tenant_code, event_id)",
+            "agent_event_outbox_session_id_fkey": "FOREIGN KEY (session_id) REFERENCES session(id)",
+            "agent_event_outbox_state_check": "CHECK (((state)::text = ANY ((ARRAY['PENDING'::character varying, 'SENDING'::character varying, 'DELIVERED'::character varying, 'HELD'::character varying])::text[])))",
+            "agent_event_outbox_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
+            "agent_event_outbox_tenant_code_message_id_key": "UNIQUE (tenant_code, message_id)",
+            "agent_event_outbox_tenant_code_session_no_event_seq_key": "UNIQUE (tenant_code, session_no, event_seq)"
+          },
+          "indexes": {
+            "agent_event_outbox_one_sending_session": {
+              "definition": "CREATE UNIQUE INDEX agent_event_outbox_one_sending_session ON public.agent_event_outbox USING btree (tenant_code, session_no) WHERE ((state)::text = 'SENDING'::text)",
+              "valid": true
+            },
+            "agent_event_outbox_pending": {
+              "definition": "CREATE INDEX agent_event_outbox_pending ON public.agent_event_outbox USING btree (tenant_code, ready_at, event_seq) WHERE ((state)::text = ANY ((ARRAY['PENDING'::character varying, 'SENDING'::character varying])::text[]))",
+              "valid": true
+            },
+            "agent_event_outbox_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_event_outbox_pkey ON public.agent_event_outbox USING btree (tenant_code, event_id)",
+              "valid": true
+            },
+            "agent_event_outbox_tenant_code_message_id_key": {
+              "definition": "CREATE UNIQUE INDEX agent_event_outbox_tenant_code_message_id_key ON public.agent_event_outbox USING btree (tenant_code, message_id)",
+              "valid": true
+            },
+            "agent_event_outbox_tenant_code_session_no_event_seq_key": {
+              "definition": "CREATE UNIQUE INDEX agent_event_outbox_tenant_code_session_no_event_seq_key ON public.agent_event_outbox USING btree (tenant_code, session_no, event_seq)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_event_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_customer_tenant"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_event_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_customer_tenant"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "agent_status": {
           "columns": {
             "agent_id": {
@@ -12516,6 +12713,10 @@
       {
         "checksum": "e9de68fa01dc2ac332778626b1819279eaa79682e9431dcbdaf7abba1f20872b",
         "version": "004"
+      },
+      {
+        "checksum": "aa4878d71c3a211c891663ea169fde362b20ba415ab3bf1f0f44bb0628829ce0",
+        "version": "005"
       }
     ],
     "ops_db": [

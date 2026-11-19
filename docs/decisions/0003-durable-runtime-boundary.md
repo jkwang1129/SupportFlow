@@ -41,3 +41,13 @@ Java 继续拥有消息、会话、工单、资源权限和最终业务事务。
 `ExecutionContext.step` 用逻辑 key +意图摘要关联持久化步骤，同意图已成功则复用引用，不重复调用；内容变更拒绝。MODEL/READ/INTERNAL 的未知结果可在新 fence 下预留新步骤后重试，每个尝试继续消耗原 Run 预算。WRITE 未知结果不能自动重试。所有结果仍仅存引用；大对象/上下文快照与审批不是本批能力。
 
 取消和超时只能终止有效写回权限，不能强杀 Python 线程或撤回外部请求。可信 handler 必须使用有界外部 I/O 并在步骤之间协作检查；未接入供应商的本批不会谎称可取消任意阻塞模型。原始异常只分类成稳定错误码，不持久化 DSN/供应商正文；未知编程错误永久失败，明确瞬态失败才使用共享重试预算。
+
+## B1 第三子批次：Java 源端事件存储
+
+新增 customer_db 005 / AgentEventOutbox，只提供事务存储API，本子批次不接SessionService自动触发、不启动网络派发，所以不会同旧机器人链路重复执行。自动化测试在生产SessionService的appendMessage与outbox.enqueue外层共用真实Spring事务，验证消息和事件同时提交/回滚；后续接入只替换触发位置，不重新实现消息链路。
+
+事件只从同租户的已存在、可见访客消息派生，主体为可信visitor-session引用，消息正文/JWT不进入Outbox。按tenant/message_id唯一，持久化event UUID/消息seq/Trace/Runtime版本后重发保持不变；同事件修改版本拒绝。要求先绑定可信tenant再开启短事务，数据库强制RLS加restrictive guard；新表运行角色只有S/I/U，保留历史禁止删除/清空。
+
+投递领取独立租约/fence，按同会话先前未DELIVERED事件阻塞，另一会话可进展。网络调用必须在领取事务外进行；只有匹配eventId且含Run UUID的接收回执才能落DELIVERED，这表示目标已持久化接收而非Agent已成功。丢响应在租约过期后用同事件重发，旧Worker不能ack/retry。最多8次投递，耗尽保留HELD并阻断后续同会话事件，等待后续运维核查，不自动丢弃或跳过。积压满时事务失败使源消息一同回滚；未来入口必须给出明确可重试响应，而非确认发送后漏任务。
+
+仍缺带body绑定的服务鉴权接收协议、Dispatcher、Java业务快照/结果幂等入口和Python业务handler。未接好前保持原业务触发不变；不把事务测试描述成已上线的消息→Agent→回复闭环。回滚保留事件/外键/迁移历史，停派发再由兼容版本处理，不删除HELD或重用新eventId绕过去重。

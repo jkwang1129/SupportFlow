@@ -36,7 +36,9 @@ if __name__ == '__main__':
                 ledger = subprocess.check_output([*billing_psql,"SELECT count(*),has_table_privilege('supportflow_billing','billing_usage_batch','DELETE') FROM billing_usage_batch"],text=True).strip().split('|')
                 assert int(ledger[0]) >= 1 and ledger[1] == 'f', ledger
                 versions = subprocess.check_output([*psql,"SELECT count(*),bool_and(length(checksum)=64),has_table_privilege('supportflow_customer','supportflow_schema_history','INSERT') FROM supportflow_schema_history"],text=True).strip().split('|')
-                assert versions == ['4','t','f'], versions
+                assert versions == ['5','t','f'], versions
+                outbox_privileges = subprocess.check_output([*psql,"SELECT has_table_privilege('supportflow_customer','agent_event_outbox','SELECT'),has_table_privilege('supportflow_customer','agent_event_outbox','INSERT'),has_table_privilege('supportflow_customer','agent_event_outbox','UPDATE'),has_table_privilege('supportflow_customer','agent_event_outbox','DELETE'),has_table_privilege('supportflow_customer','agent_event_outbox','TRUNCATE')"],text=True).strip().split('|')
+                assert outbox_privileges == ['t','t','t','f','f'], outbox_privileges
                 billing_versions = subprocess.check_output([*billing_psql,"SELECT count(*),has_table_privilege('supportflow_billing','supportflow_schema_history','UPDATE') FROM supportflow_schema_history"],text=True).strip().split('|')
                 assert billing_versions == ['1','f'], billing_versions
                 for database in ('ai','user','tenant','ops'):

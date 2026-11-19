@@ -245,3 +245,23 @@ init 本身不配置运行密码、不启动业务，不保证跨库原子性或
 本批仅Python执行原语，未改SQL/Java/HTTP路由；前一批六库迁移/结构/全服务回归结果不冒充本批新跑。无新的端到端业务恢复结论。下一批必须补Java消息事务Outbox、按会话顺序可靠派发、真实受鉴权的AI接收入口和幂等结果回写，然后才能关闭B1。
 
 剩余风险/回滚：Python无法强杀阻塞线程，handler必须有界I/O并协作取消，fencing只控制有效写回。未知写仍需后续B3显式核验。仅本地轮转，不代表跨进程租户并发/费用硬额度。Token/成本、生产吞吐和真实模型成功率未测。回退可停用Worker模块保留Run/Step历史和原Workflow；接入前不修改原触发路径。本批CI复用已登记专项命令，尚无远端运行结果。
+
+## B1 子批次 3：Java 事务 Outbox 存储与投递原语（2026-11-19）
+
+基线1ba4c5e。新增customer_db 005、AgentEventOutbox、AgentEventOutboxPostgresTest；复用生产SessionService/Mapper与受限PG事务夹具。更新唯一角色脚本的DELETE/TRUNCATE收回、manifest/current-schema、现有CI调用的test-customer-rls.py和结构/历史断言。迁移单测的合成版本及cleanup边界改由当前最后版本计算，避免新增005后误删真实回执；没有改已有迁移SQL/checksum。
+
+设计：来源只允许本租户可见访客消息，持久化消息/会话/主体引用、Trace、不可变版本和UUID，不保存消息正文/JWT。与消息同一个Spring事务提交/回滚；只有同tenant/message_id返回原事件。短事务准入锁、积压上限，按会话顺序领取、投递lease/fence、回执eventId+Run UUID校验、有限8次重试，耗尽保留HELD，阻断同会话后续投递而允许独立会话进展。每次操作要求先有可信租户Scope再开事务，并设置LOCAL lock_timeout=2s/statement_timeout=5s。网络调用必须在领取事务外进行。
+
+当前仅提供存储API和事务组合测试，**没有自动接入SessionService、没有Dispatcher/真实AI接收协议，没有切换原机器人路径**。测试里外层事务组合生产appendMessage和outbox.enqueue，不冒充产品已经自动登记事件或端到端持久化回复。
+
+实际验证（JDK25.0.5+8/Maven3.9.16/Python3.11.5/隔离PG17，离线模型和合成数据）：
+
+- `python scripts/test-customer-rls.py --with-ai`：**37项Java实际PG测试全部通过**（原25项、新Outbox12项），另**4项KB PG**通过。日志 `.local/implementation/b1-outbox-scoped-final.log`。新增覆盖同事务提交/回滚、六路重复事件、版本冲突、缺Scope/无事务/错租户、非法来源/内部可见消息、顺序派发/错误回执、丢响应同event重领与旧fence拒绝、六路Dispatcher一名胜者、显式重试/崩溃8次HELD、独立会话进展、队列满回滚消息、异常Trace替换、无/错租户与额外宽松策略/RLS/删除/清表/DDL拒绝。
+- 首轮新增9项中3项失败，是测试覆写cleanup后遗漏@AfterEach导致前一测试事件残留，修正夹具后34项全通过；再增加3项负面/并发场景并增加SQL/锁超时后，最终37项完整重跑通过。失败日志 `b1-outbox-first.log` 保留，不把夹具错误描述成产品缺陷。
+- `mvn -B -f backend/pom.xml clean verify` 九模块成功（`b1-outbox-java.log`）；补充最后的LOCAL timeout后再次 `mvn -B -f backend/pom.xml verify` 九模块成功（`b1-outbox-java-final.log`），PG跳过仅由上述专项计入通过。构建无新增依赖。一次开发期间Maven专项/clean并行造成报告覆盖的可能性，最终验证使用独立顺序命令，原始日志与最后代码对应。
+- `python scripts/test-versioned-migrations.py`：**17项通过**及CLI，`b1-outbox-migrations.log`。`test-schema-drift.py`：六库**90表/1视图/5受控函数**匹配，14个SQL/3个metadata故障及CLI失败/修复通过，`b1-outbox-drift.log`。审查JSON只有新增Outbox表及005 checksum，原结构/旧回执不变。
+- `python scripts/test-database-init.py`：90表空库初始化、重复拒绝、锁/权限/失败库回滚和部分状态保留通过，`b1-outbox-init.log`。
+- `python scripts/test-agent-runtime.py`：**49项通过**（含真实Worker进程kill恢复）、另6次危险能力角色负面执行通过，`b1-outbox-runtime.log`。确认新增customer005不破坏既有AI Run/Worker原语。
+- 最后构建后 `python scripts/test-security-flow.py`：默认新库、历史升级、CLI init三套真实服务全部通过，新增核对受限customer身份对Outbox仅S/I/U、无DELETE/TRUNCATE，customer历史5条/AI历史2条。原开通审核/平台权限/私有媒体/知识/访客WS机器人/签名计费以及45次Java Readiness故障不退化；测试容器/卷/网络均清理。日志 `b1-outbox-services.log`。
+
+边界/回滚：DELIVERED只表示接收回执，不是Agent任务成功。HELD尚无运营核验/重驱界面；缺业务鉴权接收、Dispatcher、结果幂等与用户取消传播，B1未完成。需要后续用带body绑定的鉴权防止事件/主体被篡改，Java仍需最终资源权限与写操作幂等检查。新表外键保留事件对消息/会话的引用，数据保留/归档方案仍归阶段E。回滚停止新组件并保留事件/表/历史，不删HELD、不用新UUID绕过去重。无生产客户/流量/准确率/成本或性能提升声明；未推送和远端CI未运行。

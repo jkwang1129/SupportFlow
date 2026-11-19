@@ -17,11 +17,11 @@
 | PR-4 消息幂等 | 本轮已实现且真实 PG 验证通过 | `SessionService#appendMessage`、两个 Mapper；`SessionMessagePostgresTest` 7 项 | 原 25P02、回滚计费问题已复现后修复；含关闭竞争、跨租户和软删除键。持久化计量/任务仍在 PR-6/8。A2 完成 |
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
-| PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 登记的 89 张表/索引/RLS 核验、默认新库/历史升级/CLI init 实际服务已通过；生产备份/运维属 M12。A5 本地完成 |
-| PR-8 持久化 Run | 部分实现：Run/Step 和 Worker 执行原语 | `ai/runtime/{types,store,worker}.py`、AI 002；49项类型/真PG/进程故障测试 | 事件幂等/租约/fencing/预算/取消、Worker续租/步骤复用/进程恢复已测；Java Outbox、业务入口与结果回写尚缺。B1 进行中 |
+| PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 登记的 90 张表/索引/RLS 核验、默认新库/历史升级/CLI init 实际服务已通过；生产备份/运维属 M12。A5 本地完成 |
+| PR-8 持久化 Run | 部分实现：Run/Step 和 Worker 执行原语 | `ai/runtime/{types,store,worker}.py`、AI 002；49项类型/真PG/进程故障测试 | Run/Worker与Java Outbox存储原语已测；Outbox尚未自动接消息触发，鉴权接收、实际派发和结果回写仍缺。B1 进行中 |
 | PR-9 Tool Calling | 未实现通用层 | `ai/agents/brain.py` 固定图；Java 工单/知识 API 为可复用业务能力 | 内部 Registry/Executor、可信主体、Schema、只读和写工具、结果验证；MCP 只做适配。B2 |
 | PR-10 Checkpoint/HITL | 未实现 | `brain.py`、`rag/graph.py` 均 `compile()` 无 checkpointer；`docs/architecture.md` 明示缺失 | 业务对话状态不能代替执行 checkpoint；审批绑定参数、恢复重新鉴权、未知副作用核验。B3 |
-| PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 缺统一 Run/Step、只读回放、工具/恢复数据集与 CI 质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
+| PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
 | PR-12 RAG | 部分完成：本轮拒答首批已通过 | `rag/graph.py` 增加 abstain；版本化 12 案例 × 两引擎 24 项通过；`services/rag.py#verify_citations` 仍只核编号 | 未完成事实支持、冲突/版本/ACL 评测，越界引用正文问题仍 xfail；不预设必须混检/重排。A6 首批/C |
 
 Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src/main/java/io/supportflow/`；Mapper XML 位于对应服务 `src/main/resources/mapper`。
@@ -30,18 +30,18 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 
 | 模块 | 当前状态 | 可复用实现/证据 | 必须补齐及依赖 |
 | --- | --- | --- | --- |
-| M01 Reliable Runtime | 部分实现：持久化底座，未接业务 | `ai/runtime` 的 Run/Step、租约、fencing 和共享计数预算；不能算完整 durable loop | Worker/可靠投递/实际工具循环/恢复与审批；PR-8/9/10。B |
+| M01 Reliable Runtime | 部分实现：Run/Step与Worker，未接业务 | `ai/runtime` 的 Run/Step、租约、fencing 和共享计数预算；不能算完整 durable loop | 源端/接收/回写闭环、实际工具循环与审批；PR-8/9/10。B |
 | M02 Context Engineering | 部分实现 | `BotBrainService#buildHistory` 最近 12 条；`ai/agents/brain.py` slots/turns、`ai/services/brain.py` 对话持久化 | 统一构建器、可信/不可信分区、Token 上限、确定性事实、压缩/恢复对照。依赖 B checkpoint。C |
 | M03 Tool Calling/MCP | 未实现通用层 | 既有工单创建/查询、知识检索 Java API | 先内部工具与权限、后可信 MCP 适配；不重复写业务服务。B |
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、`ChatAttachmentAccess`、`LicensePrivilegeTest`、受限 DB 角色/平台审计 | 工具 Scope、资源和输出约束、注入负面集、限时参数审批、防重放；无任意代码需求，暂不建 Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，本轮补齐低分拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号、租户过滤；新增两引擎拒答契约测试 | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
-| M06 Evaluation | 部分实现，本轮新增契约门禁 | 既有本地评测不重复开发；新增 `fixtures/evaluation/rag-abstention-v1.json`、`report-rag-contract.py`，24 项契约前后对照及 5 项报告负面测试 | 不是 200 条集或语义质量平台；仍缺 holdout、业务事实评分、恢复/工具评测与安全 replay；Judge 若采用需人工校准。A/D |
-| M07 Trace/Observability | 部分实现 | Java `TraceContext`；Python `core/trace.py`、图 steps、`llm_usage.py`；运营 `ObservabilityService#trace/evaluate`、告警规则与调用记录查询；本轮 RAG steps 增加 traceId/sequence/schemaVersion 与拒答原因 | 已有模型调用 Trace 查询与告警应复用；缺持久化 Run/Step/工具关联、脱敏治理、异步链路、重试/审批事件和安全 replay。A/B/D |
+| M06 Evaluation | 部分实现，本轮新增契约门禁 | 既有本地评测不重复开发；新增 `fixtures/evaluation/rag-abstention-v1.json`、`report-rag-contract.py`，24 项契约前后对照及 5 项报告负面测试 | 新增49项Runtime类型/真PG/进程故障及12项Java Outbox测试，CI复用专用脚本；不是200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具评测与安全 replay；Judge 若采用需人工校准。A/D |
+| M07 Trace/Observability | 部分实现 | Java `TraceContext`；Python `core/trace.py`、图 steps、`llm_usage.py`；运营 `ObservabilityService#trace/evaluate`、告警规则与调用记录查询；本轮 RAG steps 增加 traceId/sequence/schemaVersion 与拒答原因 | 已有模型调用 Trace 查询与告警应复用；已有持久化Run/Step与trace_id；缺工具详情、异步业务链路/审批事件、统一查询、脱敏治理和安全replay。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现 | 实际调用在 `core/llm_chat.py`、`llm_vision.py`、`rag/embedding.py`；租户模型选择/usage；`llm_gateway.py` 仍 Mock 占位 | 统一现有调用封装，错误/超时/总预算、结构化输出、供应商权限、Prompt 版本；不额外造第二入口。E |
 | M09 Streaming/交互 | 部分实现 | `supportflow-realtime-service` WebSocket、消息 seq/ACK/补拉、机器人 typing | 缺持久化 Run 事件、审批/取消/恢复展示；优先复用 WebSocket。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
-| M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、`llm_usage.py` 实际 usage 与价格估算、计费日聚合；运营 `TenantCostBudget`、`ObservabilityService#costGuard/evaluate` 和客服 `CostGuardClient` 已有月预算告警/降级/暂停 | 复用既有预算配置；当前闸门缓存 60 秒且读取失败放行，不能当硬额度。无并发预留/结算、公平调度/跨 Worker 租约；计费去重 A4，运行预算随 M01，完整隔离压测 E。费用估算不是账单。B/E |
-| M12 Production Operations | 部分实现 | Compose 依赖、启动脚本、GitHub CI、新旧库/服务隔离验收、凭据分发与升级文档 | 全栈部署、schema readiness、备份恢复实测、Runbook/SLO 告警与旧任务兼容；本地演示不能称生产运营。A5/E |
+| M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、`llm_usage.py` 实际 usage 与价格估算、计费日聚合；运营 `TenantCostBudget`、`ObservabilityService#costGuard/evaluate` 和客服 `CostGuardClient` 已有月预算告警/降级/暂停 | 复用既有预算配置；当前闸门缓存 60 秒且读取失败放行，不能当硬额度。已有跨Worker租约/fencing、Run调用/步骤/重试计数预算和租户积压上限；仍缺Token/费用并发预留结算和跨进程租户配额/公平性；计费去重 A4，运行预算随 M01，完整隔离压测 E。费用估算不是账单。B/E |
+| M12 Production Operations | 部分实现 | Compose 依赖、启动脚本、GitHub CI、新旧库/服务隔离验收、凭据分发与升级文档 | 本地六库init/migrate/verify和schema readiness已验；生产部署、备份恢复实测、Runbook/SLO告警与旧任务兼容仍缺；本地演示不能称生产运营。A5/E |
 
 ## 分阶段计划与退出条件
 
@@ -78,4 +78,4 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 
 阶段 A 的本地退出条件已完成：A1/A2/A3 并发与事务、A4 客服计费批次、A5 六库迁移/Readiness/实际结构核验、A6 低证据拒答首批均有本地记录。网关 tenant_usage_daily 与尚未持久化原始计数的边界仍保留到 M11；RAG 事实支持/引用正文问题保留阶段 C，不冒充已完成。新旧服务与 CLI init 三条业务部署路径实测通过，未推送/远程 CI 尚未验证。
 
-B1 的 ADR-0003、Run/Step 存储与 Worker 执行原语已落地，实际测试见阶段验收。当前六库 desired-state 为 89 张表/1 视图/5 个受控函数，原四库历史基线不改。下一批接 Java 同事务 Outbox、受鉴权的接收入口和结果幂等回写。Worker 尚未接入现有客服触发路径，B1 未完成前，不将存储表、固定 Workflow 或状态枚举称为完整 Agent Runtime；B2/B3 的工具授权、MCP 适配、审批与 Checkpoint 仍待实现。阶段 C～F 状态不变。
+B1 的 ADR-0003、Run/Step 存储与 Worker 执行原语已落地，实际测试见阶段验收。当前六库 desired-state 为 90 张表/1 视图/5 个受控函数，原四库历史基线不改。Java Outbox 存储与消息同事务的组合测试已实现，但没有自动接入消息触发。下一批接受鉴权的AI持久化接收、Dispatcher、业务快照和结果幂等回写，最后切换触发入口。Worker 尚未接入现有客服触发路径，B1 未完成前，不将存储表、固定 Workflow 或状态枚举称为完整 Agent Runtime；B2/B3 的工具授权、MCP 适配、审批与 Checkpoint 仍待实现。阶段 C～F 状态不变。

@@ -121,6 +121,9 @@ REVOKE ALL ON SCHEMA public FROM supportflow_user,supportflow_tenant,supportflow
 
 \connect customer_db
 DO $$ BEGIN
+ IF to_regclass('public.agent_event_outbox') IS NOT NULL THEN
+   REVOKE DELETE,TRUNCATE ON public.agent_event_outbox FROM supportflow_customer,supportflow_customer_tenant;
+ END IF;
  IF to_regclass('public.supportflow_schema_history') IS NOT NULL THEN
    REVOKE ALL ON public.supportflow_schema_history FROM supportflow_user,supportflow_tenant,supportflow_customer,supportflow_billing,supportflow_ops,supportflow_ai,supportflow_kb,supportflow_customer_platform,supportflow_customer_tenant,supportflow_kb_tenant,supportflow_platform_access,supportflow_agent_runtime;
    GRANT SELECT ON public.supportflow_schema_history TO supportflow_customer;

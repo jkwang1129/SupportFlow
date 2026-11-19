@@ -49,7 +49,8 @@ def main():
                 assert connection.execute("SHOW transaction_read_only").fetchone()[0] == "on"
                 print(f"Read-only {database}: {result}", flush=True)
         changed_plan = {database: list(plan) for database, plan in plans.items()}
-        changed_plan["customer_db"].append(Migration("customer_db", "005", "not reviewed", "fixture.sql", "SELECT 1;"))
+        next_version = f"{int(plans['customer_db'][-1].version)+1:03d}"
+        changed_plan["customer_db"].append(Migration("customer_db", next_version, "not reviewed", "fixture.sql", "SELECT 1;"))
         with connect("customer_db", readonly=True) as connection:
             try:
                 verify_schema(connection, changed_plan)
