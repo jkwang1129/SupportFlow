@@ -11,6 +11,8 @@ if __name__ == '__main__':
     logs.mkdir(parents=True, exist_ok=True)
     stop = logs / 'stop'
     for scenario in ([], ['--legacy'], ['--empty-init']):
+        label = 'FRESH CLI INIT' if '--empty-init' in scenario else ('LEGACY UPGRADE' if scenario else 'FRESH DEFAULT')
+        failed = False
         stop.unlink(missing_ok=True)
         with (logs / 'runtime.log').open('wb') as log:
             runtime = subprocess.Popen([sys.executable, 'scripts/security/acceptance_runtime.py', *scenario],
@@ -48,8 +50,10 @@ if __name__ == '__main__':
                     assert history == ['2' if database=='ai' else '1','t','t','f','f','f'], (database,history)
                 print('Six database migration histories verified; baseline history receipts are read-only for runtime roles', flush=True)
                 print('Observed five restricted Java database identities; mandatory platform audit receipts matched', flush=True)
-                label = 'FRESH CLI INIT' if '--empty-init' in scenario else ('LEGACY UPGRADE' if scenario else 'FRESH DEFAULT')
                 print(label + ': full security flow passed', flush=True)
+            except BaseException:
+                failed = True
+                raise
             finally:
                 stop.touch()
                 try:
@@ -57,6 +61,9 @@ if __name__ == '__main__':
                 except subprocess.TimeoutExpired:
                     runtime.terminate()
                     runtime.wait(timeout=15)
+                if failed or runtime.returncode:
+                    from security.service_diagnostics import capture
+                    capture(logs, ROOT / '.local/verification/service-errors.json', label)
             if runtime.returncode:
                 raise SystemExit('Security runtime failed; see .local/security-services/runtime.log')
             for command in (['docker','ps','-a','-q'], ['docker','volume','ls','-q'], ['docker','network','ls','-q']):

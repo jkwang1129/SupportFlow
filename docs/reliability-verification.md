@@ -264,4 +264,10 @@ init 本身不配置运行密码、不启动业务，不保证跨库原子性或
 - `python scripts/test-agent-runtime.py`：**49项通过**（含真实Worker进程kill恢复）、另6次危险能力角色负面执行通过，`b1-outbox-runtime.log`。确认新增customer005不破坏既有AI Run/Worker原语。
 - 最后构建后 `python scripts/test-security-flow.py`：默认新库、历史升级、CLI init三套真实服务全部通过，新增核对受限customer身份对Outbox仅S/I/U、无DELETE/TRUNCATE，customer历史5条/AI历史2条。原开通审核/平台权限/私有媒体/知识/访客WS机器人/签名计费以及45次Java Readiness故障不退化；测试容器/卷/网络均清理。日志 `b1-outbox-services.log`。
 
-边界/回滚：DELIVERED只表示接收回执，不是Agent任务成功。HELD尚无运营核验/重驱界面；缺业务鉴权接收、Dispatcher、结果幂等与用户取消传播，B1未完成。需要后续用带body绑定的鉴权防止事件/主体被篡改，Java仍需最终资源权限与写操作幂等检查。新表外键保留事件对消息/会话的引用，数据保留/归档方案仍归阶段E。回滚停止新组件并保留事件/表/历史，不删HELD、不用新UUID绕过去重。无生产客户/流量/准确率/成本或性能提升声明；未推送和远端CI未运行。
+边界/回滚：DELIVERED只表示接收回执，不是Agent任务成功。HELD尚无运营核验/重驱界面；缺业务鉴权接收、Dispatcher、结果幂等与用户取消传播，B1未完成。需要后续用带body绑定的鉴权防止事件/主体被篡改，Java仍需最终资源权限与写操作幂等检查。新表外键保留事件对消息/会话的引用，数据保留/归档方案仍归阶段E。回滚停止新组件并保留事件/表/历史，不删HELD、不用新UUID绕过去重。无生产客户/流量/准确率/成本或性能提升声明；以上为当时本地结果，远端验证见下节。
+
+## 首轮开发分支推送与 CI 差异（2026-11-19）
+
+14个阶段提交已推送到`codex/p1-reliability`，首轮[CI 44550858743](https://github.com/jkwang1129/SupportFlow/actions/runs/44550858743)对应f373666。前端成功；后端构建、真实PG隔离/计费/Runtime/迁移/结构/初始化、AI认证与RAG门禁、运行角色与凭据分发步骤通过。实际服务验收在默认新库的`POST /customer/tickets/platform`遇到500，故整轮CI失败，不能以本地通过宣称远端验收通过。
+
+原CI未上传服务异常，当前先补结构化失败诊断：只读取固定服务日志，输出异常类、项目/PG栈位置及有限数据库错误类别；不复制异常消息、SQL、请求、响应、环境或凭据文件，写入既有`.local/verification/`报告目录。失败时仍执行原清理，诊断不更改验收断言、权限或重试次数。`python -m unittest discover -s scripts/security -p 'unit_*.py' -v`：5项通过，其中2项新增，验证敏感消息/SQL/未知文件不进入报告，最多180事件/服务。根因尚待复现；本批不混入未完成的Runtime接收API。回滚只需撤销诊断脚本及调用，无数据库改动。
