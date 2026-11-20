@@ -60,7 +60,10 @@ class _CustomerTransport:
         self.base_url, self._secret, self.deadline, self.transport = base_url.rstrip('/'), secret, deadline, transport
 
     async def _exchange(self, method, source, run_id, resource, body, *, prefix, limit=MAX_RESPONSE, accepted=(200,)):
-        if resource not in ('snapshot','reply') or method not in ('GET','POST') or prefix not in ('SOURCE','REPLY'):
+        legacy = (resource,prefix) in (('snapshot','SOURCE'),('reply','REPLY')) and method in ('GET','POST')
+        ticket = (isinstance(resource,str) and re.fullmatch(r'tickets/[A-Za-z0-9][A-Za-z0-9_-]{0,63}',resource)
+                  and prefix=='TICKET' and method=='GET' and body==b'')
+        if not (legacy or ticket):
             raise ValueError('Unsupported customer runtime operation')
         if not isinstance(body,bytes) or len(body)>(65536 if resource=='reply' else 8192):
             raise ValueError('Customer runtime request too large')

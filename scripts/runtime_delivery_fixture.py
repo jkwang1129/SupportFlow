@@ -74,6 +74,8 @@ def verify_delivery(connect, environment, passwords, runtime_environment):
             print('Real Java dispatcher -> signed AI app -> restricted PostgreSQL: 2 delivery cases passed; matched source/run receipts; no model or tool calls', flush=True)
             from source_delivery_fixture import verify_sources
             verify_sources(connect,environment,passwords,secret,sources,runtime_environment['SUPPORTFLOW_RUNTIME_TEST_DSN'])
+            from ticket_tool_fixture import verify_ticket_tools
+            verify_ticket_tools(connect,environment,passwords,secret,base,runtime_environment)
             from action_authority_fixture import verify_authority
             verify_authority(connect, test_env, runtime_environment)
             from result_delivery_fixture import verify_results

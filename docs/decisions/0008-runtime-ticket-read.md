@@ -15,3 +15,11 @@ Source的e/s/m锁、有效客户行SHARE锁与ticket行SHARE锁在同一事务�
 未授权/不存在40404，来源40402/40902/41002分别404/409/410；格式或待核验状态422，数据库失败503且不透传SQL。GET可幂等创建派生来源快照，绝不创建/修改工单、回复消息、计费或结果回执。既有业务服务与RLS账号保持不变；不把它描述为只具SELECT权限的数据库角色。
 
 本批只交付业务API及真实PG/认证测试，后续独立接Ticket SDK/ReadTool与实际Worker联调；没有实际模型选择工具、MCP、HITL或业务自动触发。回滚关闭read-tools开关/回退二进制，保留派生快照与Run/Step/计数；无SQL回滚、不修改已应用迁移。
+
+## SDK与实际Worker接入（独立子批次4）
+
+TicketClient复用_CustomerTransport，新增仅GET/空body/固定tickets/ASCII编号路径，与TICKET错误域绑定，禁止把新错误域用于旧snapshot/reply或可写方法。只收十字段、整数状态、规范UUID/Hash与无时区数据库本地时间，逐项绑定tenant/event/run/请求工单并重算投影SHA；错误HTTP/业务码必须对应，异常正文不向调用者传播。get_ticket_status ReadTool仅ticket_no参数、ticket:read宿主Scope；authorize和invoke均落实整体deadline。模型结果排除tenant字段及全部客户/描述信息。
+
+当前授权证据绑定snapshot/sourceHash/工单号/resourceVersion；返回的实时结果或缓存结果都要重算摘要并与本次证据一致。三条实际Worker→Executor→SDK→新客户JAR→受限PG验收：有效权限复用原正文，归属变化拒绝，状态变化（更新时间未变）拒绝旧缓存。每Run3次工具预算、0模型、1份正文，无业务消息/结果回执写入。数据为合成，失败状态照实保留。
+
+当前安全策略是投影变化时明确FAILED/TOOL_RESULT_INVALID，尚不自动刷新可变只读结果，也不让模型无限重试。这是下一步需要独立设计的缓存失效/预算策略；本批不能宣称已经从状态变化中继续完成任务。读取签名/Schema/Hash均不代替当前Java归属检查，无自动业务触发、实际模型循环或HITL。
