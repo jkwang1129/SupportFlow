@@ -42,7 +42,9 @@ def lost_ack_proxy(base):
                 evidence['committed_at']=time.monotonic()
                 self.close_connection=True
                 self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(response.content)));self.send_header('Connection','close');self.end_headers()
-                stop.wait(5)  # Receipt is already committed; only response body is withheld.
+                # Allow cold Java/authority startup before the client deadline;
+                # the response body remains withheld beyond that total deadline.
+                stop.wait(10)
                 try:self.wfile.write(response.content)
                 except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
             except BaseException as failure:evidence['error']=type(failure).__name__
@@ -129,7 +131,7 @@ def verify_results(connect,environment,passwords,secret,ai_base,runtime_environm
                         else:raise AssertionError('Invalid pair credential read a result')
                     else:
                         with lost_ack_proxy(base) as (proxy,evidence):
-                            try:await ResultClient(proxy,secret,deadline=2).reply(value,lease,snapshot.snapshot_id,text)
+                            try:await ResultClient(proxy,secret,deadline=6).reply(value,lease,snapshot.snapshot_id,text)
                             except TransientFailure as failure:
                                 assert failure.code=='REPLY_TIMEOUT'
                                 assert evidence['committed_at'] is not None and evidence['committed_at']<=time.monotonic()

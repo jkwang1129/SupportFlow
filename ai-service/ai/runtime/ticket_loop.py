@@ -4,10 +4,12 @@ Structured JSON decisions are an internal protocol, not a claim of native
 provider tool_calls/MCP support. Only explicitly registered READ tools can run.
 """
 import json
+from dataclasses import dataclass,field
+from types import MappingProxyType
 
 from .models import RuntimeChatClient
 from .tools import ToolCall,ToolExecutor
-from .types import fingerprint
+from .types import fingerprint,reference
 from .worker import PermanentFailure
 
 
@@ -19,6 +21,17 @@ Only call registered tools. Never invent tenant, identity, permissions, URLs, or
 Report may reference only a successful get_ticket_status observation. Do not provide answer prose or claim actions were performed.
 If no ticket number is available, clarify. Available tool catalog follows:\n'''
 STATUS_NAMES={1:'待处理',2:'处理中',3:'待客户确认',4:'已解决',5:'已关闭'}
+
+
+@dataclass(frozen=True)
+class PreparedReport:
+    references: dict
+    value: dict = field(repr=False)
+
+    def __post_init__(self):
+        object.__setattr__(self,'references',MappingProxyType(reference(dict(self.references))))
+        # The validated report projection contains only immutable scalar values.
+        object.__setattr__(self,'value',MappingProxyType(dict(self.value)))
 
 
 def _json(value):return json.dumps(value,ensure_ascii=False,sort_keys=True,separators=(',',':'))
@@ -55,6 +68,9 @@ class TicketReadLoop:
         self.source_access,self.tools,self.model,self.max_turns=source_access,tools,model,max_turns
 
     def __call__(self,context):
+        return dict(self.prepare(context).references)
+
+    def prepare(self,context):
         if self.model.profile.tenant!=context.lease.tenant:
             raise PermanentFailure('MODEL_PROFILE_DENIED')
         source=self.source_access.execute(context,'source-input',ToolCall('get_current_message','source-v1',{}))
@@ -112,4 +128,4 @@ class TicketReadLoop:
             dict(operation='ticket.report',version='ticket-report-v1',input_ref=source['snapshot_id'],arguments_sha256=digest),
             'working-state-v1',lambda:expected)
         if fingerprint(value)!=digest:raise PermanentFailure('REPORT_CHECKPOINT_INVALID')
-        return refs
+        return PreparedReport(refs,expected)

@@ -695,3 +695,22 @@ c4ff0e0对应的[CI 44741139233](https://github.com/jkwang1129/SupportFlow/actio
 所有例实际客户库均只有原来源消息1、原工单1、结果回执0；`runtime-ticket-loop.json`机器证据保留4个成功/5个预期失败、实际状态/计数/报告数/进程重启标志；source_enrollment=EXPLICIT_FIXTURE_SETUP、publication=NOT_IMPLEMENTED、provider_usage=SYNTHETIC_VALUES、performance/token_cost=NOT_MEASURED。已有CI artifact自动收集，无正文/凭据。纯测试/文档变化，本地不重复493普通AI/103客服PG/4KB/九模块/三套完整服务，当前精确提交CI仍重跑；不把条件skip计为通过。
 
 边界：这是实际本地协议/业务服务组合验收，不是付费模型质量/业务收益/生产性能；只读报告完成不等于渠道消息送达。可信触发/租户Profile Resolver、知识Embedding预算、业务回复发布、建工单/审批、UNKNOWN核销与完整成本/上下文治理仍后续。回滚移除新验收入口/不注册Loop，默认Workflow不变；不删业务/Runtime历史或预算，无SQL回滚。
+
+## B1 核验报告发布子批次（2026-11-20）
+
+基线2f30a92。新增`ai/runtime/publication.py`、`test_publication.py`、`test_publication_postgres.py`、`scripts/publication_fixture.py`、ADR-0013；TicketReadLoop提取不可变PreparedReport/prepare，原只读__call__保留；Runtime专项与实际组合入口更新。无SQL/Java/依赖/默认路由改变。宿主仅发布经过当前来源/工单核验的固定模板，模型没有任意写工具或自由业务成功声明权限。
+
+复用reply-v1与现有签名当前写许可/消息+回执原子事务，预留TOOL/WRITE再POST。瞬时失败后，单独预留TOOL/READ检查匹配Run/event/snapshot/正文Hash的回执，确认后才能完成原WRITE；无回执、查询故障、预算不足、取消/失租约都不证明未执行，不重发POST。已成功WRITE恢复先确认历史回执，不重新规划已经改变/接管的来源。成功引用outcome=reply-committed，只表示业务数据库提交已核实。
+
+Python3.11.5/隔离PG17/JDK25，模型为合成协议，未使用真实模型或开发者.env：
+
+- 单元`cd ai-service; python -m pytest -q tests/test_publication.py tests/test_ticket_loop.py`首轮27项通过，`b1-publication-unit-first.log`。发布10例覆盖固定报告、规范正文Hash/WRITE意图、丢响应只查回执、不确定/永久拒绝不重发、过去提交恢复跳过重新规划、损坏引用及不可变产物。
+- AI普通全量：503 passed、183 skipped、1 xfailed，`b1-publication-ai-final.log/xml`。外部条件PG在专项执行，原RAG正文引用xfail仍保留。
+- `python scripts/test-agent-runtime.py --with-java-delivery`核心首轮193项Python+6次角色负面、所有原实际交付/来源/工单/只读Loop九例/许可/回复联调通过，`b1-publication-runtime-first.log`。新增10项真PG：正常2Model/6Tool/11Step；澄清1/3/6；丢POST响应查询确认2/7/12；无回执/查询503/授权拒绝均保留FAILED/SIDE_EFFECT_UNKNOWN且后续同会话不可领取；工具预算6不足时无免费确认GET；提交后取消不变Runtime成功；Step提交丢DB确认后恢复不重复模型/业务POST、原2/7/12/retry1；提交引用损坏阻断恢复。
+- 新实际模型协议TCP→Worker→客户JAR→真实AI写许可→受限PG五例均通过，机器证据`runtime-publication.json`：正常SUCCEEDED/2Model/6Tool/11Step；POST提交后丢响应SUCCEEDED/2/7/12；代理未转发写请求FAILED/SIDE_EFFECT_UNKNOWN/2/7/12、无业务回执；真实提交后取消FAILED/SIDE_EFFECT_UNKNOWN/2/6/11、存在一条业务回执；成功WRITE Step丢DB确认后恢复SUCCEEDED/2/7/12/retry1。每例模型HTTP均2次；已提交例客户库恰有原来源+BOT回复共2条、seq2/回执1；未观察到提交例来源1/seq1/回执0。成功步骤恢复前实际接管来源，仍只查旧回执、不重新生成/再次发消息。无将取消后的真实提交伪装为撤销或Runtime成功。
+
+首次新增组合运行在新五例全部通过后，旧result_delivery_fixture的2秒客户端窗口先于上游提交观察，断言失败，保留`b1-publication-real-first.log`。只调整该故障注入夹具为6秒总窗口/提交确认后延迟正文10秒，保留实际提交时间、超时类别、请求次数、消息/回执断言；产品HTTP/写许可/租约/Run预算均不改变。完整重跑结果将在核实后记录。
+
+适用边界：这是本地协议/服务/事务验收，不是LLM正确率、真实Token成本或生产性能。报告事实为最后核权读取时点，当前reply-v1未把工单事实版本绑定进随后跨服务提交事务；不声称外部渠道已送达/恰好一次。终态UNKNOWN仍需受控核销；没有自动可信路由、租户Profile Resolver、知识Embedding预算、创建工单或HITL。回滚停用TicketReplyHandler/关闭result开关，保留历史消息/回执、Run/Step/预算/UNKNOWN，不删数据或更换Run绕过幂等。ADR-0013记录设计取舍。
+
+完整最终重跑`b1-publication-real-final.log`退出0：193项Python专项+6次角色负面，原交付/来源/工具/九例Loop、五例报告发布、当前写许可和双向回复全部通过。旧丢响应用例核实提交后超时、只一条消息/回执；没有通过删除断言或改产品超时绕开失败。
