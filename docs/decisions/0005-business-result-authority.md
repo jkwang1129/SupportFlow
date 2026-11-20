@@ -13,3 +13,7 @@ AI在短事务内以DB时钟重查，返回最多5秒且不超lease/deadline的�
 先交付并测只读执行权签发，再交付Java消费/回执与实际互通，最后接业务handler/源端自动路由。每批有独立负面测试、阶段记录和回滚说明；许可接口本身不执行业务动作，不等于工具层、HITL或完整Agent Loop已实现。
 
 Java接入进一步拆分：先扩展现有AgentRuntimeClient的有界传输，支持主动请求并验证许可；复用同一整体deadline/8KiB响应上限/禁重定向/不隐式重试，不创建第二套HTTP栈。AgentActionPermit只可由验签路径创建，返回字段集合/严格整数/全部身份引用/操作/过期均核验。拒绝持有业务事务时发起控制面调用。获取时先用本机时钟拒绝明显过期或超过5秒的许可；后续写事务必须再次用客户DB时钟调用requireValidAt，并重新验证资源和事务幂等，不能把本机校验当作最终写入许可消费。此子批次不写消息或回执表。
+
+结果存储子批次沿用customer版本迁移新增007。回执以tenant+run主键稳定去重，引用同tenant/event/run/snapshot和实际消息；运行账号只有S/I、FORCE RLS及restrictive guard。正文仍只写既有session_message，不复制到回执。参数摘要为UTF-8换行连接`supportflow-session-reply:v1,tenant,run,event,snapshot,sha256(精确回复UTF-8)`再SHA256，无尾换行；正文1～8192字节，拒绝空白、NUL和非法UTF-16，不做隐式trim/截断。owner/fence不放进稳定内容摘要，故重试不能通过更换owner来修改回复。
+
+存储组件只接受已验签许可与可信tenant事务，不自动装配或暴露新业务API。写前按tenant+run事务advisory锁串行，已提交同内容回执直接返回引用（即便后来人工接手/来源过期），异内容409；这不执行新动作或暴露正文。新写先锁session UPDATE，再用已有快照组件重验来源/主体/快照，避免多写者先SHARE后升级的死锁；用客户DB时钟检查许可，复用SessionService以固定BOT/文本/全可见和稳定clientMsgNo落库，同时插入回执，再检查有效期。任一步失败全事务回滚，计费等afterCommit只执行一次。最终提交仍属在途动作，不承诺跨库事务或取消可撤销已授权写。后续API应先短事务核对已有回执，再在无事务时请求当前AI许可，最后新事务执行上述存储；不要为重试已提交结果要求已终态Run重新取得新写许可。

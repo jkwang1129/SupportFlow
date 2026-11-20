@@ -2923,6 +2923,161 @@
             }
           }
         },
+        "agent_result_receipt": {
+          "columns": {
+            "arguments_sha256": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "created_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "event_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "fence": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "message_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "message_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            },
+            "message_seq": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "operation": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(32)"
+            },
+            "run_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "schema_version": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "snapshot_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "step_key": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            },
+            "step_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            }
+          },
+          "constraints": {
+            "agent_result_receipt_arguments_sha256_check": "CHECK ((arguments_sha256 ~ '^[0-9a-f]{64}$'::text))",
+            "agent_result_receipt_fence_check": "CHECK ((fence > 0))",
+            "agent_result_receipt_message_seq_check": "CHECK ((message_seq > 0))",
+            "agent_result_receipt_operation_check": "CHECK (((operation)::text = 'session.reply'::text))",
+            "agent_result_receipt_pkey": "PRIMARY KEY (tenant_code, run_id)",
+            "agent_result_receipt_schema_version_check": "CHECK (((schema_version)::text = 'reply-v1'::text))",
+            "agent_result_receipt_step_key_check": "CHECK (((step_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$'::text))",
+            "agent_result_receipt_step_no_check": "CHECK (((step_no >= 1) AND (step_no <= 100)))",
+            "agent_result_receipt_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
+            "agent_result_receipt_tenant_code_event_id_key": "UNIQUE (tenant_code, event_id)",
+            "agent_result_receipt_tenant_code_event_id_run_id_snapshot__fkey": "FOREIGN KEY (tenant_code, event_id, run_id, snapshot_id) REFERENCES agent_source_snapshot(tenant_code, event_id, run_id, snapshot_id)",
+            "agent_result_receipt_tenant_code_message_id_fkey": "FOREIGN KEY (tenant_code, message_id) REFERENCES session_message(tenant_code, id)",
+            "agent_result_receipt_tenant_code_message_id_key": "UNIQUE (tenant_code, message_id)"
+          },
+          "indexes": {
+            "agent_result_receipt_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_result_receipt_pkey ON public.agent_result_receipt USING btree (tenant_code, run_id)",
+              "valid": true
+            },
+            "agent_result_receipt_tenant_code_event_id_key": {
+              "definition": "CREATE UNIQUE INDEX agent_result_receipt_tenant_code_event_id_key ON public.agent_result_receipt USING btree (tenant_code, event_id)",
+              "valid": true
+            },
+            "agent_result_receipt_tenant_code_message_id_key": {
+              "definition": "CREATE UNIQUE INDEX agent_result_receipt_tenant_code_message_id_key ON public.agent_result_receipt USING btree (tenant_code, message_id)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_result_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_customer_tenant"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_result_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_customer_tenant"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "agent_source_snapshot": {
           "columns": {
             "created_at": {
@@ -2990,6 +3145,7 @@
             }
           },
           "constraints": {
+            "agent_source_result_ref": "UNIQUE (tenant_code, event_id, run_id, snapshot_id)",
             "agent_source_snapshot_check": "CHECK ((expires_at > created_at))",
             "agent_source_snapshot_payload_hash_check": "CHECK ((payload_hash ~ '^[0-9a-f]{64}$'::text))",
             "agent_source_snapshot_payload_json_check": "CHECK (((octet_length(payload_json) <= 65536) AND (jsonb_typeof((payload_json)::jsonb) = 'object'::text)))",
@@ -3000,6 +3156,10 @@
             "agent_source_snapshot_tenant_code_snapshot_id_key": "UNIQUE (tenant_code, snapshot_id)"
           },
           "indexes": {
+            "agent_source_result_ref": {
+              "definition": "CREATE UNIQUE INDEX agent_source_result_ref ON public.agent_source_snapshot USING btree (tenant_code, event_id, run_id, snapshot_id)",
+              "valid": true
+            },
             "agent_source_snapshot_expiry": {
               "definition": "CREATE INDEX agent_source_snapshot_expiry ON public.agent_source_snapshot USING btree (expires_at, tenant_code)",
               "valid": true
@@ -8042,6 +8202,7 @@
             "ck_session_message_status": "CHECK ((status = ANY (ARRAY[1, 2, 3, 4])))",
             "ck_session_message_visible_to": "CHECK ((visible_to = ANY (ARRAY[1, 2])))",
             "session_message_pkey": "PRIMARY KEY (id)",
+            "session_message_tenant_result_ref": "UNIQUE (tenant_code, id)",
             "uk_tenant_msg_no": "UNIQUE (tenant_code, msg_no)"
           },
           "indexes": {
@@ -8055,6 +8216,10 @@
             },
             "session_message_pkey": {
               "definition": "CREATE UNIQUE INDEX session_message_pkey ON public.session_message USING btree (id)",
+              "valid": true
+            },
+            "session_message_tenant_result_ref": {
+              "definition": "CREATE UNIQUE INDEX session_message_tenant_result_ref ON public.session_message USING btree (tenant_code, id)",
               "valid": true
             },
             "uk_session_client_msg": {
@@ -12841,6 +13006,10 @@
       {
         "checksum": "f7f2a9da8becc6b19cdd1109c856d6cdce4f599885a7136bdce05cb4d947b809",
         "version": "006"
+      },
+      {
+        "checksum": "ad1928e3171fbb6ad03be432042b96421db1e72c47d8e853309b3fded013853a",
+        "version": "007"
       }
     ],
     "ops_db": [

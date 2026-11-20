@@ -7,6 +7,7 @@
     {"database":"customer_db","version":"004","name":"durable usage outbox","source":"backend/deploy/db-init/30-usage-batches.sql"},
     {"database":"customer_db","version":"005","name":"durable agent event outbox","source":"backend/deploy/migrations/sql/customer_db_005_agent_event_outbox.sql"},
     {"database":"customer_db","version":"006","name":"immutable agent source snapshots","source":"backend/deploy/migrations/sql/customer_db_006_agent_source_snapshot.sql"},
+    {"database":"customer_db","version":"007","name":"immutable business result receipts","source":"backend/deploy/migrations/sql/customer_db_007_agent_result_receipt.sql"},
     {"database":"billing_db","version":"001","name":"usage batch deduplication ledger","source":"backend/deploy/db-init/30-usage-batches.sql"},
     {"database":"ai_db","version":"001","name":"adopt canonical AI baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/ai_db.json"},
     {"database":"ai_db","version":"002","name":"durable runtime execution primitives","source":"backend/deploy/migrations/sql/ai_db_002_agent_runtime.sql"},

@@ -399,3 +399,35 @@ Java在业务事务外请求固定Run的authorize端点，只传主体/版本/�
 首轮Java测试编译因测试中Jackson旧put重载返回JsonNode而失败，改为BigInteger重载后九模块成功，保留`b1-authority-client-unit-first.log`。第一次真实联调中获取/验签与身份拒绝均通过，辅助取消请求400；该辅助HttpClient误用默认版本，改为与生产客户端一致的HTTP/1.1后保持原断言全组通过，`b1-authority-client-real-first.log`保留。未改产品权限或放宽timeout，也不把夹具调整描述成产品缺陷修复。
 
 剩余风险/回滚：Java目前只“取得并验证”许可，不是事务内写入消费；结果回执/资源重验/SessionService原子写入、业务handler与调度仍待下一批。取消后已在途许可可能在短窗口有效，不承诺即时撤销或已写动作回滚。没有新准确率/Token/生产流量/客户或收益数据。回滚停止调用authorizeReply，原enqueue/Dispatcher及业务入口保持；保留全部来源/Run/Step，不删除不确定意图，不重新生成Run绕过去重。
+
+a839f15对应的[CI 44672099556](https://github.com/jkwang1129/SupportFlow/actions/runs/44672099556)两个job全部通过，包含实际Java许可获取/验签、取消后拒绝，以及原三种部署服务验收。
+
+## B1 子批次 11：回复与结果回执的事务幂等（2026-11-20）
+
+基线a839f15。本批交付显式结果存储组件，尚未接入结果HTTP接口或自动业务触发。设计见ADR-0005。修改文件：
+
+- `AgentReplyArguments.java`/`ai/runtime/reply.py`：固定reply-v1的精确UTF-8参数摘要；拒绝空白/NUL/非法Unicode/超过8192字节，不trim、不归一化或截断，DTO日志隐藏正文。
+- `AgentResultReplies.java`：可信tenant事务内按Run锁去重；先UPDATE锁会话，再复用SourceSnapshots重验来源/快照/人工接管/关闭，用客户DB时钟消费许可；固定BOT/文本/全可见，复用SessionService写消息与稳定clientMsgNo，同事务写回执，返回前再查许可时效。已提交同内容回执只返回引用，异内容冲突；既有消息的角色/内容/目标也必须核验。
+- customer `007_agent_result_receipt.sql`、manifest、`40-runtime-roles.sql`、current-schema和customer readiness：回执只S/I、FORCE RLS及restrictive guard；复合FK绑定同tenant/event/run/snapshot与同tenant消息，不复制回复正文。只新增007，未改已应用SQL/历史baseline。审查候选差异仅回执表、来源/消息的两个引用唯一约束/索引和007历史，六库92表/1视图/5受控函数。
+- `AgentResultRepliesPostgresTest`、`AgentActionPermitFixtures`、`AgentReplyArgumentsTest`、`test_runtime_reply.py`；customer PG、migration/init/security验收脚本及版本预期；本阶段计划和ADR/本记录。
+
+本地环境：JDK25.0.5+8、Maven3.9.16、Python3.11.5、一次性PG17；合成消息/密钥，不调用付费模型、不操作用户业务库。
+
+| 复现命令 | 实际结果/原始证据 |
+| --- | --- |
+| `mvn -B -f backend/pom.xml verify` | 九模块成功，含新增4项Java参数协议；`.local/implementation/b1-result-java-final.log` |
+| `python scripts/test-customer-rls.py --with-ai` | **84项Java真PG + 4项KB通过**，新14项结果存储；`b1-result-pg-final.log` |
+| `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-result-ai.xml` | **173 passed、81 skipped、1 xfailed**；新16项摘要协议/负面，`b1-result-ai.log`；外部PG跳过另由专项执行，原引用正文xfail保留 |
+| `python scripts/test-versioned-migrations.py` | **17项+CLI通过**；额外从006种入有效消息/已DELIVERED事件/不可变快照，007升级后三行原样保留、结果表为空、重复迁移no-op；`b1-result-migrations-final.log` |
+| `python scripts/test-schema-drift.py` | **92表/1视图/5函数**，14个SQL及3个metadata故障、CLI失败/修复通过；`b1-result-drift.log` |
+| `python scripts/test-database-init.py` | 六库92表、CREATEDB拒绝、锁、部分失败回滚及拒绝覆盖原数据通过；`b1-result-init-reported.log` |
+| `python scripts/test-agent-runtime.py --with-java-delivery` | **91项Python、6次角色负面、2项实际Java交付、2条实际来源流程、1项真实许可联调通过**；`b1-result-runtime.log` |
+| `python scripts/test-security-flow.py` | 默认新库/历史升级/CLI初始化**三套实际服务通过**；含原业务/媒体/知识/WS/计费、45次Readiness故障、7条customer历史及回执有效S/I、无U/D/TRUNCATE；`b1-result-services.log` |
+
+新14项PG包含：正常消息/回执/seq/角色/可见性；8路并发相同回调一条回复/回执/序号和一次计费回调；同内容重试在许可过期/会话关闭后仍只确认原结果；不同内容/快照冲突；主动回滚后无消息/回执/seq/afterCommit副作用；过期许可、过期来源、新写时接管/关闭/隐藏/删除/篡改拒绝；真实插入消息后等到许可过期，最终检查使整笔事务回滚；错Scope/无事务/错许可拒绝；其他角色预占clientMsgNo拒绝；撤销回执INSERT后业务消息回滚；FK拒绝外租户消息/错快照，RLS拒绝跨租户INSERT，额外宽松策略仍不可跨租户读，运行账号U/D/TRUNCATE拒绝。
+
+首次Maven编译仅测试的泛型assertEquals重载歧义，明确Integer断言后通过，保留`b1-result-java-first.log`。首轮PG82项全部通过，补来源过期/复合FK两项后84项通过，初始`b1-result-pg-first.log`保留。首次init断言仍为旧91而失败，更新明确92及报告输出后完整通过，`b1-result-init.log`保留；没有放松漂移或权限断言。
+
+边界/风险：存储PG测试使用合成签名许可，实际控制面签发/Java验签由独立真实联调验收；尚未把真实许可、结果HTTP接口和业务落库串在一起，不能称完整Agent链路已完成。计费/渠道事件只验证既有afterCommit的调用次数，未证明外部渠道送达exactly-once；原始计数best-effort、日志脱敏和归档/物理清理留M11/M07/M12。取消/到期不能撤销在途或已提交动作，Run保留UNKNOWN语义。没有性能/模型成功率/Token费用/生产流量/客户或收益数据。
+
+回滚：此组件尚未自动装配或路由业务；停止新组件/回退二进制即可，保留007表、FK、消息与回执，已应用007不得改写或删除历史。未来数据清理需管理员按子表顺序并另立保留策略，不给业务账号DELETE；不换run/event绕过幂等或未知写。

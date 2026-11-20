@@ -7,9 +7,33 @@ import sys
 import time
 import psycopg
 import json
+import hashlib
+from uuid import uuid4
 from migration_engine import load_plan,run_plan
 
 ROOT=Path(__file__).resolve().parents[1]
+
+
+def existing_runtime_source(connection):
+    """Seed a valid 006 source before adding the 007 result FKs; never clear business tables."""
+    event,run,snapshot=uuid4(),uuid4(),uuid4()
+    payload=json.dumps(dict(schema_version='source-v1',trusted_source=dict(tenant_code='UPGRADE_A',
+        source_event_id=str(event),run_id=str(run),session_no='RESULT_UPGRADE',message_id='774002',event_seq=1,
+        principal_ref='visitor-session:774001',customer_ref=None),untrusted_input=dict(role='user',content='existing input')),
+        ensure_ascii=False,sort_keys=True,separators=(',',':'))
+    with connection.transaction():
+        connection.execute("INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time) VALUES(774001,'UPGRADE_A','RESULT_UPGRADE',1,2,1,CURRENT_TIMESTAMP)")
+        connection.execute("INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,visible_to,content,send_time) VALUES(774002,'UPGRADE_A',774001,'RESULT_UPGRADE_MESSAGE',1,1,1,1,'existing input',CURRENT_TIMESTAMP)")
+        connection.execute("""INSERT INTO agent_event_outbox(tenant_code,event_id,run_id,message_id,session_id,session_no,event_seq,principal_ref,
+            trace_id,runtime_version,state,attempts,fence,delivered_at) VALUES('UPGRADE_A',%s,%s,774002,774001,'RESULT_UPGRADE',1,
+            'visitor-session:774001','upgrade-test','runtime-v1','DELIVERED',1,1,clock_timestamp())""",(event,run))
+        connection.execute("""INSERT INTO agent_source_snapshot(tenant_code,event_id,run_id,snapshot_id,schema_version,payload_json,payload_hash)
+            VALUES('UPGRADE_A',%s,%s,%s,'source-v1',%s,%s)""",(event,run,snapshot,payload,hashlib.sha256(payload.encode()).hexdigest()))
+    def read():
+        return (connection.execute("SELECT * FROM agent_source_snapshot WHERE tenant_code='UPGRADE_A' AND event_id=%s",(event,)).fetchone(),
+                connection.execute("SELECT * FROM agent_event_outbox WHERE tenant_code='UPGRADE_A' AND event_id=%s",(event,)).fetchone(),
+                connection.execute("SELECT * FROM session_message WHERE id=774002").fetchone())
+    return read
 
 
 def main():
@@ -34,8 +58,18 @@ def main():
                 VALUES(770001,'PLATFORM','MIGRATION_FIXTURE','fixture.png','migration-fixture/object',2,'99')""")
         for database,plan in load_plan().items():
             with psycopg.connect(dsn(database),autocommit=True) as connection:
+                applied=[]
+                if database=='customer_db':
+                    assert plan[-1].version=='007'
+                    applied=run_plan(connection,plan[:-1])["applied"]
+                    read=existing_runtime_source(connection)
+                    before=read()
                 result=run_plan(connection,plan)
-                assert result["applied"]==[migration.version for migration in plan]
+                assert applied+result["applied"]==[migration.version for migration in plan]
+                if database=='customer_db':
+                    assert result['applied']==['007'] and read()==before
+                    assert connection.execute('SELECT count(*) FROM agent_result_receipt').fetchone()==(0,)
+                    print('006 -> 007 upgrade preserved exact existing message, delivered event and immutable snapshot; new result receipt table empty',flush=True)
                 assert run_plan(connection,plan)["applied"]==[]
                 run_plan(connection,plan,verify=True)
         runtime_password=secrets.token_hex(24)
