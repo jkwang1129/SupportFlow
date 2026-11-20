@@ -85,6 +85,7 @@ class Lease:
 
 
 class RuntimeConflict(RuntimeError): pass
+class ActionDenied(RuntimeConflict): pass
 class LostLease(RuntimeError): pass
 class BudgetExceeded(RuntimeError): pass
 class QueueFull(RuntimeError): pass

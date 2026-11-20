@@ -8,7 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_v
 
 from ..config import get_settings
 from ..runtime.store import RuntimeStore
-from ..runtime.types import RunInput, Limits, RuntimeConflict, QueueFull, identifier, tenant_code
+from ..runtime.types import RunInput, Limits, RuntimeConflict, QueueFull, identifier, tenant_code, ActionDenied
+from ..runtime.authority import sign as sign_authority
 
 router = APIRouter(prefix='/ai/v1/runtime/runs', tags=['internal-runtime'])
 V1_LIMITS = Limits(max_steps=12, max_model_calls=4, max_tool_calls=8, max_retries=2, wall_seconds=120)
@@ -45,6 +46,32 @@ class RunRequest(BaseModel):
 
 class EmptyRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
+
+
+class ActionRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    tenant_code: StrictStr = Field(min_length=1,max_length=16)
+    source_event_id: StrictStr = Field(min_length=36,max_length=36)
+    owner: StrictStr = Field(min_length=1,max_length=64)
+    fence: StrictInt = Field(gt=0,le=9223372036854775807)
+    snapshot_id: StrictStr = Field(min_length=36,max_length=36)
+    arguments_sha256: StrictStr = Field(pattern=r'^[0-9a-f]{64}$')
+    operation: Literal['session.reply'] = 'session.reply'
+    version: Literal['reply-v1'] = 'reply-v1'
+
+    @field_validator('source_event_id','snapshot_id')
+    @classmethod
+    def canonical_uuid(cls,value):
+        if str(UUID(value))!=value: raise ValueError('Canonical UUID required')
+        return value
+
+    @field_validator('owner')
+    @classmethod
+    def opaque_owner(cls,value): return identifier(value)
+
+    @field_validator('tenant_code')
+    @classmethod
+    def trusted_tenant(cls,value): return tenant_code(value)
 
 
 def runtime_store():
@@ -90,3 +117,17 @@ def read(run_id: UUID, request: Request, store=Depends(runtime_store)):
 @router.post('/{run_id}/cancel')
 def cancel(run_id: UUID, body: EmptyRequest, request: Request, store=Depends(runtime_store)):
     return database_operation(lambda: store.cancel(request.state.runtime_tenant, run_id))
+
+
+@router.post('/{run_id}/authorize')
+def authorize(run_id: UUID, body: ActionRequest, request: Request, store=Depends(runtime_store)):
+    tenant=request.state.runtime_tenant
+    if body.tenant_code!=tenant: raise HTTPException(403,'Runtime tenant mismatch')
+    try:
+        grant=store.authorize_reply(tenant,run_id,body.source_event_id,body.owner,body.fence,body.snapshot_id,body.arguments_sha256)
+        if grant is None: raise HTTPException(404,'Run not found')
+        return sign_authority(grant,get_settings().customer_secret.get_secret_value())
+    except ActionDenied:
+        raise HTTPException(409,'Runtime action is not authorized') from None
+    except psycopg.Error:
+        raise HTTPException(503,'Runtime authority unavailable') from None

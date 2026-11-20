@@ -1,5 +1,6 @@
 """Tenant-bound durable execution primitives. All writes are fenced, not an Agent Loop."""
 from contextlib import contextmanager
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 from psycopg.rows import dict_row
@@ -7,7 +8,7 @@ from psycopg.types.json import Jsonb
 
 from ..core.db import connect
 from .types import (RunInput, Limits, Lease, tenant_code, identifier, fingerprint, reference,
-                    RuntimeConflict, LostLease, BudgetExceeded, QueueFull)
+                    RuntimeConflict, LostLease, BudgetExceeded, QueueFull, ActionDenied)
 
 TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELLED'}
 
@@ -155,6 +156,34 @@ class RuntimeStore:
             return connection.execute("""UPDATE agent_run SET lease_until=least(deadline_at,clock_timestamp()+%s*interval '1 second'),
                 updated_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s RETURNING *""",
                 (lease_seconds,lease.tenant,lease.run_id)).fetchone()
+
+    def authorize_reply(self, tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash):
+        identifier(owner)
+        if type(fence) is not int or fence<1 or not isinstance(arguments_hash,str) or len(arguments_hash)!=64 or any(c not in '0123456789abcdef' for c in arguments_hash):
+            raise ValueError('Invalid action authority references')
+        run_id, source_event_id, snapshot_id = (UUID(str(value)) for value in (run_id,source_event_id,snapshot_id))
+        with self._scope(tenant) as connection:
+            row=connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR SHARE',(tenant,run_id)).fetchone()
+            if row is None: return None
+            if (row['state']!='RUNNING' or row['cancel_requested'] or row['owner']!=owner or row['fence']!=fence
+                    or row['source_event_id']!=source_event_id or row['runtime_version']!='runtime-v1'):
+                raise ActionDenied('Action is not authorized')
+            expected=dict(operation='session.reply',resource_ref=row['principal_ref'],input_ref=str(snapshot_id),
+                          arguments_sha256=arguments_hash,version='reply-v1')
+            steps=connection.execute("""SELECT step_key,step_no FROM agent_step WHERE tenant_code=%s AND run_id=%s
+                 AND fence=%s AND state='RESERVED' AND kind='TOOL' AND effect='WRITE' AND intent_ref=%s
+                 ORDER BY step_no LIMIT 2 FOR SHARE""",(tenant,run_id,fence,Jsonb(expected))).fetchall()
+            # Database time is checked after ALL row locks, so waiting cannot
+            # resurrect execution authority. This operation never charges/reset budgets.
+            now=connection.execute('SELECT clock_timestamp() AS now').fetchone()['now']
+            if len(steps)!=1 or row['lease_until']<=now or row['deadline_at']<=now:
+                raise ActionDenied('Action is not authorized')
+            expires=min(row['lease_until'],row['deadline_at'],now+timedelta(seconds=5))-timedelta(milliseconds=100)
+            if expires<=now: raise ActionDenied('Action authority is too close to expiry')
+            step=steps[0]
+            return dict(version='action-v1',tenant_code=tenant,run_id=str(run_id),source_event_id=str(source_event_id),
+                        owner=owner,fence=fence,step_key=step['step_key'],step_no=step['step_no'],operation='session.reply',
+                        snapshot_id=str(snapshot_id),arguments_sha256=arguments_hash,expires_at_ms=int(expires.timestamp()*1000))
 
     def reserve_step(self, lease: Lease, step_key, kind, effect, intent_ref):
         identifier(step_key)

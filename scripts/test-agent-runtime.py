@@ -63,7 +63,8 @@ def main():
         report.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/test_runtime_types.py',
                         'tests/test_runtime_store_postgres.py', 'tests/test_runtime_worker_postgres.py',
-                        'tests/test_runtime_api_postgres.py', f'--junitxml={report}'],
+                        'tests/test_runtime_api_postgres.py', 'tests/test_runtime_authority_postgres.py',
+                        f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)
         if args.with_java_delivery:
             from runtime_delivery_fixture import verify_delivery

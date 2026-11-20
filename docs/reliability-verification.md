@@ -362,3 +362,21 @@ Python仅按可信Run引用构造固定路径，拒绝任意URL/用户信息/que
 本子批次各组首轮均通过；后补恢复绑定/禁读body/真实恢复引用校验后分别重跑对应单元、实际互通及完整回归。服务密钥、bootstrap密码与原始私有日志不进入仓库/报告；公开内容使用合成数据。未计生产流量/用户/收益，没有将4条桥接流程等同Agent任务成功率。
 
 剩余风险/回滚：没有结果回写、写入执行权校验/幂等、业务handler或自动触发，B1未闭环。Run可处PENDING时读取来源用于准备输入，此权限不能用于业务写操作。SchemaReadiness是最低列/SELECT检查，未代替完整漂移与DML权限核验；缺INSERT时API明确503，发布仍须migrate/provision/verify。恢复/审批、长历史策略、敏感用户输入出站策略与物理清理留后续。回滚关闭runtime-source-enabled并保留快照/回执；原FAQ/图片Workflow不受此开关控制，不清表或重用新eventId。
+
+fb26a1b对应的[CI 44668976501](https://github.com/jkwang1129/SupportFlow/actions/runs/44668976501)两个job全部通过；源码及阶段记录已推送开发分支，未合并main。
+
+## B1 子批次 9：当前执行权的短期许可签发（2026-11-20）
+
+基线fb26a1b。新增ADR-0005、`ai/runtime/authority.py`、`RuntimeStore#authorize_reply`、鉴权路由POST `/api/ai/v1/runtime/runs/{run_id}/authorize`；扩展原Runtime脚本纳入27项真实PG权限测试。没有新服务、依赖或SQL，不改现有业务触发；Runtime原默认关闭开关仍生效。
+
+customer服务须使用原body-bound Runtime鉴权。服务身份仅允许发起核查；AI在受限tenant事务里重查RUNNING/未取消/runtime-v1、owner/fence/source-event，并锁定唯一匹配的RESERVED TOOL/WRITE意图。操作固定session.reply/reply-v1，资源来自Run主体，snapshot/精确参数SHA绑定持久化意图。READ/MODEL/完成或UNKNOWN步骤不签发；多条同意图也拒绝。DB时钟在Run/Step锁均获得后检查lease/deadline，许可最多5秒并提前100ms失效，绑定所有引用和步骤，使用独立audience的HMAC。只读签发不增加/重置Run预算，不执行业务写。
+
+本地环境仍为Python3.11.5/JDK25.0.5+8/Maven3.9.16/隔离PG17，全部合成数据和离线模型：
+
+- `cd ai-service; python -m pytest -q tests/test_runtime_authority.py tests/test_runtime_api.py tests/test_runtime_source.py`：**93项通过**，含新23项许可协议/API测试；`.local/implementation/b1-authority-unit.log`。覆盖字段签名、其他角色/旧凭据拒绝、参数与body/path/method/tenant篡改、严格Schema、关闭不连接DB、409/503不泄露原始错误。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-authority-ai.xml`：**157 passed、81 skipped、1 xfailed**；`.local/implementation/b1-authority-ai.log`。75项Runtime真PG跳过由专项实际执行，余下为4项readiness/2项KB外部条件测试；既有引用正文xfail未消失。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**91项Python专项通过**，含新27项执行权真PG；6次危险角色负面执行、2项真实Java→AI持久化交付及2条实际Python→customer JAR来源流程仍通过，`.local/implementation/b1-authority-real-final.log`。新测试核对租约/取消/终态/旧fence/错主体意图/READ与未知写拒绝、跨tenant不可见、重复签发不改任何Run/Step；实际锁等待跨过lease后仍拒绝，不使用锁前时钟。
+
+首轮专项**90通过、1失败**：锁等待测试在同一观测事务重复读pg_stat_activity，却未刷新统计快照，未观测到等待连接。夹具改为专用application_name且每轮pg_stat_clear_snapshot，保留原900ms租约/2s锁超时和原拒绝断言，再跑91项通过；初始日志`b1-authority-real-first.log`保留。没有按重跑成功宣称业务权限缺陷修复，也没有放宽权限规则。
+
+剩余风险/回滚：本批只有签发，没有Java验签/数据库时钟消费、结果幂等回执或业务落库，不能称结果回写已完成。后续必须主动查询控制面、重新校验业务资源、原子写消息和稳定Run回执；短期许可不能保证撤销已在途动作，取消仍保留SIDE_EFFECT_UNKNOWN。没有时钟跨区域、性能/成本/模型质量数据。回退停用Runtime接口或移除此新路由，保留Run/Step/意图历史和现有业务；不清表、不重置预算、不重新生成event绕过不确定写。
