@@ -515,3 +515,19 @@ c1a2978对应的[CI 44701513973](https://github.com/jkwang1129/SupportFlow/actio
 边界/风险：这里只提供存储与严格读取，尚未接RuntimeWorker的正文步骤，不能宣称模型/检索已在实际Agent中完成恢复；无自动Unknown写核销、审批、工具Registry或bounded loop。七天是读取TTL，不是物理清理或法规保留承诺；日志/脱敏、知识ACL重新校验、模型输出语义验证与生产运维仍按原阶段实施。数据均为合成样例，未计真实Token/费用/任务成功率或性能。
 
 回滚停用新存储方法/后续开关，保留AI003及payload/Step引用/Run计数；不改旧SQL或用日志拼凑已成功模型输出，不清空UNKNOWN或重置预算。若载荷缺失/损坏/过期，应明确失败或待核验，不能静默重调模型冒充恢复。
+
+23b3faf对应的[CI 44704656499](https://github.com/jkwang1129/SupportFlow/actions/runs/44704656499)两个job全部通过，含AI003、旧数据升级保留和三套完整业务部署路径。
+
+## B1 子批次15：Worker持久化正文恢复（2026-11-20）
+
+基线23b3faf。修改`ai/runtime/worker.py`、新增`test_runtime_worker_payloads_postgres.py`、专项入口及ADR-0006/本计划记录；无新SQL/配置/依赖/Java改动。payload_step沿用原逻辑键/意图/fence/Step预留算法，将MODEL/NONE、TOOL/READ、INTERNAL/NONE的成功结果原子存储并解码恢复；WRITE拒绝。恢复校验tenant/run/step/schema/精确Hash与读取TTL后重验租约，返回新对象。缺失/损坏/过期/引用错Step明确失败，不悄悄重调模型。
+
+正文提交在执行异常处理之外，避免“成功提交但丢数据库回执”被降为UNKNOWN。OperationalError/InterfaceError经已有retry计数与稳定RUNTIME_PERSISTENCE_UNAVAILABLE转移，不保存异常正文；如果转移时数据库仍离线，则传播异常保留RUNNING，等待租约接管，不伪造状态。未提交的输出要重做必须重新预留且继续消耗原调用预算；不确定WRITE仍保持原阻断策略。
+
+环境Python3.11.5/隔离PG17/受限角色，模型为合成回调，不调用收费模型。实际验证：
+
+- `cd ai-service; python -m pytest -q tests/test_runtime_payloads.py tests/test_runtime_types.py`：33项通过，`.local/implementation/b1-worker-payload-smoke.log`。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**130项Python专项+6次危险角色负面通过**，原真实Java交付、来源、许可控制面、双向写入/丢业务回执场景全部通过，`b1-worker-payload-runtime-first.log`。新增14项均为真实PG：同逻辑步骤重复访问不再调用/扣费且局部修改不污染存储；下游READ重试不再调用已成功模型；缺失/Hash损坏/schema改变/过期停止；成功提交丢DB回执后重试复用；提交前丢输出在模型预算1时失败/预算2时重新预留成功；持续离线不虚构转移、恢复后接管复用；执行中取消无迟到正文；另Step引用拒绝；NaN永久失败/WRITE接口执行前拒绝；**真实子进程写成功后os._exit(23)，新Worker租约接管复用同正文且model_calls=1、step_count=1**。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-worker-payload-ai-final.xml`：**228 passed、120 skipped、1 xfailed**，`b1-worker-payload-ai-final.log`。新增14项条件PG与其余Runtime外部条件测试由前述专项实测，不把skip计为通过；现有RAG引用正文xfail保持。
+
+本批首轮均通过；不重复迁移/九模块构建/三套完整服务的本地验收（无相应改动），远端CI会对本次精确提交重跑。工程故障测试数不等于任务质量/生产成功率、性能、Token或费用指标。没有业务handler/真实模型与工具循环/自动触发，不能宣布B1整体完成。读取TTL仍不做物理清理；数据库长期故障、监督进程、网络分区运维属后续。回滚停用payload_step/回退Worker，保留AI003、正文、Step/Run和预算，不删除UNKNOWN、不重置调用数。

@@ -9,3 +9,11 @@
 表仅S/I、FORCE RLS/restrictive guard，默认七天读取TTL，不自动物理清理、不刷新过期值；清理/容量治理和备份由M12交付。每次读取限定tenant/run/payload，重算Hash并严格解码；不接受其他Run/租户的引用。无新公开API。Runtime Readiness增查列、SI且无U/D/TRUNCATE、非owner及FORCE RLS；新003继续拒绝被提权的Runtime能力组。
 
 回滚停止使用新存储/后续Worker接口，保留003及全部引用/正文/Run/Step；不改历史SQL、不清除模型调用计数或UNKNOWN。不在本批声称完成Worker正文恢复、长上下文压缩、工具Registry、HITL或语义质量评测。
+
+## Worker接入（独立子批次15）
+
+ExecutionContext.payload_step复用原step的逻辑键、意图摘要、fence、预留预算和重试路径，仅在成功结果存取处接入正文。恢复时严格绑定当前tenant/run/step/schema，重算完整性并重新检查租约；返回新解码对象，局部修改不会改持久化内容。正文缺失、损坏、版本不符或过期明确失败，不自动重调模型。WRITE仍拒绝此接口。
+
+正文原子提交位于外部调用异常处理之外：提交已成功但数据库回执丢失，不能把Step降回UNKNOWN。数据库OperationalError/InterfaceError只记录稳定错误码，经原retry预算转移；已成功步骤复用，不确定的MODEL/READ需新预留并继续消耗原总预算。不确定WRITE仍保持阻断。若转移时数据库持续不可用，异常向监督者传播，Run保持租约态等待后续接管，不伪造RETRY_WAIT或成功；尚无监督进程或网络分区自动修复承诺。
+
+真实PG和子进程故障验收见阶段记录。此接口尚未注册真实模型/工具业务handler，不等于完成Agent Loop、知识权限重验、HITL或业务自动调度。回滚停用payload_step调用并回退Worker二进制，保留003/正文/步骤与全部计数；不要把旧模型输出视为新权限。
