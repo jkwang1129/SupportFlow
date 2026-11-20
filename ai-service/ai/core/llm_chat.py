@@ -7,18 +7,16 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Any
-
-import httpx
 
 from ..config import get_settings
 from .db import connect
 from .llm_usage import record_chat_usage
 from .tenant import get_tenant_code
 from .trace import get_trace_id
+from .chat_transport import ModelCallFailure, _send_chat_json
 
 logger = logging.getLogger(__name__)
 
@@ -105,41 +103,34 @@ def choose_provider(provider: str | None, model: str | None) -> dict[str, str] |
 
 
 async def call_chat(chosen: dict[str, str], payload: dict[str, Any], timeout: int,
-                    *, scene: str = "对话", tenant_code: str | None = None) -> dict[str, Any]:
-    """调用 OpenAI 兼容的 /chat/completions；入参出参按需打印（排障用）。"""
+                    *, scene: str = "对话", tenant_code: str | None = None,
+                    meter_usage: bool = True, _transport=None) -> dict[str, Any]:
+    """One bounded HTTP attempt. Optional legacy usage metering is best-effort.
+
+    Runtime can retain provider usage in its atomic MODEL payload and settle it
+    separately. It must opt out explicitly to avoid a second mutable ledger.
+    Payload/provider-error logging is intentionally replaced by stable metadata.
+    """
     trace = get_trace_id() or "-"
-    if get_settings().llm_log_payload:
-        logger.info("%s模型入参 trace=%s provider=%s model=%s payload=%s",
-                    scene, trace, chosen["provider"], chosen["model"],
-                    json.dumps(payload, ensure_ascii=False))
-    headers = {"Authorization": f"Bearer {chosen['api_key']}", "Content-Type": "application/json"}
     started = time.perf_counter()
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(f"{chosen['base_url']}/chat/completions",
-                                     headers=headers, json=payload)
-        if response.status_code >= 400:
-            # 模型厂商的报错正文一定要带出来：404 只写"Not Found"毫无信息量，
-            # 而正文里通常写着 "Model not exist" / "Incorrect API key" —— 一眼定位
-            logger.error("%s调用失败 trace=%s provider=%s model=%s base_url=%s status=%d body=%s",
-                         scene, trace, chosen["provider"], chosen["model"], chosen["base_url"],
-                         response.status_code, response.text[:800])
-            # 失败也要计量：排障时"哪个模型在报错、报了多少次"比成功量更有价值
-            record_chat_usage(tenant_code=tenant_code, chosen=chosen, scene=scene,
-                              latency_ms=int((time.perf_counter() - started) * 1000), success=False)
-            raise RuntimeError(
-                f"{chosen['provider']} 返回 {response.status_code}：{response.text[:300]}"
-                f"（模型 {chosen['model']}，接口 {chosen['base_url']}/chat/completions）")
-        data = response.json()
+    try:
+        data = await _send_chat_json(chosen,payload,timeout,transport=_transport)
+    except ModelCallFailure as failure:
+        logger.warning("模型调用失败 trace=%s code=%s status=%s",trace,failure.code,failure.status_code or "-")
+        if meter_usage and failure.attempted:
+            _meter(tenant_code=tenant_code,chosen=chosen,scene=scene,latency_ms=int((time.perf_counter()-started)*1000),success=False)
+        raise
     latency_ms = int((time.perf_counter() - started) * 1000)
-    if get_settings().llm_log_payload:
-        logger.info("%s模型出参 trace=%s provider=%s cost=%dms body=%s",
-                    scene, trace, chosen["provider"],
-                    latency_ms,
-                    json.dumps(data, ensure_ascii=False)[:2000])
-    # 每次真实调用落一条计量（token 取厂商返回的 usage，成本按挂牌价估算）
-    record_chat_usage(tenant_code=tenant_code or get_tenant_code() or None, chosen=chosen,
-                      scene=scene, latency_ms=latency_ms, data=data)
+    if meter_usage:
+        _meter(tenant_code=tenant_code or get_tenant_code() or None,chosen=chosen,scene=scene,latency_ms=latency_ms,data=data)
+    logger.info("模型调用完成 trace=%s latencyMs=%d",trace,latency_ms)
     return data
+
+
+def _meter(**values):
+    try: record_chat_usage(**values)
+    except Exception:
+        logger.warning("MODEL_USAGE_UNAVAILABLE")
 
 
 def message_content(data: dict[str, Any]) -> str:

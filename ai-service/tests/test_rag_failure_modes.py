@@ -1,10 +1,10 @@
 """Fault injection against existing RAG nodes; no provider key or network required."""
-import json
 
 import httpx
 import pytest
 
 from ai.core import llm_chat
+from ai.core.chat_transport import ModelCallFailure
 from ai.rag import graph
 from ai.services import rag
 
@@ -18,28 +18,36 @@ def configure(monkeypatch, response):
                         lambda **kw: {"results": [dict(HIT)], "mode": "vector"})
     monkeypatch.setattr(rag, "resolve_provider", lambda _: ({"provider": "fault-test", "api_key": "synthetic",
                         "model": "synthetic", "base_url": "http://fault.invalid/v1"}, "synthetic"))
-    native_client = httpx.AsyncClient
-    transport = httpx.MockTransport(response)
-    monkeypatch.setattr(llm_chat.httpx, "AsyncClient",
-                        lambda **kw: native_client(transport=transport, **kw))
+    def server(request):
+        result=response(request)
+        # Model the unconsumed stream returned by an actual HTTP exchange.
+        if result.is_stream_consumed:
+            return httpx.Response(result.status_code,headers=result.headers,stream=httpx.ByteStream(result.content))
+        return result
+    transport = httpx.MockTransport(server)
+    async def chat(chosen,payload,timeout,**kwargs):
+        return await llm_chat.call_chat(chosen,payload,timeout,_transport=transport,**kwargs)
+    monkeypatch.setattr(rag,"call_chat",chat)
     monkeypatch.setattr(llm_chat, "record_chat_usage", lambda **kw: None)
 
 
-@pytest.mark.parametrize("scenario,error", [("http503", RuntimeError), ("timeout", httpx.ReadTimeout),
-                                            ("empty", RuntimeError), ("malformed_json", json.JSONDecodeError)])
-def test_generation_fault_propagates_without_a_fabricated_answer(monkeypatch, scenario, error):
+@pytest.mark.parametrize("scenario,error,code", [("http503", ModelCallFailure,'MODEL_UNAVAILABLE'), ("timeout", ModelCallFailure,'MODEL_TIMEOUT'),
+                                            ("empty", RuntimeError,None), ("malformed_json", ModelCallFailure,'MODEL_RESPONSE_INVALID')])
+def test_generation_fault_propagates_without_a_fabricated_answer(monkeypatch, scenario, error, code):
     def response(request):
         if scenario == "timeout":
             raise httpx.ReadTimeout("Synthetic timeout", request=request)
         if scenario == "http503":
             return httpx.Response(503, json={"error": "synthetic outage"})
         if scenario == "malformed_json":
-            return httpx.Response(200, text="not json")
+            return httpx.Response(200,headers={'Content-Type':'application/json'},content=b'not json')
         return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
     configure(monkeypatch, response)
     import asyncio
-    with pytest.raises(error):
+    with pytest.raises(error) as caught:
         asyncio.run(graph.ask("信用卡退款多久到账？", "EVAL_A"))
+    if code:assert caught.value.code==code
+    else:assert not isinstance(caught.value,ModelCallFailure)
 
 
 def test_no_evidence_has_one_bounded_rewrite_and_no_model_call(monkeypatch):
@@ -58,7 +66,7 @@ def test_no_evidence_has_one_bounded_rewrite_and_no_model_call(monkeypatch):
     assert not result["citations"] and not result["enough"]
 
 
-@pytest.mark.xfail(strict=True, reason="Known gap: verify removes source metadata but leaves [99] in answer text")
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason="Known gap: verify removes source metadata but leaves [99] in answer text")
 def test_invalid_citation_is_removed_from_the_answer_text(monkeypatch):
     configure(monkeypatch, lambda request: httpx.Response(200, json={
         "choices": [{"message": {"content": "退款3至15个工作日到账[99]。"}}]}))

@@ -1,0 +1,110 @@
+"""Private bounded HTTP transport used by the existing call_chat entry point."""
+import asyncio
+import json
+import math
+import re
+from urllib.parse import urlsplit
+
+import httpx
+
+MAX_CHAT_BYTES=262144
+
+
+def _request_body(payload):
+    pending=[(payload,0)];nodes=units=0
+    while pending:
+        item,depth=pending.pop();nodes+=1
+        if depth>64 or nodes>16384:raise ValueError()
+        if type(item) in (dict,list):
+            if nodes+len(pending)+len(item)>16384:raise ValueError()
+            if type(item) is dict:
+                for key in item:
+                    if type(key) is not str:raise ValueError()
+                    units+=len(key)
+                children=item.values()
+            else:children=item
+            pending.extend((child,depth+1) for child in children)
+        elif type(item) is str:units+=len(item)
+        elif type(item) is float:
+            if not math.isfinite(item):raise ValueError()
+        elif type(item) is int:
+            if not -9223372036854775808<=item<=9223372036854775807:raise ValueError()
+        elif item is not None and type(item) is not bool:raise ValueError()
+        if units>MAX_CHAT_BYTES:raise ValueError()
+    body=bytearray()
+    for part in json.JSONEncoder(ensure_ascii=False,allow_nan=False,separators=(',',':')).iterencode(payload):
+        chunk=part.encode('utf-8')
+        if len(chunk)>MAX_CHAT_BYTES-len(body):raise ValueError()
+        body.extend(chunk)
+    return bytes(body)
+
+
+class ModelCallFailure(RuntimeError):
+    """Stable classification only; never retain provider payload/URL/key as text."""
+    def __init__(self,code,*,retryable=False,status_code=None,attempted=True):
+        self.code,self.retryable,self.status_code,self.attempted=code,retryable,status_code,attempted
+        super().__init__(code)
+
+
+async def _send_chat_json(chosen,payload,timeout,*,transport=None):
+    try:
+        if type(chosen) is not dict or type(timeout) not in (int,float) or not .05<=timeout<=300:
+            raise ValueError()
+        base,key,model=chosen['base_url'],chosen['api_key'],chosen['model']
+        if (not isinstance(base,str) or '?' in base or '#' in base or not isinstance(key,str) or not key or len(key)>4096
+                or any(c in key for c in ('\r','\n','\0')) or not key.isascii()
+                or not isinstance(model,str) or not 1<=len(model)<=128 or any(c in model for c in ('\r','\n','\0'))):raise ValueError()
+        url=urlsplit(base);_=url.port
+        if url.scheme not in ('http','https') or not url.hostname or url.username is not None or url.password is not None:
+            raise ValueError()
+        if any(part in ('.','..') or not re.fullmatch('[A-Za-z0-9_.-]*',part) for part in url.path.split('/')):
+            raise ValueError()
+    except (ValueError,TypeError,KeyError,AttributeError):
+        raise ModelCallFailure('MODEL_CONFIGURATION_INVALID',attempted=False) from None
+    try:
+        if type(payload) is not dict or payload.get('model')!=model:raise ValueError()
+        body=_request_body(payload)
+    except (ValueError,TypeError,UnicodeError,RecursionError):
+        raise ModelCallFailure('MODEL_REQUEST_INVALID',attempted=False) from None
+    try:
+        # No hidden retry/fallback. Header and body completion share one deadline.
+        async with asyncio.timeout(timeout):
+            async with httpx.AsyncClient(transport=transport,trust_env=False,follow_redirects=False,
+                                         timeout=httpx.Timeout(min(30,timeout),connect=min(5,timeout))) as client:
+                async with client.stream('POST',base.rstrip('/')+'/chat/completions',
+                        headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','Accept-Encoding':'identity'},content=body) as response:
+                    status=response.status_code
+                    if status==429:raise ModelCallFailure('MODEL_RATE_LIMITED',retryable=True,status_code=status)
+                    if status in (408,425) or status>=500:raise ModelCallFailure('MODEL_UNAVAILABLE',retryable=True,status_code=status)
+                    if status in (401,403):raise ModelCallFailure('MODEL_AUTHORIZATION_DENIED',status_code=status)
+                    if status in (400,404,422):raise ModelCallFailure('MODEL_REQUEST_REJECTED',status_code=status)
+                    if status!=200:raise ModelCallFailure('MODEL_PROTOCOL_ERROR',status_code=status)
+                    types=response.headers.get_list('content-type')
+                    if (len(types)!=1 or types[0].split(';')[0].strip().lower()!='application/json'
+                            or response.headers.get('content-encoding','identity').lower()!='identity'):
+                        raise ModelCallFailure('MODEL_PROTOCOL_ERROR',status_code=status)
+                    raw=bytearray()
+                    async for chunk in response.aiter_raw():
+                        if len(raw)+len(chunk)>MAX_CHAT_BYTES:raise ModelCallFailure('MODEL_RESPONSE_TOO_LARGE')
+                        raw.extend(chunk)
+    except (TimeoutError,httpx.TimeoutException):
+        raise ModelCallFailure('MODEL_TIMEOUT',retryable=True) from None
+    except httpx.RequestError:
+        raise ModelCallFailure('MODEL_NETWORK_ERROR',retryable=True) from None
+    except ModelCallFailure:
+        raise
+    except Exception:
+        raise ModelCallFailure('MODEL_TRANSPORT_ERROR') from None
+    def unique(pairs):
+        result={}
+        for key,value in pairs:
+            if key in result:raise ValueError()
+            result[key]=value
+        return result
+    def constant(_):raise ValueError()
+    try:
+        value=json.loads(bytes(raw).decode('utf-8'),object_pairs_hook=unique,parse_constant=constant)
+        if type(value) is not dict:raise ValueError()
+        return value
+    except (ValueError,UnicodeError,RecursionError):
+        raise ModelCallFailure('MODEL_RESPONSE_INVALID') from None

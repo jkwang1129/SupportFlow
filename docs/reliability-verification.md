@@ -610,3 +610,21 @@ b2819d6的[CI 44732054985](https://github.com/jkwang1129/SupportFlow/actions/run
 - 同一专项内新增更新后的**4条实际Worker→Executor/TicketSDK→新客户JAR→受限PG**：①相同版本SUCCEEDED，tool=3/step=4/payload=1，handler=[2,2]；②归属撤销FAILED/TICKET_REVOKED，tool=3/step=4/payload=1，handler=[2]；③状态改4（更新时间未改）自动新预留读取后SUCCEEDED，tool=4/step=5/payload=2，handler=[2,4]；④同样改4但max_tool_calls=3，FAILED/BUDGET_EXHAUSTED，tool=3/step=4/payload=1，handler=[2]。均retry=1/model=0，业务来源消息=1/结果回执=0。真实SQL状态与收到的值分别记录在`.local/verification/runtime-ticket-tools.json` v2；旧v1三例原报告保留`.local/implementation/b2-ticket-sdk-results-v1.json`。performance/token_cost均NOT_MEASURED。
 
 本地首轮全部通过；没有把状态变化旧失败记录改写成旧版本已成功。Java/SQL未改，不重复上批103客服PG/4KB/九模块/三套完整服务，精确提交由远端CI重跑。边界：若资源在“本次授权→实际新读取”之间再次改变，仍拒绝不一致结果；尚无跨在途网络的即时撤权/无限刷新保证。无真正模型循环/知识Embedding预算/写工具/审批自动触发；下一项先核查模型单次调用入口再接最小循环，完整Gateway/上下文/知识工程沿用原计划。回滚停用v2注册/关闭read-tools，保留绑定/授权/所有版本正文/Run计数，不能把v2计划指向v1代码或删除UNKNOWN。
+
+4c9746e对应的[CI 44734373667](https://github.com/jkwang1129/SupportFlow/actions/runs/44734373667)两个job全部成功，包括工单v2实际刷新/预算拒绝和原三套完整服务部署路径。
+
+## B1 模型接入前置子批次：复用现有单次Chat入口（2026-11-20）
+
+基线4c9746e。源码核查：真正HTTP入口为core.llm_chat.call_chat，内部一次POST无重试，但原client.post/response.json无整体正文deadline或大小边界，错误正文写日志与RuntimeError。旧llm_gateway.py是Mock占位，这批不另建第二真实入口，也不包旧多模型Workflow。新增`core/chat_transport.py`、`tests/test_chat_transport.py`；call_chat委托私有传输/保留原调用签名和默认best-effort计量，RAG故障夹具迁移、ADR-0010/矩阵/本记录更新。无Java/SQL/依赖/默认业务路由修改。
+
+受信配置验证baseURL/密钥/模型一致性；请求纯JSON/64层/16384节点/256KiB预检查流式编码；HTTPX明确无环境代理/重定向，一次POST与整体deadline覆盖准备/连接/响应头/完整正文。JSON/identity实际响应≤256KiB，重复键/NaN/非对象等拒绝；稳定ModelCallFailure(code/retryable/status/attempted)不含上游正文/URL/密钥。配置/请求校验不当作HTTP尝试，HTTP尝试保留旧计量一次且失败不阻断结果；Runtime未来可显式关闭旧best-effort计量，在原子MODEL结果保留usage后统一结算，不宣称硬Token或金额额度。此处尚未接Runtime模型适配器。其他消费者/视觉/Embedding/旧Mock网关/计量器的日志与策略不冒充已统一。
+
+环境Python3.11.5/JDK25/隔离PG17，全部模型响应为协议Stub，未调用收费模型：
+
+- `cd ai-service; python -m pytest -q tests/test_chat_transport.py`：初始52项Mock协议通过，`b2-model-transport-unit-first.log`；增加3条真实回环TCP后最终**55项通过**，`b2-model-transport-unit-real-final.log`。覆盖精确POST/模型/身份header、无敏感正文日志、HTTP429/5xx/认证/请求分类、无内部重试、URL/密钥/时限预校验、JSON/Unicode/大小边界、重复/MIME/压缩/实际Content-Length谎报、慢正文/网络异常、旧计量一次/失败不阻断、Runtime opt-out不读开发者Settings。真实TCP3例：正常成功，302不跟随，已收到POST后延迟正文整体超时，设置无效环境代理仍直达固定回环目标；usage=11/7是合成供应商信封，不是实际Token费用数据。
+- 首次真实TCP慢正文用50ms整体时限，在Windows客户端准备阶段已到期、服务端未收到请求，正确超时但未验证到正文阶段；`b2-model-transport-unit-final.log`保留54通过/1夹具断言失败。改为1秒整体时限/服务端最多2秒正文阻塞，仍断言确有一次POST并在正文完成前超时，客户端退出后释放夹具，不改产品限制或重试策略。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b2-model-transport-ai-corrected.xml`：最终**419 passed、142 skipped、1 xfailed**，`b2-model-transport-ai-corrected.log`。首轮415通过/4失败因旧RAG故障夹具仍注入llm_chat.httpx（已抽为私有传输），`b2-model-transport-ai-final.log/xml`保留；改从现有rag.call_chat注入未消费HTTP流，明确断言MODEL_UNAVAILABLE/TIMEOUT/RESPONSE_INVALID，空答案仍单独拒绝，没有把Provider/JSON错误当生成成功。引用正文已知xfail限制raises=AssertionError，防止夹具/协议异常被误算成该质量缺口。
+- `python scripts/report-rag-contract.py --junit .local/implementation/b2-model-transport-ai-corrected.xml --output .local/implementation/b2-model-transport-rag-contract.json`：**24项RAG契约门禁通过**；`python -m unittest discover -s scripts/tests -p 'test_*.py' -v`：**22项中12通过、10项外部条件跳过**，其中报告门禁5项负面通过，`b2-model-transport-gate-tests.log`。
+- `python scripts/test-security-flow.py`：**默认新库/历史升级/CLI初始化三套实际服务全部通过**，含原业务/媒体/知识/WS/计费与45次Java Readiness故障，`b2-model-transport-services.log`。本组独立运行；使用上一批已验证JAR，未记为新九模块构建。这里模型显式Mock，不把全栈通过冒充真实供应商兼容性证明。
+
+边界/回滚：无真实模型质量/性能/Token/成本或生产流量数据，供应商路由/隐式全局选择/视觉/Embedding/完整计量治理仍未完成；旧同步计量器不在HTTP deadline内。某些非规范上游若返回压缩/非JSON/重复字段/超大正文会被明确拒绝，尚未实测付费供应商。下一批接Runtime模型适配与有界循环，保留原预算，真实Token/金额治理仍属M11。回滚本传输和call_chat委托，保留Run/Step/正文/计量；无SQL回滚。不能因为回退方便就把旧错误正文日志作为生产推荐。

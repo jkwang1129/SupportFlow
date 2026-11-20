@@ -37,7 +37,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M05 RAG Engineering | 部分实现，本轮补齐低分拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号、租户过滤；新增两引擎拒答契约测试 | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
 | M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime152项、客服PG103项、来源SDK32/结果SDK38、payload17项及实际双向写入均有脚本 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
 | M07 Trace/Observability | 部分实现 | Java `TraceContext`；Python `core/trace.py`、图 steps、`llm_usage.py`；运营 `ObservabilityService#trace/evaluate`、告警规则与调用记录查询；本轮 RAG steps 增加 traceId/sequence/schemaVersion 与拒答原因 | 已有模型调用 Trace 查询与告警应复用；已有持久化Run/Step与trace_id；缺工具详情、异步业务链路/审批事件、统一查询、脱敏治理和安全replay。A/B/D |
-| M08 Model Gateway/Prompt | 部分实现 | 实际调用在 `core/llm_chat.py`、`llm_vision.py`、`rag/embedding.py`；租户模型选择/usage；`llm_gateway.py` 仍 Mock 占位 | 统一现有调用封装，错误/超时/总预算、结构化输出、供应商权限、Prompt 版本；不额外造第二入口。E |
+| M08 Model Gateway/Prompt | 部分实现：真实共用Chat入口已受限 | core.llm_chat复用受限单次HTTP/稳定错误/正文边界，55项测试含真实TCP；视觉/Embedding、租户选择/usage仍原实现，llm_gateway.py仍旧Mock占位 | 统一现有调用封装，错误/超时/总预算、结构化输出、供应商权限、Prompt 版本；不额外造第二入口。E |
 | M09 Streaming/交互 | 部分实现 | `supportflow-realtime-service` WebSocket、消息 seq/ACK/补拉、机器人 typing | 缺持久化 Run 事件、审批/取消/恢复展示；优先复用 WebSocket。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
 | M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、`llm_usage.py` 实际 usage 与价格估算、计费日聚合；运营 `TenantCostBudget`、`ObservabilityService#costGuard/evaluate` 和客服 `CostGuardClient` 已有月预算告警/降级/暂停 | 复用既有预算配置；当前闸门缓存 60 秒且读取失败放行，不能当硬额度。已有跨Worker租约/fencing、Run调用/步骤/重试计数预算和租户积压上限；仍缺Token/费用并发预留结算和跨进程租户配额/公平性；计费去重 A4，运行预算随 M01，完整隔离压测 E。费用估算不是账单。B/E |
@@ -74,7 +74,7 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-20，B2 可变只读缓存失效子批次）
+## 当前执行位置（2026-11-20，B1 模型单次传输边界子批次）
 
 阶段 A 的本地退出条件已完成：A1/A2/A3 并发与事务、A4 客服计费批次、A5 六库迁移/Readiness/实际结构核验、A6 低证据拒答首批均有本地记录。网关 tenant_usage_daily 与尚未持久化原始计数的边界仍保留到 M11；RAG 事实支持/引用正文问题保留阶段 C，不冒充已完成。新旧服务与 CLI init 三条业务部署路径本地实测通过。14个原阶段提交及诊断补充已推送开发分支，4b2c306对应的远端CI全部通过。首轮平台创建工单500未复现，根因未确定，后续失败会保留结构化诊断；不把重跑成功描述成根因修复，不合并main。
 
@@ -90,4 +90,6 @@ a9dd99c的[CI 44706510968](https://github.com/jkwang1129/SupportFlow/actions/run
 
 a7a53c3的[CI 44733196937](https://github.com/jkwang1129/SupportFlow/actions/runs/44733196937)、b2819d6的[CI 44732054985](https://github.com/jkwang1129/SupportFlow/actions/runs/44732054985)两个job分别全部通过。本批新增current-version政策/稳定参数绑定Step，工单执行版本提升ticket-status-v2；不变复用、变化预留新读取且保留两份正文，预算不足/参数替换/无明确版本证明拒绝。364项普通AI、152项Runtime与全部真实双向联调通过，实际工单四例核对状态变化成功刷新/预算3拒绝刷新；无Java/SQL改变。
 
-下一项检查现有模型调用封装能否作为单次受预算MODEL步骤，再接最小有界模型—只读工具循环；知识工具需要沿用发布/租户权限，不能把隐藏的Embedding模型调用伪装为免费TOOL。随后幂等写工具/可信触发，完整知识工程及Gateway成本治理仍按C/E完善。仍无自动业务handler、UNKNOWN核销、HITL、MCP或上下文压缩，B1/B2未整体关闭，B3及C～F保持原计划。
+4c9746e的[CI 44734373667](https://github.com/jkwang1129/SupportFlow/actions/runs/44734373667)两个job全部通过。本批核查并沿用真实core.llm_chat入口，私有受限单次HTTP传输、不读取/记录供应商错误正文、整体deadline/256KiB/JSON结构边界、稳定错误/无隐藏重试。55项新测试含真实回环TCP，普通AI419项、RAG24项门禁与三套完整服务本地通过；已知引用正文xfail限定真实断言失败。当前还没有Runtime模型调用适配器或真正模型—工具循环，不能称M08网关完整。
+
+下一项基于此入口接Runtime模型适配与最小有界模型—只读工具循环；知识工具需要沿用发布/租户权限，不能把隐藏Embedding调用伪装为免费TOOL。随后幂等写工具/可信触发，完整知识工程及Gateway Token/费用治理仍按C/E完善。仍无自动业务handler、UNKNOWN核销、HITL、MCP或上下文压缩，B1/B2未整体关闭，B3及C～F保持原计划。
