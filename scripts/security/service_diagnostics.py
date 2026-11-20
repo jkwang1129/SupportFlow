@@ -6,7 +6,7 @@ import re
 LOG_NAMES = ('runtime', 'compose', 'gateway', 'user-service', 'tenant-service',
              'customer-service', 'billing-service', 'ops-service', 'realtime-service', 'ai')
 EXCEPTION = re.compile(r'(?:Caused by:\s*|^|\s)((?:[a-zA-Z_$][\w$]*\.)+[\w$]*(?:Exception|Error))\b')
-FRAME = re.compile(r'^\s*at ([a-zA-Z_$][\w$./<>]*\([A-Za-z0-9_$.-]+(?::[0-9]+)?\))\s*$')
+FRAME = re.compile(r'^\s*at ([a-zA-Z_$][\w$./<>]*\([A-Za-z0-9_$.-]+(?::[0-9]+)?\))\s*(?:~?\[[^\]\r\n]{1,160}\])?\s*$')
 # Emit fixed categories rather than database messages (which can contain input values).
 DATABASE_REASONS = (
     ('permission denied', 'permission_denied'),

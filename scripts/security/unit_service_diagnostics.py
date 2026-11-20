@@ -7,6 +7,19 @@ from service_diagnostics import capture, structural_events
 
 
 class ServiceDiagnosticsTest(unittest.TestCase):
+    def test_logback_artifact_suffixes_are_removed_but_source_frames_are_kept(self):
+        result=structural_events([
+            '\tat io.supportflow.customer.TicketService.format(TicketService.java:1506) ~[classes/:na]\n',
+            '\tat io.supportflow.customer.PlatformTicketService.claim(PlatformTicketService.java:218) [synthetic-secret.jar:synthetic-secret]\n',
+            '\tat io.supportflow.customer.Secret.run(Secret.java:1) Authorization: synthetic-secret\n',
+            '\tat external.Secret.run(Secret.java:1) ~[classes/:na]\n',
+        ])
+        self.assertEqual(result,[
+            {'line':1,'frame':'io.supportflow.customer.TicketService.format(TicketService.java:1506)'},
+            {'line':2,'frame':'io.supportflow.customer.PlatformTicketService.claim(PlatformTicketService.java:218)'},
+        ])
+        self.assertNotIn('synthetic-secret',json.dumps(result))
+
     def test_messages_sql_and_credentials_are_never_copied(self):
         result = structural_events([
             'Authorization: Bearer synthetic-secret\n',

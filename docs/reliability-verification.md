@@ -431,3 +431,15 @@ a839f15对应的[CI 44672099556](https://github.com/jkwang1129/SupportFlow/actio
 边界/风险：存储PG测试使用合成签名许可，实际控制面签发/Java验签由独立真实联调验收；尚未把真实许可、结果HTTP接口和业务落库串在一起，不能称完整Agent链路已完成。计费/渠道事件只验证既有afterCommit的调用次数，未证明外部渠道送达exactly-once；原始计数best-effort、日志脱敏和归档/物理清理留M11/M07/M12。取消/到期不能撤销在途或已提交动作，Run保留UNKNOWN语义。没有性能/模型成功率/Token费用/生产流量/客户或收益数据。
 
 回滚：此组件尚未自动装配或路由业务；停止新组件/回退二进制即可，保留007表、FK、消息与回执，已应用007不得改写或删除历史。未来数据清理需管理员按子表顺序并另立保留策略，不给业务账号DELETE；不换run/event绕过幂等或未知写。
+
+0cc1492对应的[CI 44695373096](https://github.com/jkwang1129/SupportFlow/actions/runs/44695373096)两个job全部通过，包括新增结果事务PG、007数据保留升级及原三套服务部署路径。
+
+## B1 后续回归发现：工单整分钟时间导致HTTP500（2026-11-20）
+
+结果API子批次完整服务回归在FRESH DEFAULT的`POST /platform/tickets/{no}/claim`遇到500，不能把结果接口单元/PG通过代替原业务回归。实际堆栈确定为TicketService.format→toEventVO→PlatformTicketService.detail/claim；`LocalDateTime.withNano(0).toString()`在seconds=0时省略秒，只剩16字符，固定substring(0,19)越界。实际业务时间接近整分钟时才暴露，但现在有不依赖墙钟的确定性复现。先前首轮CI的平台创建500无原始堆栈，仍不把它认定为相同根因。
+
+此问题单独提交：`TicketService.java`改为不可变DateTimeFormatter固定`yyyy-MM-dd HH:mm:ss`，仍保留null、不四舍五入、不修改业务时间或工单号；`TicketTimestampTest`走真实toEventVO转换验证整分钟、午夜、闰日/纳秒及普通秒和null。结构诊断`service_diagnostics.py`补识别Logback的`~[classes/:na]`等后缀，只输出类名/源码位置，后缀与消息仍丢弃；新增脱敏负面单测。
+
+本地JDK25/Python3.11：修复前`TicketTimestampTest` **5项中3项StringIndexOutOfBoundsException**，`ticket-time-before.log`；修复后`mvn -B -f backend/pom.xml verify`九模块成功、**5项全部通过**，`ticket-time-java-after.log`。`python -m unittest discover -s scripts/security -p 'unit_*.py' -v` **6项通过**，`ticket-time-diagnostics.log`。本次原始失败保留`b1-result-api-services.log`，私有客户服务日志/脱敏堆栈另存`.local/implementation/ticket-time-*`，未上传正文/密钥。本地构建工作区还包含未提交的结果API，修复提交只包含上述Ticket/诊断和回归测试；提交后由远端CI验证精确提交，完整服务会在本地继续重跑。没有把重跑成功当作根因修复证据。
+
+回滚可单独revert本修复提交（将重新暴露已复现边界错误），不涉及SQL或数据改写。新结果API仍为独立未完成批次，不混入这个缺陷提交。

@@ -162,6 +162,7 @@ public class TicketService {
             "AI_OPERATOR", "AI运营");
 
     private static final DateTimeFormatter NO_TIME = DateTimeFormatter.ofPattern("yyyyMMddHHmmss");
+    private static final DateTimeFormatter DISPLAY_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final TicketMapper ticketMapper;
     private final TicketEventMapper ticketEventMapper;
@@ -1503,7 +1504,7 @@ public class TicketService {
         // 精确到秒（列表的创建时间、时间线的每条流转、SLA 截止时间都用它）：
         // 工单是要追责的场景，"12:00 创建的还是 12:00:40 创建的"差 40 秒，
         // 而 SLA 判定正是按秒算的——显示到分钟会出现"看着没超时、状态却已超时"的困惑。
-        return time == null ? null : time.withNano(0).toString().replace('T', ' ').substring(0, 19);
+        return time == null ? null : DISPLAY_TIME.format(time);
     }
 
     private static int nz(Integer value) {
