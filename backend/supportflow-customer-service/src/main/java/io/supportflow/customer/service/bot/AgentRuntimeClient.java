@@ -13,6 +13,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -66,24 +67,7 @@ public final class AgentRuntimeClient implements AutoCloseable {
         var request = HttpRequest.newBuilder(AgentRuntimeProtocol.request(endpoint, "POST", event.tenant(), body, secret),
                         (name, value) -> true)
                 .header("X-Request-Id", event.traceId()).build();
-        var future = client.sendAsync(request, ignored -> new BoundedBody());
-        final HttpResponse<byte[]> response;
-        try {
-            // Covers headers AND body completion; no unbounded InputStream read.
-            response = future.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
-        } catch (TimeoutException timeout) {
-            future.cancel(true);
-            throw new DeliveryFailure(true, "DELIVERY_TIMEOUT");
-        } catch (InterruptedException interrupted) {
-            future.cancel(true);
-            Thread.currentThread().interrupt();
-            throw new DeliveryFailure(true, "DELIVERY_INTERRUPTED");
-        } catch (ExecutionException failure) {
-            Throwable cause = failure.getCause();
-            for (int depth = 0; cause != null && depth < 8; depth++, cause = cause.getCause())
-                if (cause instanceof OversizeBody) throw new DeliveryFailure(false, "RESPONSE_TOO_LARGE");
-            throw new DeliveryFailure(true, "DELIVERY_NETWORK_ERROR");
-        }
+        var response = exchange(request, "DELIVERY");
         int code = response.statusCode();
         if (code != 202) {
             boolean retry = code == 408 || code == 425 || code == 429 || code >= 500;
@@ -102,6 +86,52 @@ public final class AgentRuntimeClient implements AutoCloseable {
             if (!runId.toString().equals(run)) throw new IllegalArgumentException();
             return new Receipt(event.eventId(), runId);
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_RECEIPT"); }
+    }
+
+    /** Call outside the customer write transaction. Never retries a write or invents a new Run. */
+    public AgentActionPermit authorizeReply(AgentActionPermit.Request action) {
+        if (action == null) throw new IllegalArgumentException("Action reference is required");
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Action authority must be fetched outside the business transaction");
+        final byte[] body;
+        try {
+            body = mapper.writeValueAsBytes(Map.of("tenant_code", action.tenant(), "source_event_id", action.eventId().toString(),
+                    "owner", action.owner(), "fence", action.fence(), "snapshot_id", action.snapshotId().toString(),
+                    "arguments_sha256", action.argumentsSha256(), "operation", "session.reply", "version", "reply-v1"));
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_ACTION_REFERENCE"); }
+        URI uri = URI.create(endpoint + "/" + action.runId() + "/authorize");
+        var response = exchange(AgentRuntimeProtocol.request(uri, "POST", action.tenant(), body, secret), "AUTHORITY");
+        int code = response.statusCode();
+        if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, "AUTHORITY_HTTP_" + code);
+        var contentTypes = response.headers().allValues("Content-Type");
+        var encodings = response.headers().allValues("Content-Encoding");
+        if (contentTypes.size() != 1 || !contentTypes.getFirst().split(";", 2)[0].trim().equalsIgnoreCase("application/json")
+                || encodings.size() > 1 || !encodings.isEmpty() && !encodings.getFirst().equalsIgnoreCase("identity"))
+            throw new DeliveryFailure(false, "INVALID_ACTION_PERMIT");
+        try { return AgentActionPermit.verify(mapper.readTree(response.body()), action, secret, Instant.now()); }
+        catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_ACTION_PERMIT"); }
+    }
+
+    private HttpResponse<byte[]> exchange(HttpRequest request, String operation) {
+        var future = client.sendAsync(request, ignored -> new BoundedBody());
+        final HttpResponse<byte[]> response;
+        try {
+            // Covers headers AND body completion; no unbounded InputStream read.
+            response = future.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException timeout) {
+            future.cancel(true);
+            throw new DeliveryFailure(true, operation + "_TIMEOUT");
+        } catch (InterruptedException interrupted) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new DeliveryFailure(true, operation + "_INTERRUPTED");
+        } catch (ExecutionException failure) {
+            Throwable cause = failure.getCause();
+            for (int depth = 0; cause != null && depth < 8; depth++, cause = cause.getCause())
+                if (cause instanceof OversizeBody) throw new DeliveryFailure(false, "RESPONSE_TOO_LARGE");
+            throw new DeliveryFailure(true, operation + "_NETWORK_ERROR");
+        }
+        return response;
     }
 
     private static String text(JsonNode node, String key) {

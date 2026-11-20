@@ -74,6 +74,8 @@ def verify_delivery(connect, environment, passwords, runtime_environment):
             print('Real Java dispatcher -> signed AI app -> restricted PostgreSQL: 2 delivery cases passed; matched source/run receipts; no model or tool calls', flush=True)
             from source_delivery_fixture import verify_sources
             verify_sources(connect,environment,passwords,secret,sources)
+            from action_authority_fixture import verify_authority
+            verify_authority(connect, test_env, runtime_environment)
         finally:
             process.terminate()
             try:

@@ -380,3 +380,22 @@ customer服务须使用原body-bound Runtime鉴权。服务身份仅允许发起
 首轮专项**90通过、1失败**：锁等待测试在同一观测事务重复读pg_stat_activity，却未刷新统计快照，未观测到等待连接。夹具改为专用application_name且每轮pg_stat_clear_snapshot，保留原900ms租约/2s锁超时和原拒绝断言，再跑91项通过；初始日志`b1-authority-real-first.log`保留。没有按重跑成功宣称业务权限缺陷修复，也没有放宽权限规则。
 
 剩余风险/回滚：本批只有签发，没有Java验签/数据库时钟消费、结果幂等回执或业务落库，不能称结果回写已完成。后续必须主动查询控制面、重新校验业务资源、原子写消息和稳定Run回执；短期许可不能保证撤销已在途动作，取消仍保留SIDE_EFFECT_UNKNOWN。没有时钟跨区域、性能/成本/模型质量数据。回退停用Runtime接口或移除此新路由，保留Run/Step/意图历史和现有业务；不清表、不重置预算、不重新生成event绕过不确定写。
+
+59140ca对应的[CI 44670897424](https://github.com/jkwang1129/SupportFlow/actions/runs/44670897424)两个job全部成功，包含新27项真实PG权限测试和原三条实际服务部署路径。
+
+## B1 子批次 10：Java主动核验执行权（2026-11-20）
+
+基线59140ca。新增`AgentActionPermit`及8项Java协议/HTTP负面测试、1项实际Java→AI→PG执行权联调，扩展原AgentRuntimeClient/Protocol和Runtime夹具，Python固定MAC测试增加与Java相同的字面签名。复用已有有界BodySubscriber/HTTP客户端、body-bound请求签名与默认关闭Runtime；没有新SQL或业务入口切换，设计补充见ADR-0005。
+
+Java在业务事务外请求固定Run的authorize端点，只传主体/版本/快照/参数摘要等引用，不传JWT或答复正文。许可要求精确13字段、严格正整数及64位范围、固定版本/操作、全部请求引用、Step与HMAC、当前时间后且最多5秒；重复JSON/尾随对象/过期/超远期/字段替换均拒绝。只能通过验签创建许可对象，后续写事务仍必须用客户DB时钟再次requireValidAt、重验资源并执行幂等。HTTP共享原整体deadline（最多10秒，含body）/8KiB响应上限/无重定向/无隐式重试，区分稳定AUTHORITY错误码且不保留服务错误正文。检测到活跃业务事务即在发HTTP前拒绝。
+
+实际结果（与前批相同本地工具链/一次性PG17/合成数据/离线模型）：
+
+- `mvn -B -f backend/pom.xml verify`：**九模块成功**，新8项AgentActionPermitTest及原7项Client/3项Protocol共18项通过，日志`.local/implementation/b1-authority-client-java.log`。真实PG和联调的条件跳过另由专项执行，不计通过。
+- `cd ai-service; python -m pytest -q tests/test_runtime_authority.py`：**23项通过**，`b1-authority-client-python.log`；Python和Java固定`action-v1`数据共同核对MAC `93e4...c18`，不是仅各自用自身函数自证。
+- `python scripts/test-customer-rls.py --with-ai`：**70项Java真实PG + 4项KB通过**，`b1-authority-client-customer.log`；共享HTTP传输提取后，原Dispatcher/Outbox/快照/来源接口与会话并发不退化。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**91项Python专项 + 6次角色负面 + 原2项Java交付/2条实际来源流程 + 新1项Java执行权联调通过**，`b1-authority-client-real-final.log`。新联调运行实际AI应用/认证/Readiness/受限PG，Java不获bootstrap或AI数据库密码；有效WRITE意图取得并验签许可，错tenant/fence/hash/服务密钥分别404/409/409/401，实际取消后新签发409。脚本再查PG：Run为FAILED/cancel_requested/SIDE_EFFECT_UNKNOWN，步骤UNKNOWN、model=0/tool预算=1/retry=0；没有业务消息写入，也不把这项测试当作任务成功率。
+
+首轮Java测试编译因测试中Jackson旧put重载返回JsonNode而失败，改为BigInteger重载后九模块成功，保留`b1-authority-client-unit-first.log`。第一次真实联调中获取/验签与身份拒绝均通过，辅助取消请求400；该辅助HttpClient误用默认版本，改为与生产客户端一致的HTTP/1.1后保持原断言全组通过，`b1-authority-client-real-first.log`保留。未改产品权限或放宽timeout，也不把夹具调整描述成产品缺陷修复。
+
+剩余风险/回滚：Java目前只“取得并验证”许可，不是事务内写入消费；结果回执/资源重验/SessionService原子写入、业务handler与调度仍待下一批。取消后已在途许可可能在短窗口有效，不承诺即时撤销或已写动作回滚。没有新准确率/Token/生产流量/客户或收益数据。回滚停止调用authorizeReply，原enqueue/Dispatcher及业务入口保持；保留全部来源/Run/Step，不删除不确定意图，不重新生成Run绕过去重。

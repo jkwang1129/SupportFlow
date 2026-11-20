@@ -18,7 +18,7 @@
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
 | PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 登记的 90 张表/索引/RLS 核验、默认新库/历史升级/CLI init 实际服务已通过；生产备份/运维属 M12。A5 本地完成 |
-| PR-8 持久化 Run | 部分实现：存储、Worker、交付、来源桥接及只读执行权签发 | Run/Step/Worker；Java Outbox/Dispatcher；Source快照/来源API和Python SDK；91项Runtime专项，含27项执行权PG；23项执行权协议/API单元测试 | Java消费许可、结果幂等、业务handler、可信调度/自动登记仍缺。B1进行中 |
+| PR-8 持久化 Run | 部分实现：存储、Worker、交付、来源桥接及执行权签发/Java验签 | Run/Step/Worker；Java Outbox/Dispatcher；Source快照/来源API和Python SDK；91项Runtime专项，含27项执行权PG；23项执行权协议/API单元测试；Java许可客户端 | 事务内消费许可、结果幂等、业务handler、可信调度/自动登记仍缺。B1进行中 |
 | PR-9 Tool Calling | 未实现通用层 | `ai/agents/brain.py` 固定图；Java 工单/知识 API 为可复用业务能力 | 内部 Registry/Executor、可信主体、Schema、只读和写工具、结果验证；MCP 只做适配。B2 |
 | PR-10 Checkpoint/HITL | 未实现 | `brain.py`、`rag/graph.py` 均 `compile()` 无 checkpointer；`docs/architecture.md` 明示缺失 | 业务对话状态不能代替执行 checkpoint；审批绑定参数、恢复重新鉴权、未知副作用核验。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
@@ -35,7 +35,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M03 Tool Calling/MCP | 未实现通用层 | 既有工单创建/查询、知识检索 Java API | 先内部工具与权限、后可信 MCP 适配；不重复写业务服务。B |
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、`ChatAttachmentAccess`、`LicensePrivilegeTest`、受限 DB 角色/平台审计 | 工具 Scope、资源和输出约束、注入负面集、限时参数审批、防重放；无任意代码需求，暂不建 Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，本轮补齐低分拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号、租户过滤；新增两引擎拒答契约测试 | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
-| M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime64项、客服PG70项、来源SDK32项及真实双向桥接均有复现脚本 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
+| M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime91项、客服PG70项、来源SDK32项及真实双向桥接均有复现脚本 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
 | M07 Trace/Observability | 部分实现 | Java `TraceContext`；Python `core/trace.py`、图 steps、`llm_usage.py`；运营 `ObservabilityService#trace/evaluate`、告警规则与调用记录查询；本轮 RAG steps 增加 traceId/sequence/schemaVersion 与拒答原因 | 已有模型调用 Trace 查询与告警应复用；已有持久化Run/Step与trace_id；缺工具详情、异步业务链路/审批事件、统一查询、脱敏治理和安全replay。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现 | 实际调用在 `core/llm_chat.py`、`llm_vision.py`、`rag/embedding.py`；租户模型选择/usage；`llm_gateway.py` 仍 Mock 占位 | 统一现有调用封装，错误/超时/总预算、结构化输出、供应商权限、Prompt 版本；不额外造第二入口。E |
 | M09 Streaming/交互 | 部分实现 | `supportflow-realtime-service` WebSocket、消息 seq/ACK/补拉、机器人 typing | 缺持久化 Run 事件、审批/取消/恢复展示；优先复用 WebSocket。依赖 B、M07。E |
@@ -74,8 +74,8 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-20，B1 执行权签发子批次）
+## 当前执行位置（2026-11-20，B1 Java执行权客户端子批次）
 
 阶段 A 的本地退出条件已完成：A1/A2/A3 并发与事务、A4 客服计费批次、A5 六库迁移/Readiness/实际结构核验、A6 低证据拒答首批均有本地记录。网关 tenant_usage_daily 与尚未持久化原始计数的边界仍保留到 M11；RAG 事实支持/引用正文问题保留阶段 C，不冒充已完成。新旧服务与 CLI init 三条业务部署路径本地实测通过。14个原阶段提交及诊断补充已推送开发分支，4b2c306对应的远端CI全部通过。首轮平台创建工单500未复现，根因未确定，后续失败会保留结构化诊断；不把重跑成功描述成根因修复，不合并main。
 
-B1的Run/Step、Worker、Outbox、接收、Dispatcher、真实双向交付和不可变来源快照已落地；fb26a1b及此前子批次CI均通过（[来源接口CI](https://github.com/jkwang1129/SupportFlow/actions/runs/44668976501)）。本批新增默认关闭Runtime下的只读执行权签发：当前owner/fence、未取消且有效租约、精确RESERVED WRITE意图才能取得短期签名许可。六库仍为91表/1视图/5受控函数，没有新SQL。下一批实现Java消费许可/资源重验/结果幂等，再接业务handler和自动触发。签发不执行业务写，Worker未接客服任务，B1仍未闭环；B2/B3的工具授权、MCP、审批、Checkpoint与C～F继续按依赖推进。
+B1的Run/Step、Worker、Outbox、接收、Dispatcher、真实双向交付和不可变来源快照已落地；59140ca及此前子批次CI均通过（[执行权签发CI](https://github.com/jkwang1129/SupportFlow/actions/runs/44670897424)）。本批扩展Java现有客户端主动请求并验签短期许可，网络期间禁止持有业务事务，重用有界传输；没有业务写。六库仍为91表/1视图/5受控函数，没有新SQL。下一批实现事务内消费许可/资源重验/结果幂等，再接业务handler和自动触发。签发与验签不等于业务写已完成，Worker未接客服任务，B1仍未闭环；B2/B3的工具授权、MCP、审批、Checkpoint与C～F继续按依赖推进。

@@ -61,6 +61,7 @@ def test_fixed_permit_canonical_wire_and_all_fields_bound():
                           'session.reply', value['snapshot_id'], value['arguments_sha256'], '1700000004900'))
     key = KEYS['customer']
     signature = hmac.digest(key.encode(), canonical.encode(), 'sha256').hex()
+    assert signature == '93e4a92722d1651caebf0786db91cc7e4532660377ea0cdbbc1489a33af9ec18'
     result = sign(value, key)
     assert result == {**value, 'signature': signature} and value == grant()
     for field in value:
