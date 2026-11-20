@@ -644,3 +644,21 @@ ChatProfile由可信宿主注入且绑定tenant，凭据隐藏/不进定义Hash�
 - `python scripts/test-agent-runtime.py --with-java-delivery`：**168项Python专项+6次角色负面通过**，新16项真PG及原Java交付/Source/工单v2当前版本刷新/许可/双向回复与丢回执全部通过，`b1-model-adapter-runtime-first.log`。模型PG16例：同步骤两次访问仅一次HTTP/预留/正文及13/7合成usage原子保存；下游READ重试不再调模型；新Worker对象/换密钥复用；503后max_model=1在第二HTTP前预算拒绝/预算2成功；401永久失败不重试；截断/凭据回显不存成功正文；执行中取消不保存迟到输出也不退预留；正文提交成功但丢DB回执后复用且HTTP仍1；策略/消息改变不套旧逻辑步骤；Hash有效但Profile/usage/凭据正文被改仍拒绝；错租户Profile在Step/Model预留前拒绝。没有把MockTransport+真PG说成真实模型协议网络或模型质量验证，网络边界由前一批真实TCP三例另有证据。
 
 本批首轮均通过。成功usage=13/7只是合成供应商信封，不是项目Token实测或费用；模型次数是预留计数，不等于供应商确认付费次数。无Java/SQL改变，本地不重复九模块/103客服PG/4KB/三套完整服务（上批已实测，当前CI会重跑）。边界：无租户Profile Resolver、自动Worker或完整Agent loop；HTTP可在途到profile超时，取消不能保证供应商停止收费；当前配置密钥回显保护不等于通用PII/密钥识别，其他上下文/供应商/金额治理仍后续。回滚停用模型适配，保留MODEL步骤/正文/usage/调用计数；不把新策略计划指向旧版本或重置预算，旧Workflow不切换。
+
+0d4db15对应的[CI 44738498124](https://github.com/jkwang1129/SupportFlow/actions/runs/44738498124)两个job全部成功，含模型Profile/正文与usage恢复和三套完整部署路径。
+
+## B1 有界只读Loop核心子批次（2026-11-20）
+
+基线0d4db15。新增`ai/runtime/ticket_loop.py`、`test_ticket_loop.py`、`test_ticket_loop_postgres.py`、ADR-0012；扩Runtime专项入口/矩阵/本记录。复用同一Model/Tool Executor与Run/Step/正文/预算，不新增SQL/Java/依赖/状态机，不自动注册或切换业务。
+
+宿主私有来源bootstrap当前核权；固定政策/catalog/Profile/来源Hash的INTERNAL绑定；最多4次严格JSON模型决策（tool/report/clarify），工具仅既有get_ticket_status v2。模型只看原问题与工单最小三字段投影，不能直接更改租户/主体/Scope/URL或声明业务写已完成。report须指向成功观察，再次当前核权，状态变化可刷新，来源/工单绑定重验后固定模板产出ticket-report-v1并原子存working-state；Run只ready引用，没有发送业务消息/创建工单。上下文不同的模型步骤需新预留，整体仍原Run预算。报告规范JSON Hash防止True==1的类型混淆。
+
+Python3.11.5/隔离PG17，模型和业务HTTP为确定性协议Stub，无付费模型/开发者.env：
+
+- `cd ai-service; python -m pytest -q tests/test_ticket_loop.py`：首轮**17项通过**，`b1-ticket-loop-unit-first.log`；后续共享夹具扩展真实Run引用/503状态脚本，17项随全量通过。含动态查询/停止/固定澄清、最后状态变化/归属撤权、无效JSON/重复字段/幻觉写完成字段、未知工具/越权参数/假观察引用、轮数限制、来源Hash不同但各自投影Hash有效仍拒绝报告。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-ticket-loop-ai-final.xml`：**493 passed、173 skipped、1 xfailed**，`b1-ticket-loop-ai-final.log`；外部条件PG专项实测，原正文引用xfail保留且仅AssertionError。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：首轮**182项Python+6次角色负面、原全部实际Java交付/来源/工单/许可/双向回复联调通过**，`b1-ticket-loop-runtime-first.log`。本批新Loop的模型/业务网络仍Stub，不把原工具的实际联调替代新Loop组合联调。追加澄清真实PG后`python scripts/test-agent-runtime.py`：最终**183项Python+6次角色负面通过**，`b1-ticket-loop-runtime-final.log`。
+
+新15项真PG：正常Loop2Model/5Tool/10Step、5正文产物/固定事实；澄清1Model/2Tool/5Step且无工单查询；规划期间状态2→4后新核权报告4（模型此前只看到2）；归属撤销无报告；4类坏模型动作（假观察/未知shell/租户参数/自由完成声明）在工单请求前停止；503一次后保原预算3Model/6Tool/12Step/retry1完成；模型预算1无免费第二调用；工具预算4不能免费用缓存跳过最终核权；轮数1不隐式续问；MODEL提交丢DB回执后不重复已成功规划且原预算完成；模型应答阶段取消不保存迟到计划/报告；报告提交丢DB回执后管理员把status=1改true并同步Hash，恢复仍REPORT_CHECKPOINT_INVALID，模型HTTP保持2次（此故障用例显式Limits16Step/12Tool）。没有假称执行shell或写业务成功。
+
+本地首轮全部通过；新增澄清专项补测由最终PG通过。无Java/SQL变化，不重复九模块/103客服PG/4KB/三套完整服务，基线CI已有通过，当前CI仍重跑精确提交。边界：目前只有协议Stub模型选择，不是AI语义评测/真实供应商质量；新Loop尚未组合实际模型HTTP/客户JAR，下一批做该验收。报告私有存储不等于渠道回复，知识/写工具/审批/UNKNOWN核销/可信触发/长历史/成本结算仍缺，不宣布B1整体完成。回滚不注册Loop/回退handler，保留所有绑定/模型/工具/报告与预算，无SQL回滚、不清空UNKNOWN。
