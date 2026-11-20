@@ -58,7 +58,8 @@ def main():
         report = ROOT/'.local/verification/runtime-store.xml'
         report.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/test_runtime_types.py',
-                        'tests/test_runtime_store_postgres.py', 'tests/test_runtime_worker_postgres.py', f'--junitxml={report}'],
+                        'tests/test_runtime_store_postgres.py', 'tests/test_runtime_worker_postgres.py',
+                        'tests/test_runtime_api_postgres.py', f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)
 
 

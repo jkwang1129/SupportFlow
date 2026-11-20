@@ -271,3 +271,21 @@ init 本身不配置运行密码、不启动业务，不保证跨库原子性或
 14个阶段提交已推送到`codex/p1-reliability`，首轮[CI 44550858743](https://github.com/jkwang1129/SupportFlow/actions/runs/44550858743)对应f373666。前端成功；后端构建、真实PG隔离/计费/Runtime/迁移/结构/初始化、AI认证与RAG门禁、运行角色与凭据分发步骤通过。实际服务验收在默认新库的`POST /customer/tickets/platform`遇到500，故整轮CI失败，不能以本地通过宣称远端验收通过。
 
 原CI未上传服务异常，当前先补结构化失败诊断：只读取固定服务日志，输出异常类、项目/PG栈位置及有限数据库错误类别；不复制异常消息、SQL、请求、响应、环境或凭据文件，写入既有`.local/verification/`报告目录。失败时仍执行原清理，诊断不更改验收断言、权限或重试次数。`python -m unittest discover -s scripts/security -p 'unit_*.py' -v`：5项通过，其中2项新增，验证敏感消息/SQL/未知文件不进入报告，最多180事件/服务。根因尚待复现；本批不混入未完成的Runtime接收API。回滚只需撤销诊断脚本及调用，无数据库改动。
+
+4b2c306推送后的[CI 44552635433](https://github.com/jkwang1129/SupportFlow/actions/runs/44552635433)已全部成功：前端和backend-and-isolation两个job均成功，后者包括三种本地部署初始化路径的实际服务验收。首轮500未复现、根因未确定；这是重跑结果，不是根因已修复的证据。结构化诊断留作下次失败取证，main保持不合并。
+
+## B1 子批次 4：受鉴权的持久化接收端（2026-11-20 整理，测试于11月19日执行）
+
+基线4b2c306。新增`ai/core/runtime_auth.py`、`api/runtime.py`及对应单元/真PG测试，复用RuntimeStore；更新认证安装、路由、配置与只读Readiness。Java新增`AgentRuntimeProtocol`和3项协议测试。协议与边界见ADR-0003第四子批次，默认开关关闭，无新SQL、无Dispatcher或业务触发切换。
+
+设计：仅customer独立服务密钥可签发；新audience隔离旧凭据，签名绑定method/raw path/query/tenant和原始body SHA-256，35秒有效窗口。ASGI在解析前将body限制8192字节，拒绝重复JSON/认证头/租户头/Content-Type和额外字段；只保存严格事件引用及固定runtime-v1预算。Java克隆同一wire bytes用于签名和HTTP body，固定跨语言签名样本已互验。202只是入队，重复同输入返回原Run，变更冲突409，背压429、故障503；状态/取消只按可信tenant访问，未知写取消仍保留SIDE_EFFECT_UNKNOWN。启用后Readiness检查新表所需列、有效S/I/U、无DELETE/TRUNCATE、RLS/FORCE/owner/角色/队列函数权限，故障关闭业务，live保持200。
+
+实际验证（本地JDK25.0.5+8、Maven3.9.16、Python3.11.5、隔离PG17，合成数据/离线模型）：
+
+- `python scripts/test-agent-runtime.py`：**64 passed**（原49+新增15项HTTP/真PG），额外6次危险能力组负面执行通过。日志`.local/implementation/b1-receiver-pg-final.log`、JUnit`.local/verification/runtime-store.xml`。覆盖八路同事件接收仅一Run、改变主体/资源/Trace冲突、不刷新预算、跨租户状态与取消404、重复终态仍终态、积压满只拒新事件、未知写取消不谎称撤销，以及缺列/表、撤S/I/U/函数执行/能力组、BYPASSRLS、额外DELETE和NO FORCE故障的503/live200/原地修复。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-receiver-ai.xml`：**102 passed、54 skipped、1 xfailed**，日志`b1-receiver-ai.log`。新增38项接收协议/Schema/负面与2项开关元数据测试；54跳过包括48项Runtime真PG、4项Readiness真PG、2项KB真PG，48项由上述专项执行。既有引用正文xfail保留，不计通过。未发真实模型请求。
+- `mvn -B -f backend/pom.xml verify`：九模块成功，新增协议测试**3/3通过**，日志`b1-receiver-java-final.log`。验证固定Python签名样本、已发送body字节与签名一致/不受调用方后续数组修改影响、10秒请求超时、query/URL凭据/未知端点/平台租户/超大body/短密钥拒绝。
+- `python scripts/test-security-flow.py`：默认新库、历史升级、CLI空库初始化三套实际服务均通过，包含原核心流程、异常权限、45次Java Readiness故障、迁移/角色/Outbox权限核对；测试容器/卷/网络清理。日志`b1-receiver-services.log`。此项使用默认关闭的新接收API，验证原客服路径不退化；新入口本身由上述真实PG HTTP fixture验证。
+- 首轮接收单元有1项断言把有效异租户签名/正文不符的403误当签名篡改401，修正为实际篡改header后通过。首轮59项PG有1项注入仅撤继承组INSERT、遗漏业务账号直接授权，无法构成有效权限缺失；改为撤双重授权后通过，并补充其他负面故障，最终64项完整重跑。失败日志`b1-receiver-pg-first.log`保留；这些是测试构造问题，不声称产品漏洞修复。
+
+剩余风险/回滚：没有Java Dispatcher、业务快照/幂等结果、用户取消授权传播或Python实际业务handler，B1仍未闭环。服务签名不代替资源授权；后续Java最终写入仍须核验主体、租户/资源、当前状态、执行权及幂等键。Readiness不是完整策略漂移审计，发布仍须权威schema verify。回滚先停后续派发/Worker，再关闭接收开关，保留全部事件/Run/Step；不清表、不换eventId绕过去重。没有生产吞吐、准确率、费用或端到端恢复的新增声明。

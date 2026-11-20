@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     customer_secret: SecretStr = SecretStr("")
     ops_secret: SecretStr = SecretStr("")
     tenant_secret: SecretStr = SecretStr("")
+    # Receiver is opt-in until Java delivery/result integration is accepted.
+    runtime_api_enabled: bool = False
     # 日志级别：DEBUG / INFO / WARNING / ERROR
     log_level: str = "INFO"
     # 是否打印 AI 调用的完整入参/出参（真实模型请求与响应原文）

@@ -31,6 +31,23 @@ def test_legacy_auto_migrate_flag_cannot_run_ddl(monkeypatch, tmp_path):
     connection.assert_not_called()
 
 
+@pytest.mark.parametrize('enabled', [False, True])
+def test_runtime_readiness_extension_is_controlled_by_the_opt_in_flag(monkeypatch, enabled):
+    from ai.config import Settings
+    columns = set(schema_guard.REQUIRED_COLUMNS)
+    columns.update(f'{table}.{column}' for table, names in schema_guard.KB_COLUMNS.items() for column in names)
+    monkeypatch.setattr(schema_guard, '_columns', lambda _connector: columns)
+    monkeypatch.setattr(schema_guard, 'get_settings', lambda: Settings(_env_file=None, runtime_api_enabled=enabled))
+    calls = []
+    def runtime_checks(observed):
+        calls.append(observed)
+        return {'ai_db.runtime_fault': schema_guard.RUNTIME_SOURCE}
+    monkeypatch.setattr(schema_guard, 'runtime_missing', runtime_checks)
+    result = schema_guard._missing()
+    assert bool(calls) is enabled
+    assert ('ai_db.runtime_fault' in result) is enabled
+
+
 def test_missing_schema_does_not_pass_ready_but_liveness_still_works(client, monkeypatch):
     monkeypatch.setattr(schema_guard, "_missing", lambda: {"ai_db.bot_setting.brand_name": "baseline"})
     assert client.get("/api/ai/health").status_code == 200

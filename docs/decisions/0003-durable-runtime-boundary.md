@@ -51,3 +51,15 @@ Java 继续拥有消息、会话、工单、资源权限和最终业务事务。
 投递领取独立租约/fence，按同会话先前未DELIVERED事件阻塞，另一会话可进展。网络调用必须在领取事务外进行；只有匹配eventId且含Run UUID的接收回执才能落DELIVERED，这表示目标已持久化接收而非Agent已成功。丢响应在租约过期后用同事件重发，旧Worker不能ack/retry。最多8次投递，耗尽保留HELD并阻断后续同会话事件，等待后续运维核查，不自动丢弃或跳过。积压满时事务失败使源消息一同回滚；未来入口必须给出明确可重试响应，而非确认发送后漏任务。
 
 仍缺带body绑定的服务鉴权接收协议、Dispatcher、Java业务快照/结果幂等入口和Python业务handler。未接好前保持原业务触发不变；不把事务测试描述成已上线的消息→Agent→回复闭环。回滚保留事件/外键/迁移历史，停派发再由兼容版本处理，不删除HELD或重用新eventId绕过去重。
+
+## B1 第四子批次：带请求体签名的持久化接收协议
+
+新增内部`POST /api/ai/v1/runtime/runs`、`GET /api/ai/v1/runtime/runs/{uuid}`和`POST .../{uuid}/cancel`。只允许customer服务身份和业务租户，复用独立CUSTOMER_SECRET；不使用终端用户JWT。新audience为`supportflow-ai-runtime:v1`，凭据格式`runtime:customer:expiry:hex`。规范串依次为audience、caller、expiry、HTTP method、raw path、raw query、tenant、原始body的SHA-256，换行连接，无尾换行。有效期最多35秒；Java签发30秒并用同一byte[]克隆构建请求，不先签JSON再重新序列化。旧签名不接受新入口，新凭据也不能用于旧业务入口。重放同输入只能返回原Run；取消为终态幂等操作，短有效期不被描述成一次性nonce机制。
+
+外层ASGI先校验单一凭据/租户头并有界读取8192字节，验证签名后才解析JSON；拒绝重复字段、重复Content-Type、非JSON、GET带body、query、越权角色/租户。通过受信scope标记交给原认证中间件，不修改私有Request属性。此协议只接收严格Schema的事件/消息/会话/主体引用，禁止额外字段、调用者自定预算和未知版本；不保存body、密钥或JWT。请求头tenant与正文必须一致。错误及验证响应不回显入参、SQL或DSN；404不泄露跨租户Run存在性。
+
+接收使用既有RuntimeStore短事务，202表示持久化接收，绝不表示任务已完成。重复事件用不可变输入摘要核对；冲突409、积压429并带Retry-After、持久化不可用503。同一runtime-v1策略固定12步骤/4模型/8工具/2重试/120秒墙钟，排队也消耗deadline。未来改策略需新版本并保留旧版本处理器，不能重放旧事件时暗中改变限额。状态只返回稳定标识/状态/计数/错误码，不返回owner、租约、步骤/业务内容。取消复用存储层的fencing；未知WRITE保持FAILED/SIDE_EFFECT_UNKNOWN，不声称已经撤销副作用。
+
+`SUPPORTFLOW_AI_RUNTIME_API_ENABLED=false`为默认。启用后只读Readiness增查Run/Step所有使用列、有效S/I/U、无DELETE/TRUNCATE、强制RLS、非owner/非管理角色、能力组成员和队列发现函数EXECUTE，失败阻断业务而live仍可用；不执行DDL，不代替发布前的权威schema verify。回退先停Dispatcher/Worker再关闭开关，保留事件、Run和Step；本批尚无Dispatcher自动运行，也不接入现有消息触发。
+
+服务签名证明可信调用方，不能代替Java业务资源授权。此批尚未实现Java来源快照/结果写入、Dispatcher、用户取消权限与传播、实际业务handler及恢复后的业务权限检查。接收端的引用不能被视作任意资源操作许可；后续Java最终操作仍须核验租户/资源/主体/当前状态/幂等键/执行权。没有端到端恢复或生产吞吐声明。

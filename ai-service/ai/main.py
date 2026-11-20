@@ -22,7 +22,7 @@ from .core.trace import TRACE_ID_HEADER, new_trace_id, set_trace_id
 setup_logging()
 
 from .api import (  # noqa: E402
-    bot, brain, chat, health, kb, observability, qa, rag, speech, training, usage, vision,
+    bot, brain, chat, health, kb, observability, qa, rag, runtime, speech, training, usage, vision,
 )
 
 logger = logging.getLogger(__name__)
@@ -128,6 +128,7 @@ def create_app() -> FastAPI:
     app.include_router(kb.router, prefix=settings.api_prefix)
     app.include_router(rag.router, prefix=settings.api_prefix)
     app.include_router(brain.router, prefix=settings.api_prefix)
+    app.include_router(runtime.router, prefix=settings.api_prefix)
     app.include_router(vision.router, prefix=settings.api_prefix)
     # 语音识别 / 语音合成（阿里云 NLS）：400 热线录音转写 + IVR 播报音频
     app.include_router(speech.router, prefix=settings.api_prefix)

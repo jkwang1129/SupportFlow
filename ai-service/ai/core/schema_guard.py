@@ -27,6 +27,13 @@ KB_COLUMNS = {
     "kb_chunk": ("id", "tenant_code", "doc_id", "chunk_no", "content", "char_count", "token_count", "embedding", "embedding_model"),
     "kb_document": ("id", "tenant_code", "title", "status", "is_deleted"),
 }
+RUNTIME_SOURCE = 'backend/deploy/migrations/sql/ai_db_002_agent_runtime.sql'
+RUNTIME_COLUMNS = {
+    'agent_run': ('tenant_code run_id source_event_id session_no event_seq message_id principal_ref trace_id runtime_version input_hash '
+                  'state max_steps max_model_calls max_tool_calls max_retries step_count model_calls tool_calls retry_count attempt fence '
+                  'owner lease_until ready_at deadline_at cancel_requested error_code result_ref created_at updated_at finished_at').split(),
+    'agent_step': ('tenant_code run_id step_no step_key kind effect intent_hash intent_ref state fence result_ref created_at completed_at').split(),
+}
 
 
 def _kb_connect(**kwargs):
@@ -48,9 +55,42 @@ def _missing() -> dict[str, str]:
     tables = {name.split(".", 1)[0] for name in columns}
     missing = {f"ai_db.{table}": source for table, source in REQUIRED_TABLES.items() if table not in tables}
     missing.update({f"ai_db.{column}": source for column, source in REQUIRED_COLUMNS.items() if column not in columns})
+    if get_settings().runtime_api_enabled:
+        missing.update(runtime_missing(columns))
     kb = _columns(_kb_connect)
     missing.update({f"customer_db.{table}.{column}": KB_SOURCE
                     for table, names in KB_COLUMNS.items() for column in names if f"{table}.{column}" not in kb})
+    return missing
+
+
+def runtime_missing(columns=None):
+    """Opt-in runtime metadata/privilege checks, no business rows and no DDL."""
+    columns = _columns(connect) if columns is None else columns
+    missing = {f'ai_db.{table}.{column}': RUNTIME_SOURCE for table, names in RUNTIME_COLUMNS.items()
+               for column in names if f'{table}.{column}' not in columns}
+    if missing:
+        return missing
+    with connect(connect_timeout=2, options='-c statement_timeout=2000') as connection:
+        for row in connection.execute("""
+            SELECT c.relname, c.relrowsecurity AND c.relforcerowsecurity
+              AND NOT pg_has_role(current_user,c.relowner,'MEMBER')
+              AND has_table_privilege(current_user,c.oid,'SELECT')
+              AND has_table_privilege(current_user,c.oid,'INSERT')
+              AND has_table_privilege(current_user,c.oid,'UPDATE')
+              AND NOT has_table_privilege(current_user,c.oid,'DELETE')
+              AND NOT has_table_privilege(current_user,c.oid,'TRUNCATE') AS usable
+              FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+              WHERE n.nspname='public' AND c.relname IN ('agent_run','agent_step')
+            """).fetchall():
+            if not row['usable']:
+                missing[f"ai_db.{row['relname']}.runtime_permissions"] = RUNTIME_SOURCE
+        role = connection.execute("""SELECT NOT (rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication)
+              AND pg_has_role(current_user,'supportflow_agent_runtime','MEMBER') AS usable
+              FROM pg_roles WHERE rolname=current_user""").fetchone()
+        function = connection.execute("""SELECT CASE WHEN to_regprocedure('public.supportflow_agent_due_tenants(integer)') IS NULL
+              THEN false ELSE has_function_privilege(current_user,'public.supportflow_agent_due_tenants(integer)','EXECUTE') END AS usable""").fetchone()
+        if not role['usable'] or not function['usable']:
+            missing['ai_db.runtime_capability'] = RUNTIME_SOURCE
     return missing
 
 

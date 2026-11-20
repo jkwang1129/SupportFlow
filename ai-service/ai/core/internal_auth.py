@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from starlette.responses import JSONResponse
 
 from ..config import Settings
+from .runtime_auth import RuntimeAuthMiddleware, AUTHORIZED
 
 
 _HEADER = "X-SupportFlow-AI-Auth"
@@ -65,6 +66,10 @@ def install_internal_auth(app: FastAPI, settings: Settings) -> None:
     @app.middleware("http")
     async def verify(request: Request, call_next):
         path = request.url.path
+        if path.startswith(prefix + '/ai/v1/runtime/'):
+            if request.scope.get(AUTHORIZED) is not True:
+                return JSONResponse({'detail': 'Runtime service authentication required'}, status_code=401)
+            return await call_next(request)
         if request.method == "GET" and path in {prefix + probe for probe in (
                 "/ai/health", "/ai/health/live", "/ai/health/ready")}:
             return await call_next(request)
@@ -106,3 +111,7 @@ def install_internal_auth(app: FastAPI, settings: Settings) -> None:
             if isinstance(body, dict) and any(body[field] != tenant for field in _TENANT_KEYS if field in body):
                 return JSONResponse({"detail": "AI tenant does not match service authorization"}, status_code=403)
         return await call_next(request)
+
+    # Outer ASGI layer bounds/caches the raw body without relying on private
+    # Request attributes. Old v1 signatures cannot authorize runtime operations.
+    app.add_middleware(RuntimeAuthMiddleware, prefix=prefix, secrets=secrets)
