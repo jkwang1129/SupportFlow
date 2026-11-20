@@ -54,7 +54,7 @@ def main():
         assert init.returncode == 0, init.stderr
         report = json.loads(init.stdout)
         assert set(report["initialized"]) == DATABASES
-        assert sum(row["schema_verified"]["tables"] for row in report["verification"]) == 90
+        assert sum(row["schema_verified"]["tables"] for row in report["verification"]) == 91
         assert report["runtime_roles"] == "NOT_PROVISIONED_BY_INIT"
         with connect("postgres") as connection:
             assert connection.execute("SELECT id FROM public.init_scope_sentinel").fetchall() == [(73,)]
@@ -69,7 +69,7 @@ def main():
             assert connection.execute("SELECT count(*) FROM sys_role").fetchone()[0] == seed_count
         assert all(not row["applied"] for row in migrate_databases(environment))
         assert len(migrate_databases(environment, verify=True)) == 6
-        print("Fresh CLI init: six databases / 90 tables verified; migration repeat no-op; existing databases refused; unrelated sentinel and seed data preserved", flush=True)
+        print("Fresh CLI init: six databases / 91 tables verified; migration repeat no-op; existing databases refused; unrelated sentinel and seed data preserved", flush=True)
         print("Runtime CREATEDB denial, cluster lock contention and malformed source cases passed", flush=True)
     with disposable_postgres(initialize=False) as (connect, environment):
         with tempfile.TemporaryDirectory() as directory:

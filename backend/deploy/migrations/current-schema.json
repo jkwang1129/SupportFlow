@@ -2869,7 +2869,8 @@
             "agent_event_outbox_state_check": "CHECK (((state)::text = ANY ((ARRAY['PENDING'::character varying, 'SENDING'::character varying, 'DELIVERED'::character varying, 'HELD'::character varying])::text[])))",
             "agent_event_outbox_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
             "agent_event_outbox_tenant_code_message_id_key": "UNIQUE (tenant_code, message_id)",
-            "agent_event_outbox_tenant_code_session_no_event_seq_key": "UNIQUE (tenant_code, session_no, event_seq)"
+            "agent_event_outbox_tenant_code_session_no_event_seq_key": "UNIQUE (tenant_code, session_no, event_seq)",
+            "agent_event_run_receipt": "UNIQUE (tenant_code, event_id, run_id)"
           },
           "indexes": {
             "agent_event_outbox_one_sending_session": {
@@ -2891,6 +2892,10 @@
             "agent_event_outbox_tenant_code_session_no_event_seq_key": {
               "definition": "CREATE UNIQUE INDEX agent_event_outbox_tenant_code_session_no_event_seq_key ON public.agent_event_outbox USING btree (tenant_code, session_no, event_seq)",
               "valid": true
+            },
+            "agent_event_run_receipt": {
+              "definition": "CREATE UNIQUE INDEX agent_event_run_receipt ON public.agent_event_outbox USING btree (tenant_code, event_id, run_id)",
+              "valid": true
             }
           },
           "rls": {
@@ -2907,6 +2912,121 @@
                 "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
               },
               "agent_event_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_customer_tenant"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
+        "agent_source_snapshot": {
+          "columns": {
+            "created_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "event_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "expires_at": {
+              "default": "(clock_timestamp() + '01:00:00'::interval)",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "payload_hash": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "payload_json": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "text"
+            },
+            "run_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "schema_version": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "snapshot_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            }
+          },
+          "constraints": {
+            "agent_source_snapshot_check": "CHECK ((expires_at > created_at))",
+            "agent_source_snapshot_payload_hash_check": "CHECK ((payload_hash ~ '^[0-9a-f]{64}$'::text))",
+            "agent_source_snapshot_payload_json_check": "CHECK (((octet_length(payload_json) <= 65536) AND (jsonb_typeof((payload_json)::jsonb) = 'object'::text)))",
+            "agent_source_snapshot_pkey": "PRIMARY KEY (tenant_code, event_id)",
+            "agent_source_snapshot_schema_version_check": "CHECK (((schema_version)::text = 'source-v1'::text))",
+            "agent_source_snapshot_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
+            "agent_source_snapshot_tenant_code_event_id_run_id_fkey": "FOREIGN KEY (tenant_code, event_id, run_id) REFERENCES agent_event_outbox(tenant_code, event_id, run_id)",
+            "agent_source_snapshot_tenant_code_snapshot_id_key": "UNIQUE (tenant_code, snapshot_id)"
+          },
+          "indexes": {
+            "agent_source_snapshot_expiry": {
+              "definition": "CREATE INDEX agent_source_snapshot_expiry ON public.agent_source_snapshot USING btree (expires_at, tenant_code)",
+              "valid": true
+            },
+            "agent_source_snapshot_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_source_snapshot_pkey ON public.agent_source_snapshot USING btree (tenant_code, event_id)",
+              "valid": true
+            },
+            "agent_source_snapshot_tenant_code_snapshot_id_key": {
+              "definition": "CREATE UNIQUE INDEX agent_source_snapshot_tenant_code_snapshot_id_key ON public.agent_source_snapshot USING btree (tenant_code, snapshot_id)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_source_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_customer_tenant"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_source_tenant": {
                 "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
                 "command": "*",
                 "permissive": true,
@@ -12717,6 +12837,10 @@
       {
         "checksum": "aa4878d71c3a211c891663ea169fde362b20ba415ab3bf1f0f44bb0628829ce0",
         "version": "005"
+      },
+      {
+        "checksum": "f7f2a9da8becc6b19cdd1109c856d6cdce4f599885a7136bdce05cb4d947b809",
+        "version": "006"
       }
     ],
     "ops_db": [

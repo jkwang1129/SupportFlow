@@ -31,7 +31,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | 模块 | 当前状态 | 可复用实现/证据 | 必须补齐及依赖 |
 | --- | --- | --- | --- |
 | M01 Reliable Runtime | 部分实现：Run/Step、Worker与内部接收，未接业务 | `ai/runtime` 的Run/Step、租约、fencing与共享计数预算；`api/runtime.py`受鉴权持久化接收；不能算完整durable loop | 可靠派发/业务快照/结果回写、实际工具循环与审批；PR-8/9/10。B |
-| M02 Context Engineering | 部分实现 | `BotBrainService#buildHistory` 最近 12 条；`ai/agents/brain.py` slots/turns、`ai/services/brain.py` 对话持久化 | 统一构建器、可信/不可信分区、Token 上限、确定性事实、压缩/恢复对照。依赖 B checkpoint。C |
+| M02 Context Engineering | 部分实现 | 旧`BotBrainService#buildHistory`最近12条及对话持久化；新增customer 006/`AgentSourceSnapshots`冻结当前输入、可信引用/不可信文本分区，每次重验来源 | 尚无统一长历史构建器/Token上限/压缩及记忆恢复对照；当前输入快照不代替Checkpoint。C |
 | M03 Tool Calling/MCP | 未实现通用层 | 既有工单创建/查询、知识检索 Java API | 先内部工具与权限、后可信 MCP 适配；不重复写业务服务。B |
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、`ChatAttachmentAccess`、`LicensePrivilegeTest`、受限 DB 角色/平台审计 | 工具 Scope、资源和输出约束、注入负面集、限时参数审批、防重放；无任意代码需求，暂不建 Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，本轮补齐低分拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号、租户过滤；新增两引擎拒答契约测试 | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
@@ -74,8 +74,8 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-20，B1 派发子批次）
+## 当前执行位置（2026-11-20，B1 来源快照子批次）
 
 阶段 A 的本地退出条件已完成：A1/A2/A3 并发与事务、A4 客服计费批次、A5 六库迁移/Readiness/实际结构核验、A6 低证据拒答首批均有本地记录。网关 tenant_usage_daily 与尚未持久化原始计数的边界仍保留到 M11；RAG 事实支持/引用正文问题保留阶段 C，不冒充已完成。新旧服务与 CLI init 三条业务部署路径本地实测通过。14个原阶段提交及诊断补充已推送开发分支，4b2c306对应的远端CI全部通过。首轮平台创建工单500未复现，根因未确定，后续失败会保留结构化诊断；不把重跑成功描述成根因修复，不合并main。
 
-B1的Run/Step、Worker、Java Outbox、带body鉴权的接收及单次Dispatcher已落地；0906c03和01378f7对应的远端CI均通过（[Dispatcher CI](https://github.com/jkwang1129/SupportFlow/actions/runs/44659519837)）。本批在受限账号下完成2项Java→真实Python→PG的交付验收和跨库回执核对，尚无自动调度/自动消息登记，接收API默认关闭。六库仍为90表/1视图/5受控函数，无新SQL。下一批补业务快照/结果幂等，最后切换触发入口。Worker未接客服业务，B1仍未闭环；B2/B3的工具授权、MCP、审批、Checkpoint与阶段C～F继续按依赖推进。
+B1的Run/Step、Worker、Java Outbox、鉴权接收、Dispatcher和2项真实跨语言交付已落地；0906c03/01378f7/e21c400对应远端CI均通过（[交付CI](https://github.com/jkwang1129/SupportFlow/actions/runs/44661219385)）。本批新增006不可变来源快照存储/恢复时资源重验，六库为91表/1视图/5受控函数；不是长历史压缩/记忆策略。尚无受鉴权来源API、结果幂等回写、业务handler或自动调度/消息登记，接收API默认关闭。下一批接业务来源API及结果桥接，最后切换触发入口。Worker未接客服业务，B1仍未闭环；B2/B3的工具授权、MCP、审批、Checkpoint与C～F继续按依赖推进。

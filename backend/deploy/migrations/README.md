@@ -41,7 +41,7 @@ AI/User/Tenant/Ops 的 `001` 为 baseline 操作，不执行建表 SQL。JSON �
 
 ## 当前实际结构漂移
 
-`python scripts/db-migrate.py verify` 同时核对六库历史和 current-schema.json 中登记的 **90 张应用表、1 个视图、5 个 supportflow_ 函数**。检查列集合、类型/默认值/非空/identity/generated、索引定义及有效状态、约束、RLS ENABLE/FORCE、策略集合/主体/操作/谓词，以及视图和受控函数定义。额外的未登记表/列/索引/约束/策略/视图/受控函数也会拒绝；不会自动把数据库当前状态登记为正确状态。迁移 manifest 的版本/checksum 必须与 desired-state 契约一致，避免新 SQL 配旧快照。
+`python scripts/db-migrate.py verify` 同时核对六库历史和 current-schema.json 中登记的 **91 张应用表、1 个视图、5 个 supportflow_ 函数**。检查列集合、类型/默认值/非空/identity/generated、索引定义及有效状态、约束、RLS ENABLE/FORCE、策略集合/主体/操作/谓词，以及视图和受控函数定义。额外的未登记表/列/索引/约束/策略/视图/受控函数也会拒绝；不会自动把数据库当前状态登记为正确状态。迁移 manifest 的版本/checksum 必须与 desired-state 契约一致，避免新 SQL 配旧快照。
 
 公开 schema 中的迁移历史表由独立历史/权限检查负责，pgvector 扩展函数不属于 supportflow_ 函数范围。此核验不覆盖所有授权、owner、触发器、扩展版本、业务数据、外部对象或备份；数据库身份/租户权限仍须运行独立安全测试。应用 Readiness 不会逐请求执行本完整检查；部署必须在启动业务前执行 verify，未知策略等漂移会停止发布。
 
@@ -59,7 +59,7 @@ AI/User/Tenant/Ops 的 `001` 为 baseline 操作，不执行建表 SQL。JSON �
 
 init 只承担结构和版本，不配置运行密码，结果明确标记 NOT_PROVISIONED_BY_INIT。运行角色/密码 provisioning 仍使用唯一的 40-runtime-roles.sql，不进入迁移历史。默认本地 Compose 已自动创建六库，应继续使用本地 Compose 专用 upgrade-runtime-security.py 完成版本登记/角色配置/验证，不要在已有 Compose 上再次 init。独立空 PostgreSQL 使用 init 后，管理员通过 psql 在同一目标服务器执行该角色脚本，再 verify 后启动应用；不能把本地 Compose 专用升级助手用于其他远端服务器。应用进程仍只获得各自受限凭据。
 
-`python scripts/test-database-init.py` 验证真实 CLI 空库初始化、90 张表核验、重复初始化拒绝、无关数据与种子保留、锁竞争、无 CREATEDB 运行身份拒绝及中途 SQL 失败回滚。`python scripts/test-security-flow.py` 另验证默认新库、历史库升级、空服务器经 CLI init 三套真实 Java/Python 服务与受限账号业务闭环，所有数据均为隔离合成验收。
+`python scripts/test-database-init.py` 验证真实 CLI 空库初始化、91 张表核验、重复初始化拒绝、无关数据与种子保留、锁竞争、无 CREATEDB 运行身份拒绝及中途 SQL 失败回滚。`python scripts/test-security-flow.py` 另验证默认新库、历史库升级、空服务器经 CLI init 三套真实 Java/Python 服务与受限账号业务闭环，所有数据均为隔离合成验收。
 
 ## AI 002：Runtime 存储底座
 
@@ -71,4 +71,10 @@ AI 001 是原 8 张表的历史基线，保持不变；002 新增 agent_run/agen
 
 新增agent_event_outbox，保存业务事件/消息/会话/主体引用和Trace，不复制消息正文或登录凭据。必须先migrate，再使用唯一40-runtime-roles.sql收回新表DELETE/TRUNCATE，verify后启动。Java AgentEventOutbox要求可信租户在事务前绑定，支持原事件重发、投递租约/fence、按会话顺序领取、接收回执校验、8次尝试上限和HELD保留。
 
-本子批次只提供存储API和真实消息事务组合测试，尚未自动接入SessionService或网络Dispatcher，不能据此开启新的业务触发路径。DELIVERED表示AI已经持久化接收，不表示任务成功。HELD阻断同会话后续投递，不能直接清表、跳过或换eventId重发。回滚保留表/历史/外键和已有事件，待兼容版本接管。
+已有存储API、显式单次Dispatcher和Java→真实AI接收验收，尚无SessionService自动登记或调度，不能据此开启新业务触发。DELIVERED表示AI已经持久化接收，不表示任务成功。HELD阻断同会话后续投递，不能直接清表、跳过或换eventId重发。回滚保留表/历史/外键和已有事件，待兼容版本接管。
+
+## Customer 006：不可变来源快照
+
+新增agent_source_snapshot，源端Outbox增加event+Run唯一约束，使快照外键绑定已交付回执。仅保存当前文本及必要业务引用，文本与可信资源引用分区；有明确UTF-8/序列化大小和数据库时钟TTL。先migrate，再以唯一40-runtime-roles.sql保证运行账号仅SELECT/INSERT、无UPDATE/DELETE/TRUNCATE，最后verify；不能修改已应用的005或其他SQL来追加新表。
+
+存在快照也要重新核验当前消息/会话/主体/Run；人工接手、结束、删除、隐藏或来源变更均拒绝。过期不原地刷新。此处仅存储原语，未暴露给AI的来源API或自动业务链路；TTL不等于已完成数据清理，M12仍需保留/归档策略。回滚停用组件并保留表/历史；不清表、不改旧checksum。设计见docs/decisions/0004-source-snapshot-boundary.md。

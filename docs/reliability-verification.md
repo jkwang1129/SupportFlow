@@ -320,3 +320,23 @@ init 本身不配置运行密码、不启动业务，不保证跨库原子性或
 首轮正常场景通过、故障场景失败；新增脱敏错误码/代理状态诊断后定位上游实际400，而非注入的超时。代理默认HTTP版本与产品客户端不同；只将代理设成同样的HTTP/1.1后，原1秒deadline/4秒故障延迟及所有认证/去重断言保持，2项通过，再为匿名探测补有界请求后全组重跑通过。失败日志`b1-delivery-first.log`、`b1-delivery-diagnostic.log`、`b1-delivery-diagnostic-2.log`保留；`b1-delivery-http1.log`为修正后的首轮通过。该结果说明夹具传输配置不一致，不声称修复了产品协议漏洞，也不把故障deadline当真实延迟基准。
 
 剩余边界/回滚：这里只闭合持久化交付，Run仍PENDING，未启动业务Worker、未执行模型或工具、未自动登记真实访客触发、未写回业务结果。B1还缺可信业务快照/结果幂等和最终接入；B2/B3及C～F保持原计划。测试入口可移除可选flag/CI调用回退，不回退已应用SQL或删除事件历史。性能、Token/费用、实际任务成功率均未在本批测量。
+
+e21c400对应的[CI 44661219385](https://github.com/jkwang1129/SupportFlow/actions/runs/44661219385)两个job全部通过，真实跨语言交付已纳入远端门禁；不只是本机结果。
+
+## B1 子批次 7：不可变业务来源快照（2026-11-20）
+
+基线e21c400。新增customer 006/`AgentSourceSnapshots`/15项PG测试/ADR-0004；更新manifest、review过的desired-schema、唯一角色脚本及既有验收脚本。快照持久化在customer_db，只复制当前访客文本与必要业务引用，可信来源和不可信文本分区；原文≤8192 UTF-8字节、JSON≤65536字节，显式拒绝超限，不静默截断。精确JSON文本/Hash/版本/快照ID/DB时钟TTL可重读，但每次重查事件已DELIVERED、Run匹配、消息/会话/序号/主体一致且仍可见、未结束/未被人工接手。内容或客户绑定变化冲突，过期不重建；表仅S/I、强制RLS和restrictive guard。此批不是长历史压缩、Checkpoint或对AI开放的来源接口。
+
+实际验证（JDK25.0.5+8/Maven3.9.16/Python3.11.5/隔离PG17、合成数据/离线模型）：
+
+- `python scripts/test-customer-rls.py --with-ai`：**65项Java真实PG + 4项KB PG通过**，日志`.local/implementation/b1-source-pg-final.log`。新增15项覆盖：交付/Run前置、稳定精确UTF-8哈希、6路并发一份快照、事务回滚、Scope/错租户、源内容/客户绑定变更、删除/隐藏/人工/关闭/类型撤销、主体/消息seq替换、8193字节拒绝和8192边界、过期不刷新、S/I与更新/删除/清表/DDL拒绝、额外宽松策略不能放行、数据库FK错Run=23503/非法JSON和hash=23514、快照篡改拒绝、文本不能改写可信JSON字段。最后补SQLState断言后完整65项重跑通过。
+- `mvn -B -f backend/pom.xml verify`：九模块成功，`b1-source-java.log`。新表未注册成运行时迁移/自动启动业务组件。
+- `python scripts/test-versioned-migrations.py`：**17项及真实CLI通过**，`b1-source-migrations.log`。首轮只有manifest预期列表仍为001～005而失败，改为明确001～006后全组通过；旧SQL/checksum未改，失败日志`b1-source-migrations-first.log`保留。
+- `python scripts/test-schema-drift.py`：六库**91表/1视图/5受控函数**、14个SQL/3个metadata故障、CLI失败/修复通过，`b1-source-drift.log`。候选只由隔离规范初始化生成，审查差异仅新快照表、Outbox回执唯一约束/索引及006回执；原4库历史baseline不变。
+- `python scripts/test-database-init.py`：91表空库初始化、重复拒绝/数据保留、CREATEDB拒绝、锁、失败库回滚/部分状态保留通过，`b1-source-init.log`。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**64项Python专项 + 6次能力组负面 + 2项实际Java→AI交付通过**，`b1-source-runtime-delivery.log`。新增源快照结构不破坏接收/Run/Worker或交付去重。
+- `python scripts/test-security-flow.py`：默认新库、历史升级、CLI空库初始化三套实际服务全通过，包含45次Java Readiness故障和原业务/权限/计费/媒体/知识/WS流程，新增核对customer历史6条及快照有效权限S/I、无U/D/TRUNCATE；一次性容器/卷/网络清理，`b1-source-services.log`。
+
+首次PG62项有1项测试嵌套两个Spring事务模板，内层rollback-only导致外层UnexpectedRollback；改为单个真实事务边界验证回滚后，加负面用例至65项通过。不是数据已提交或产品回滚失效，初始日志`b1-source-pg-first.log`保留。
+
+剩余风险/回滚：只提供受可信tenant+事务约束的存储API，没有对AI的认证来源接口、结果回写、业务handler、自动调度/消息触发，B1未闭环。TTL固定一小时只是读取策略，不等于自动物理清理；真实数据保留/归档和审批等待跨过期策略待M12/B3。后续恢复必须重新验权，不能仅按snapshotId返回内容。回退停用新组件并保留表/Source/Outbox/Run/迁移；不删除快照、不回写旧SQL。无生产吞吐/客户/收益或模型成功率声明。

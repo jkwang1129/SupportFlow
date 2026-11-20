@@ -72,6 +72,8 @@ def main():
             env=db_env, encoding="utf-8")
         run(psql, input=(ROOT / 'backend/deploy/migrations/sql/customer_db_005_agent_event_outbox.sql').read_text(encoding='utf-8'),
             env=db_env, encoding='utf-8')
+        run(psql, input=(ROOT / 'backend/deploy/migrations/sql/customer_db_006_agent_source_snapshot.sql').read_text(encoding='utf-8'),
+            env=db_env, encoding='utf-8')
         run(psql, env=db_env, input=f"""
             CREATE ROLE rls_test_java LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{app_password}';
             GRANT supportflow_customer_tenant TO rls_test_java;
@@ -116,7 +118,7 @@ def main():
             raise RuntimeError("Maven was not found on PATH")
         run(
             [mvn, "-B", "-f", "backend/pom.xml", "-pl", "supportflow-customer-service", "-am", "test",
-             "-Dtest=TenantRlsDataSourceTest,TenantRlsPostgresTest,SessionMessagePostgresTest,SessionClaimPostgresTest,AgentEventOutboxPostgresTest,AgentEventDispatcherPostgresTest", "-Dsurefire.failIfNoSpecifiedTests=false"],
+             "-Dtest=TenantRlsDataSourceTest,TenantRlsPostgresTest,SessionMessagePostgresTest,SessionClaimPostgresTest,AgentEventOutboxPostgresTest,AgentEventDispatcherPostgresTest,AgentSourceSnapshotsPostgresTest", "-Dsurefire.failIfNoSpecifiedTests=false"],
             env=subprocess_env,
         )
         if args.with_ai:
