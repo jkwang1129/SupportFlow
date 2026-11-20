@@ -18,7 +18,7 @@
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
 | PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 登记的 90 张表/索引/RLS 核验、默认新库/历史升级/CLI init 实际服务已通过；生产备份/运维属 M12。A5 本地完成 |
-| PR-8 持久化 Run | 部分实现：存储、Worker、接收、显式单次派发 | `ai/runtime/{types,store,worker}.py`、AI 002、`api/runtime.py`、Java `AgentEventDispatcher/AgentRuntimeClient`；64项Runtime专项及13项真PG派发 | Dispatcher与真Python的单次交付验收、可信调度/自动登记、业务快照/结果幂等仍缺。B1进行中 |
+| PR-8 持久化 Run | 部分实现：存储、Worker、接收、显式单次派发 | `ai/runtime/{types,store,worker}.py`、AI 002、`api/runtime.py`、Java Dispatcher/client；64项Runtime专项、13项真PG派发和2项Java→真AI交付 | 可信调度/自动登记、业务快照/结果幂等和实际业务handler仍缺。B1进行中 |
 | PR-9 Tool Calling | 未实现通用层 | `ai/agents/brain.py` 固定图；Java 工单/知识 API 为可复用业务能力 | 内部 Registry/Executor、可信主体、Schema、只读和写工具、结果验证；MCP 只做适配。B2 |
 | PR-10 Checkpoint/HITL | 未实现 | `brain.py`、`rag/graph.py` 均 `compile()` 无 checkpointer；`docs/architecture.md` 明示缺失 | 业务对话状态不能代替执行 checkpoint；审批绑定参数、恢复重新鉴权、未知副作用核验。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
@@ -78,4 +78,4 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 
 阶段 A 的本地退出条件已完成：A1/A2/A3 并发与事务、A4 客服计费批次、A5 六库迁移/Readiness/实际结构核验、A6 低证据拒答首批均有本地记录。网关 tenant_usage_daily 与尚未持久化原始计数的边界仍保留到 M11；RAG 事实支持/引用正文问题保留阶段 C，不冒充已完成。新旧服务与 CLI init 三条业务部署路径本地实测通过。14个原阶段提交及诊断补充已推送开发分支，4b2c306对应的远端CI全部通过。首轮平台创建工单500未复现，根因未确定，后续失败会保留结构化诊断；不把重跑成功描述成根因修复，不合并main。
 
-B1的Run/Step、Worker原语、Java Outbox、带body鉴权的持久化接收已落地；0906c03对应的[远端CI](https://github.com/jkwang1129/SupportFlow/actions/runs/44657155805)全部通过。本批补显式单次Dispatcher及有限重试/回执核验，尚无自动调度/自动消息登记，接收API默认关闭。六库仍为90表/1视图/5受控函数，无新SQL。下一批先补Dispatcher→真实Python接收的交付验收，然后业务快照/结果幂等，最后切换触发入口。Worker未接客服业务，B1仍未闭环；B2/B3的工具授权、MCP、审批、Checkpoint与阶段C～F继续按依赖推进。
+B1的Run/Step、Worker、Java Outbox、带body鉴权的接收及单次Dispatcher已落地；0906c03和01378f7对应的远端CI均通过（[Dispatcher CI](https://github.com/jkwang1129/SupportFlow/actions/runs/44659519837)）。本批在受限账号下完成2项Java→真实Python→PG的交付验收和跨库回执核对，尚无自动调度/自动消息登记，接收API默认关闭。六库仍为90表/1视图/5受控函数，无新SQL。下一批补业务快照/结果幂等，最后切换触发入口。Worker未接客服业务，B1仍未闭环；B2/B3的工具授权、MCP、审批、Checkpoint与阶段C～F继续按依赖推进。

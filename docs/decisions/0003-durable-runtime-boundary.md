@@ -73,3 +73,9 @@ HTTP整体deadline最多10秒、连接最多2秒、响应最多8192字节、不�
 每个Dispatcher只有一个执行槽，`tryLock`占用时立即返回BUSY，不把并发调用堆进无界等待队列；多实例依赖数据库领取，而非进程锁保证唯一性。领取lease=30秒；瞬态失败退避1/2/4/8/16/32/60秒，累计最多8次后保留HELD。中断后保留SENDING等待接管，不尝试在已中断线程中写确认。新`DeliveryLeaseLost`仅区分已失效执行权；其他DB/提交异常向调用方传播，不能被当成安全重试成功或删除事件。
 
 本批实际使用真PG与回环HTTP故障服务验证存储/派发组合，Python接收端沿用第四批独立真PG HTTP与跨语言签名样本；尚未用单个测试进程把Java Dispatcher发往实际Python接收端。下一批先补此跨语言交付验收，再进入业务快照/幂等结果回写和源端自动切换。完整Agent业务链路与模型/工具执行仍待后续阶段，不能把DELIVERED或Stub接收计作任务成功率。
+
+## B1 第六子批次：跨语言持久化交付验收
+
+在现有`test-agent-runtime.py`增加`--with-java-delivery`，复用同一套一次性六库与正式角色配置。运行实际FastAPI应用（不替换认证、路由、Readiness或RuntimeStore），强制非owner/非管理AI/KB账号，独立customer测试密钥，禁读开发者.env、付费模型配置和bootstrap凭据；Java使用正式受限customer账号及实际Outbox/Dispatcher/client。新开关仅控制测试脚本，不自动启用产品入口或Worker。CI在原Runtime专项后继续运行本验收。
+
+正常场景核对Java源事件/AI Run回执、重发同输入、PENDING、匿名401/跨租户404；故障场景由回环代理将原始签名请求转发给真AI，在其提交后延迟回执，重发必须仍为同一Run。代理显式使用与产品一致的HTTP/1.1，不修改正文或重新签名。验收结束从两个实际数据库核对tenant/event/run/message/seq，确认各事件只有一Run且模型/工具调用为0。来源消息为合成夹具；没有自动消息触发、业务处理器、业务结果写回，不能将此接收验收称为客服任务完成。

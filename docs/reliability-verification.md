@@ -306,3 +306,17 @@ init 本身不配置运行密码、不启动业务，不保证跨库原子性或
 - `mvn -B -f backend/pom.xml verify`：九模块成功，日志`b1-dispatcher-java-final.log`；PG条件测试由上述专项实际执行，普通构建的跳过不计通过。本批原语与测试不依赖付费模型或真实客户数据。
 
 边界/回滚：上述派发的HTTP目标是受控故障服务；Python真接收、RLS/重复/取消已在前批独立验收，单个Java→真Python交付仍留下一子批次。没有实际业务handler、自动调度、业务快照/结果幂等或自动触发，DELIVERED不等于Agent成功，B1未关闭。HELD缺运营核验入口，租户公平性与费用硬额度未完成。此批未改现有业务触发/认证/SQL，本地完整服务沿用前批证据，不冒充本批新跑；远端全流程由推送CI验证。回滚停止使用新Dispatcher/client，保留全部Outbox/Run/Step与HELD；不清表或换UUID绕过去重。
+
+01378f7推送后的[CI 44659519837](https://github.com/jkwang1129/SupportFlow/actions/runs/44659519837)两个job全部成功，包括新增50项PG Java、Runtime、原三种实际服务部署路径等门禁。未合并main。
+
+## B1 子批次 6：Java→真实AI→PG交付验收（2026-11-20）
+
+基线01378f7。仅补测试基础设施：`AgentEventDeliveryPostgresTest`、`runtime_receiver_process.py`、`runtime_delivery_fixture.py`及原Runtime脚本的可选`--with-java-delivery`，CI调用此选项；生产实现、默认开关、SQL/迁移均不变。真实FastAPI应用保留原鉴权/Readiness/受限账号检查，显式mock模型及空模型密钥，不读开发者.env；来源数据为合成消息，Java使用正式supportflow_customer、AI使用正式supportflow_ai/KB身份。不是替换RuntimeStore的Stub。
+
+`python scripts/test-agent-runtime.py --with-java-delivery`最终通过：**64项Python类型/真PG/Worker/HTTP专项 + 6次危险能力组负面执行 + 2项实际跨语言Java交付**，日志`.local/implementation/b1-delivery-final.log`，Python JUnit仍为`.local/verification/runtime-store.xml`，Java报告位于customer-service的surefire-reports。
+
+两项新用例：正常Java Outbox领取/签名接收/持久化回执，重发仍原Run，实际AI状态PENDING/零model和tool计数，匿名401、跨租户GET404；丢回执用例由回环代理将原始凭据/body转给真AI后延迟body，第一次实际为DELIVERY_TIMEOUT，第二次仍同event/Run，源attempt=2。脚本最后从customer_db与ai_db逐项核对tenant/event/run/message/seq及每事件一Run，两行均匹配；不以HTTP成功代替持久化证据。AI进程与一次性PG由脚本清理，用户原项目容器未操作。
+
+首轮正常场景通过、故障场景失败；新增脱敏错误码/代理状态诊断后定位上游实际400，而非注入的超时。代理默认HTTP版本与产品客户端不同；只将代理设成同样的HTTP/1.1后，原1秒deadline/4秒故障延迟及所有认证/去重断言保持，2项通过，再为匿名探测补有界请求后全组重跑通过。失败日志`b1-delivery-first.log`、`b1-delivery-diagnostic.log`、`b1-delivery-diagnostic-2.log`保留；`b1-delivery-http1.log`为修正后的首轮通过。该结果说明夹具传输配置不一致，不声称修复了产品协议漏洞，也不把故障deadline当真实延迟基准。
+
+剩余边界/回滚：这里只闭合持久化交付，Run仍PENDING，未启动业务Worker、未执行模型或工具、未自动登记真实访客触发、未写回业务结果。B1还缺可信业务快照/结果幂等和最终接入；B2/B3及C～F保持原计划。测试入口可移除可选flag/CI调用回退，不回退已应用SQL或删除事件历史。性能、Token/费用、实际任务成功率均未在本批测量。

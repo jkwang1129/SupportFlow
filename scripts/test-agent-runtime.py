@@ -1,5 +1,6 @@
 """Exercise durable runtime primitives on disposable PG17 using the real restricted AI role."""
 import os
+import argparse
 from pathlib import Path
 import secrets
 import subprocess
@@ -15,6 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--with-java-delivery', action='store_true', help='also qualify real Java-to-Python HTTP admission')
+    args = parser.parse_args()
     with disposable_postgres() as (connect, environment):
         plans = load_plan()
         for database, plan in plans.items():
@@ -61,6 +65,9 @@ def main():
                         'tests/test_runtime_store_postgres.py', 'tests/test_runtime_worker_postgres.py',
                         'tests/test_runtime_api_postgres.py', f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)
+        if args.with_java_delivery:
+            from runtime_delivery_fixture import verify_delivery
+            verify_delivery(connect, environment, passwords, test_env)
 
 
 if __name__ == '__main__':
