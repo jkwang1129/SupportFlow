@@ -73,7 +73,7 @@ def verify_delivery(connect, environment, passwords, runtime_environment):
                     assert connection.execute("SELECT count(*) FROM agent_run WHERE tenant_code=%s AND source_event_id=%s", (tenant,event_id)).fetchone()[0] == 1
             print('Real Java dispatcher -> signed AI app -> restricted PostgreSQL: 2 delivery cases passed; matched source/run receipts; no model or tool calls', flush=True)
             from source_delivery_fixture import verify_sources
-            verify_sources(connect,environment,passwords,secret,sources)
+            verify_sources(connect,environment,passwords,secret,sources,runtime_environment['SUPPORTFLOW_RUNTIME_TEST_DSN'])
             from action_authority_fixture import verify_authority
             verify_authority(connect, test_env, runtime_environment)
             from result_delivery_fixture import verify_results

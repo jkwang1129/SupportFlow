@@ -547,3 +547,17 @@ a9dd99c对应的[CI 44706510968](https://github.com/jkwang1129/SupportFlow/actio
 - `python scripts/test-agent-runtime.py --with-java-delivery`：最终**143项Python专项+6次角色负面通过**，原真实Java交付/来源/AI许可/双向写入/丢回执场景全部通过，`b2-tools-runtime-final.log`。新13项真PG覆盖授权+工具2次计数/正文仅引用、恢复缓存重新核当前ACL及撤权阻断、预算1在实际调用前停止/预算2不允许免费重验缓存、超时按原Run重试、非法输出不存成功正文、资源归属拒绝、授权中取消无工具调用、完整性有效但Schema或返回资源被改仍拒绝、参数更改不套用旧结果、连续限流在原max_retries=2后停止（实际3次尝试/6次工具计数）。首轮142项通过，补完整性有效但资源错误的缓存负例后143项；`b2-tools-runtime-first.log`保留。
 
 边界：本批未把工单/知识HTTP接到Registry，真实Java授权不由合成ACL测试替代；也不是实际模型Tool选择准确率/性能或Token成本。ReadTool适配器必须可信，强制终止、出站网络策略、脱敏保留、MCP动态接入与HITL留原后续任务。没有SQL/Java改动，本地不重复迁移或全栈三场景，当前精确提交仍由远端CI验证。回滚停止新工具注册/调用，原Workflow保持；保留Step/payload与预算，不删除UNKNOWN或重置计数。
+
+## B2 子批次2：实际业务来源工具与当前授权证据（2026-11-20）
+
+基线d0725c9。新增`ai/runtime/customer_tools.py`、`test_runtime_customer_tools.py`、`scripts/source_tool_fixture.py`；tools.py增加不可变ReadAuthorization引用证据、纯verify接收本次证据；更新契约夹具、原source/runtime联调入口与ADR-0007/矩阵/本记录。无新SQL/Java源码/依赖/默认开关变化，不增加业务权限接口。get_current_message空参数，只从可信Run选来源；复用SourceClient向既有固定snapshot接口capture当前授权、read获取内容。capture幂等冻结派生快照，不创建回复或工单。输出排除customer_ref/完整JSON/内部记录；只含来源/快照版本引用、role=user及≤8KiB正文。
+
+授权证据包含当前snapshot/sourceHash/文本SHA，落Step的仍只有引用；缓存正文需与本次业务证据匹配，不允许一个结构合法的旧/被改正文替代当前来源。适配器用asyncio.timeout包住SDK整体I/O，仍不接受模型URL/凭据/主体。Registry未接任意MCP或WRITE。
+
+环境Python3.11.5/隔离PG17/JDK25真实客户JAR，合成访客文本和一次性密钥，显式Mock AI、无付费模型：
+
+- `cd ai-service; python -m pytest -q tests/test_runtime_tools.py tests/test_runtime_customer_tools.py`：首轮**75项通过**，`b2-source-tool-unit-first.log`；随后补缓存正文篡改/当前快照变化两例，最终来源适配15项+原工具62项随全量通过。SDK与Executor共同验证固定签名路径、POST/GET、新旧快照/正文/源Hash差异、四类模型越权参数、业务撤权/变更/过期、async transport忽略HTTPX超时时仍受外层deadline约束、证据不可变/只含引用、缓存必须匹配当前业务证明。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b2-source-tool-ai-final.xml`：**305 passed、133 skipped、1 xfailed**，`b2-source-tool-ai-final.log`；条件PG另由专项执行，原引用正文xfail保持。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**143项Python专项+6次角色负面、原真实Java交付/来源/控制面/双向写与丢回执全部通过**，`b2-source-tool-runtime-first.log`。额外2条实际Worker→Executor→签名SourceSDK→客户JAR→PG，不替换Store、SDK或业务授权为Stub：正常Run先读后RETRY_WAIT，恢复先当前授权再复用正文，终态SUCCEEDED且handler收到2次同正文；另一Run先读后人工接管，再尝试时SOURCE_REVOKED/FAILED，handler只曾收到第一次正文。逐Run从真实PG核对tool_calls=3（2个授权+1个读取）、model_calls=0、step_count=3、retry_count=1、payload_rows=1。终态失败是预期负例，不被改成成功。生成`.local/verification/runtime-source-tools.json`，仅引用/状态/计数、performance和token_cost均NOT_MEASURED，现有CI artifact自动收集。
+
+本批首次实际专项通过；新增两个单位负例没有改变实测适配器/HTTP夹具代码。没有重复本地SQL/Java九模块/三套完整部署验收，无相关源码改变；远端CI重跑精确提交。边界：get_current_message是现有业务来源读取，工单/知识工具仍待接入；没有真实模型Tool选择/任务质量、性能/费用数据，也未启动业务handler或自动Worker。撤权阻止后续读取/缓存交付，不能追回此前已交付内容；存储TTL不是物理清理。回滚停止注册此工具或关闭source开关，保留快照/payload/Step/预算，不删除UNKNOWN/失败证据。

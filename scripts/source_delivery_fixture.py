@@ -16,7 +16,7 @@ from local_env import runtime_environment
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def verify_sources(connect, environment, passwords, secret, sources):
+def verify_sources(connect, environment, passwords, secret, sources, runtime_dsn):
     sys.path.insert(0,str(ROOT/'ai-service'))
     from ai.runtime.source import SourceClient, credential, HEADER
     from ai.runtime.types import RunInput
@@ -67,6 +67,8 @@ def verify_sources(connect, environment, passwords, secret, sources):
                     assert first==await source_client.read(source,run_id,expected_snapshot_id=first.snapshot_id,
                                                           expected_hash=first.payload_hash)==await source_client.capture(source,run_id)
                     assert first.text=='synthetic-private-source'
+                from source_tool_fixture import verify_source_tools
+                await asyncio.to_thread(verify_source_tools, connect, runtime_dsn, base, secret, specs)
                 source,run_id=specs[-1]
                 try: await source_client.read(replace(source,tenant='TENANT_B'),run_id)
                 except PermanentFailure as failure: assert failure.code=='SOURCE_REVOKED'

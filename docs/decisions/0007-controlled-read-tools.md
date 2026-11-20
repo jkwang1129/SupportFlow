@@ -11,3 +11,11 @@ Executor复用ExecutionContext.step/payload_step和同一Run预算，没有第�
 超时/明确不可用/限流为稳定可重试码；资源拒绝、Schema或资源绑定失败、未知工具/版本为永久失败；不持久化异常正文或默认隐式重发。每个适配器收到单调时钟Deadline，必须把剩余时间落实到自己的外部I/O；返回时再次检查，拒绝迟到结果。同步Python不能强杀阻塞函数，本层不创建无界线程或假装提供硬抢占；真实HTTP适配器的整体deadline需单独验收。取消/租约/Run总期限仍由既有Worker前后边界核验。
 
 回滚停止注册/调用新Executor，原Workflow不变；无SQL迁移、默认业务路由或外部副作用。保留已生成Step/payload及所有预算，不清空UNKNOWN或用新Run绕过失败。后续依次接实际只读业务适配器、幂等写工具/回执、bounded loop、HITL；MCP只做同一契约的可信适配。
+
+## 实际来源工具接入（独立子批次2）
+
+新增current_message_tool，复用SourceClient与现有snapshot API，不新增业务权限接口。参数为空，唯一来源由可信Run决定；输出只含版本/Run/event/snapshot/hash/role=user/有界正文，不包含customer_ref、完整快照JSON、凭据或内部消息。authorize调用幂等capture当前核权（必要时创建派生快照），invoke调用read；两次操作均落实asyncio整体deadline并使用既有禁止重定向/代理的有界SDK，没有收费模型或任意网络目标。
+
+ReadAuthorization是只含引用的不可变当前授权证据，随授权Step存入快照ID/源Hash/精确文本SHA，verify接收本次证据再核对缓存正文。原有只需bool权限的适配器仍可返回True，得到空引用证据；需要具体资源版本的真实适配器必须提供证据。证据只能由可信适配器构造，不能从模型参数或原缓存恢复为新权限。此处校验SHA只用于匹配刚经业务端授权的精确文本，不把Hash等同于业务事实真实性。
+
+两条真实Worker→Executor→SDK→客户JAR→受限PG用例：先读后重试，当前权限允许才复用同一正文；人工接管后重新核权失败，保留历史正文但不交付handler。每Run实际tool_calls=3（两次当前授权+一次读取）、model_calls=0；只保存一份工具正文。没有自动启动Worker/登记来源/模型循环，也没有接工单或知识工具。读取过期/撤权只阻止后续访问，不能撤销已经交付给handler的内容；TTL物理清理和全局日志治理仍属后续。

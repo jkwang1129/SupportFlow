@@ -33,7 +33,7 @@ def definition(**kwargs):
     values = dict(name='get_ticket_status', version='ticket-v1', scope='ticket:read',
                   arguments=Arguments, result=Result, authorize=lambda *_: True,
                   invoke=lambda *_: dict(ANSWER),
-                  verify=lambda identity, args, result: args['ticket_no'] == result['ticket_no'])
+                  verify=lambda identity, args, result, grant: args['ticket_no'] == result['ticket_no'])
     return ReadTool(**(values | kwargs))
 
 
@@ -206,7 +206,7 @@ def test_authorizer_cannot_mutate_the_arguments_later_executed():
 
 
 def test_verifier_failure_is_closed_and_its_mutations_cannot_change_the_result():
-    def verify(identity, args, result):
+    def verify(identity, args, result, grant):
         result['summary'] = 'modified'
         return True
     assert executor(definition(verify=verify)).execute(context(), 'call-1', call()) == ANSWER

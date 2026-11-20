@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .payloads import encode
-from .types import RunInput, fingerprint, identifier
+from .types import RunInput, fingerprint, identifier, reference
 from .worker import PermanentFailure, TransientFailure
 
 
@@ -87,6 +87,15 @@ class ToolUnavailable(Exception):
             raise ValueError('Invalid tool failure classification')
         self.code = code
         super().__init__(code)
+
+
+@dataclass(frozen=True)
+class ReadAuthorization:
+    """Fresh resource/version/hash references from trusted authorization code."""
+    references: dict = field(repr=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, 'references', MappingProxyType(reference(dict(self.references))))
 
 
 @dataclass(frozen=True)
@@ -231,20 +240,23 @@ class ToolExecutor:
                   'resource_ref': identity.source.principal_ref, 'arguments_sha256': fingerprint(arguments)}
 
         def authorize():
-            if self._call(tool, tool.authorize, identity, json.loads(json.dumps(arguments))) is not True:
+            grant = self._call(tool, tool.authorize, identity, json.loads(json.dumps(arguments)))
+            if grant is True:
+                return {'outcome': 'authorized'}
+            if not isinstance(grant, ReadAuthorization):
                 raise PermanentFailure('TOOL_RESOURCE_DENIED')
-            return {'outcome': 'authorized'}
+            return dict(grant.references) | {'outcome': 'authorized'}
 
         # A fresh current-ACL check is itself an accounted read step, even when
         # a prior tool result is reusable. Never cache permission across resumes.
-        context.step('auth:' + uuid4().hex, 'TOOL', 'READ', intent, authorize)
+        grant = ReadAuthorization(context.step('auth:' + uuid4().hex, 'TOOL', 'READ', intent, authorize))
 
         def verified(output):
             result = self._validate(tool.result, output, 'TOOL_RESULT_INVALID')
             try:
                 # A pure host verifier binds returned resources/facts to the
                 # request. JSON schema alone cannot prove that correspondence.
-                valid = tool.verify(identity, json.loads(json.dumps(arguments)), json.loads(json.dumps(result)))
+                valid = tool.verify(identity, json.loads(json.dumps(arguments)), json.loads(json.dumps(result)), grant)
             except Exception:
                 raise PermanentFailure('TOOL_RESULT_INVALID') from None
             if valid is not True:
