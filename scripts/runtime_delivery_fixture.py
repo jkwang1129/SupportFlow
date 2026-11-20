@@ -32,7 +32,8 @@ def verify_delivery(connect, environment, passwords, runtime_environment):
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open('wb') as log:
         process = subprocess.Popen([sys.executable, 'tests/runtime_receiver_process.py', str(port)],
-                                   cwd=ROOT/'ai-service', env=server_env, stdout=log, stderr=subprocess.STDOUT)
+                                   cwd=ROOT/'ai-service', env=server_env, stdout=log, stderr=subprocess.STDOUT,
+                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         try:
             base = f'http://127.0.0.1:{port}'
             deadline = time.monotonic()+45
@@ -71,6 +72,8 @@ def verify_delivery(connect, environment, passwords, runtime_environment):
                     assert row == (tenant, run_id, message_id, sequence, 'PENDING', 0, 0), 'Cross-database admission evidence did not match'
                     assert connection.execute("SELECT count(*) FROM agent_run WHERE tenant_code=%s AND source_event_id=%s", (tenant,event_id)).fetchone()[0] == 1
             print('Real Java dispatcher -> signed AI app -> restricted PostgreSQL: 2 delivery cases passed; matched source/run receipts; no model or tool calls', flush=True)
+            from source_delivery_fixture import verify_sources
+            verify_sources(connect,environment,passwords,secret,sources)
         finally:
             process.terminate()
             try:

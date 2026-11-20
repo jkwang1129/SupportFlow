@@ -1,0 +1,121 @@
+package io.supportflow.customer.security;
+
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import io.supportflow.common.auth.CustomerInternalCredential;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.time.Clock;
+import java.util.Collections;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.UUID;
+import java.util.regex.Pattern;
+
+/** Authenticating this narrow service route must precede schema queries and body parsing. */
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE + 15)
+public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
+    private static final String AUDIENCE = "supportflow-customer-runtime:v1";
+    private static final String UUID_PATTERN = "[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}";
+    private static final Pattern ROUTE = Pattern.compile("/api/customer/internal/runtime/events/(" + UUID_PATTERN + ")/runs/(" + UUID_PATTERN + ")/snapshot");
+    private static final Pattern CREDENTIAL = Pattern.compile("runtime:ai:([0-9]{1,12}):([0-9a-f]{64}):([0-9a-f]{64})");
+    private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+    private final String secret;
+    private final boolean enabled;
+    private final Clock clock;
+
+    @Autowired
+    public RuntimeSourceAccessFilter(@Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String secret,
+                                     @Value("${supportflow.bot.runtime-source-enabled:false}") boolean enabled,
+                                     @Value("${SUPPORTFLOW_CUSTOMER_REALTIME_SECRET:}") String realtime,
+                                     @Value("${SUPPORTFLOW_CUSTOMER_OPS_SECRET:}") String ops,
+                                     @Value("${SUPPORTFLOW_CUSTOMER_TENANT_SECRET:}") String tenant) {
+        this(secret, enabled, List.of(realtime, ops, tenant), Clock.systemUTC());
+    }
+    RuntimeSourceAccessFilter(String secret, boolean enabled, List<String> otherSecrets, Clock clock) {
+        if (enabled && !CustomerInternalCredential.usable(secret)) throw new IllegalArgumentException("Runtime source credential is not configured");
+        if (CustomerInternalCredential.usable(secret) && otherSecrets.stream().filter(CustomerInternalCredential::usable).anyMatch(secret::equals))
+            throw new IllegalArgumentException("Runtime source credential must be distinct from other callers");
+        this.secret = secret; this.enabled = enabled; this.clock = clock;
+    }
+
+    @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
+            throws IOException, ServletException {
+        String path = request.getRequestURI().substring(request.getContextPath().length());
+        if (!path.startsWith("/api/customer/internal/runtime/")) { chain.doFilter(request, response); return; }
+        var credentials = Collections.list(request.getHeaders(CustomerInternalCredential.HEADER));
+        var tenants = Collections.list(request.getHeaders("X-Tenant-Code"));
+        var parsed = credentials.size() == 1 ? CREDENTIAL.matcher(credentials.getFirst()) : null;
+        if (parsed == null || !parsed.matches() || tenants.size() != 1 || !CustomerInternalCredential.usable(secret)) {
+            reject(response, 401, "Runtime service authentication required"); return;
+        }
+        long now = clock.instant().getEpochSecond(), expiry = Long.parseLong(parsed.group(1));
+        String tenant = tenants.getFirst();
+        String canonical = String.join("\n", AUDIENCE, "ai", parsed.group(1), request.getMethod(), request.getRequestURI(),
+                request.getQueryString() == null ? "" : request.getQueryString(), tenant, parsed.group(2));
+        if (expiry <= now || expiry > now + 35 || !MessageDigest.isEqual(HexFormat.of().parseHex(parsed.group(3)), mac(canonical))) {
+            reject(response, 401, "Invalid runtime service credential"); return;
+        }
+        var route = ROUTE.matcher(path);
+        if (!route.matches() || !(request.getMethod().equals("GET") || request.getMethod().equals("POST"))
+                || request.getQueryString() != null || !tenant.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,15}") || tenant.equalsIgnoreCase("PLATFORM")) {
+            reject(response, 403, "Runtime operation is not authorized"); return;
+        }
+        if (!enabled) { reject(response, 503, "Runtime source API is disabled"); return; }
+        if (request.getContentLengthLong() > 8192) { reject(response, 413, "Runtime reference body is too large"); return; }
+        byte[] body = request.getInputStream().readNBytes(8193);
+        if (body.length > 8192) { reject(response, 413, "Runtime reference body is too large"); return; }
+        if (!MessageDigest.isEqual(HexFormat.of().parseHex(parsed.group(2)), sha(body))) {
+            reject(response, 401, "Runtime body does not match its credential"); return;
+        }
+        if (request.getMethod().equals("GET")) {
+            if (body.length != 0) { reject(response, 400, "Runtime GET cannot carry a body"); return; }
+        } else {
+            var types = Collections.list(request.getHeaders("Content-Type"));
+            if (types.size() != 1 || !types.getFirst().split(";", 2)[0].trim().equalsIgnoreCase("application/json")) {
+                reject(response, 415, "Runtime source request must use JSON"); return;
+            }
+            try {
+                var object = mapper.readTree(body);
+                if (object == null || !object.isObject() || !object.isEmpty()) { reject(response, 400, "Runtime source request must be an empty object"); return; }
+            } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
+                reject(response, 400, "Invalid runtime JSON request"); return;
+            }
+        }
+        request.setAttribute(RuntimeCustomerCall.ATTRIBUTE, new RuntimeCustomerCall(tenant, UUID.fromString(route.group(1)), UUID.fromString(route.group(2))));
+        chain.doFilter(request, response);
+    }
+
+    private byte[] mac(String value) {
+        try {
+            var mac = Mac.getInstance("HmacSHA256"); mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+            return mac.doFinal(value.getBytes(StandardCharsets.UTF_8));
+        } catch (java.security.GeneralSecurityException unavailable) { throw new IllegalStateException("Runtime authentication unavailable", unavailable); }
+    }
+    private static byte[] sha(byte[] value) {
+        try { return MessageDigest.getInstance("SHA-256").digest(value); }
+        catch (java.security.GeneralSecurityException unavailable) { throw new IllegalStateException(unavailable); }
+    }
+    private static void reject(HttpServletResponse response, int code, String message) throws IOException {
+        response.setStatus(code); response.setContentType("application/json;charset=UTF-8");
+        if (code == 503) response.setHeader("Retry-After", "5");
+        response.getWriter().write("{\"code\":" + code + ",\"message\":\"" + message + "\",\"data\":null}");
+    }
+}

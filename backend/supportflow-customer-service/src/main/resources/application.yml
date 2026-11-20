@@ -92,6 +92,8 @@ supportflow:
     # 是否打印 AI 调用的完整入参/出参（排障用；生产环境可置 false 降低日志量）
     log-payload: ${SUPPORTFLOW_AI_LOG_PAYLOAD:false}
   bot:
+    # 内部来源读取接口默认关闭；启用不切换访客触发路径或启动Worker。
+    runtime-source-enabled: ${SUPPORTFLOW_BOT_RUNTIME_SOURCE_ENABLED:false}
     # 机器人总开关：关掉就退回老流程（访客进线直接进人工队列）
     enabled: ${SUPPORTFLOW_BOT_ENABLED:true}
     # 是否由机器人首轮接待（关闭=进线直接排队等人工，但客户主动问时仍可用知识助手）

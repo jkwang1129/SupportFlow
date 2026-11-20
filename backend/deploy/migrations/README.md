@@ -77,4 +77,4 @@ AI 001 是原 8 张表的历史基线，保持不变；002 新增 agent_run/agen
 
 新增agent_source_snapshot，源端Outbox增加event+Run唯一约束，使快照外键绑定已交付回执。仅保存当前文本及必要业务引用，文本与可信资源引用分区；有明确UTF-8/序列化大小和数据库时钟TTL。先migrate，再以唯一40-runtime-roles.sql保证运行账号仅SELECT/INSERT、无UPDATE/DELETE/TRUNCATE，最后verify；不能修改已应用的005或其他SQL来追加新表。
 
-存在快照也要重新核验当前消息/会话/主体/Run；人工接手、结束、删除、隐藏或来源变更均拒绝。过期不原地刷新。此处仅存储原语，未暴露给AI的来源API或自动业务链路；TTL不等于已完成数据清理，M12仍需保留/归档策略。回滚停用组件并保留表/历史；不清表、不改旧checksum。设计见docs/decisions/0004-source-snapshot-boundary.md。
+存在快照也要重新核验当前消息/会话/主体/Run回执；人工接手、结束、删除、隐藏或来源变更均拒绝。过期不原地刷新。已有默认关闭的来源API和Python加载器及真实双向联调；启用`SUPPORTFLOW_BOT_RUNTIME_SOURCE_ENABLED=true`只开放受服务鉴权的快照读/建，不启用Worker或自动消息路由。AI的customer_runtime_url配置为该customer服务固定地址，使用这一对服务已有的独立CUSTOMER_SECRET及新audience，不使用JWT。TTL不等于已完成数据清理，M12仍需保留/归档策略。回滚停用组件并保留表/历史；不清表、不改旧checksum。设计见docs/decisions/0004-source-snapshot-boundary.md。

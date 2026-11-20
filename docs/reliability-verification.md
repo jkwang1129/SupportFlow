@@ -340,3 +340,25 @@ e21c400对应的[CI 44661219385](https://github.com/jkwang1129/SupportFlow/actio
 首次PG62项有1项测试嵌套两个Spring事务模板，内层rollback-only导致外层UnexpectedRollback；改为单个真实事务边界验证回滚后，加负面用例至65项通过。不是数据已提交或产品回滚失效，初始日志`b1-source-pg-first.log`保留。
 
 剩余风险/回滚：只提供受可信tenant+事务约束的存储API，没有对AI的认证来源接口、结果回写、业务handler、自动调度/消息触发，B1未闭环。TTL固定一小时只是读取策略，不等于自动物理清理；真实数据保留/归档和审批等待跨过期策略待M12/B3。后续恢复必须重新验权，不能仅按snapshotId返回内容。回退停用新组件并保留表/Source/Outbox/Run/迁移；不删除快照、不回写旧SQL。无生产吞吐/客户/收益或模型成功率声明。
+
+bda38bd对应的[CI 44664049211](https://github.com/jkwang1129/SupportFlow/actions/runs/44664049211)两个job全部通过，包括91表结构/初始化、来源快照PG及原三条实际服务部署路径。
+
+## B1 子批次 8：受鉴权的来源API与Python恢复加载（2026-11-20）
+
+基线bda38bd。新增Java RuntimeSourceAccessFilter/RuntimeCustomerCall/注解/RuntimeSourceController，复用原内部接口拦截器作为第二层认证标记检查；SourceClient/Python测试、HTTP/PG测试、实际JAR来源联调夹具。新增的只是只读来源建/读接口及配置，不改SQL或现有访客触发。设计见ADR-0004服务接入部分，默认runtime-source-enabled=false。
+
+身份使用已有customer↔AI这一信任对的独立CUSTOMER_SECRET，新audience/caller/格式隔离旧协议，必须与其他来访服务密钥不同。先校验带body摘要的MAC/短有效期，再有界读取/解析正文，认证过滤器先于Readiness；只允许规范event/run UUID的snapshot路径、业务tenant、无query、GET空body/POST空JSON。controller核对已认证资源后才绑定Scope、开短事务、调SourceStore；SQL/权限故障映射503且不暴露错误原文。API响应使用精确payload JSON和hash，来源读取不是Run执行权或写入许可。
+
+Python仅按可信Run引用构造固定路径，拒绝任意URL/用户信息/query配置；总deadline≤10秒、响应≤128KiB、不重定向/不解压，严格验证信封、Hash/版本/来源与Run一致及文本边界，异常保留稳定分类。恢复GET可绑定先前snapshotId/Hash，不接受合法但不同快照。DTO repr隐藏正文。没有在此层声称提供Token预算、上下文压缩或语义注入防御。
+
+实际验证（本地JDK25.0.5+8/Maven3.9.16/Python3.11.5/隔离PG17，合成数据/离线模型）：
+
+- `mvn -B -f backend/pom.xml verify`九模块成功，`.local/implementation/b1-source-api-java.log`。新来源认证9项、原内部认证含新增“伪造标记头不等于请求属性”共5项，合计14项通过；固定Python MAC样本与Java实际过滤器互验。验证匿名/坏签名及关闭接口不会读body、方法/path/query/tenant/body/expiry篡改、重复头/错误角色/旧协议、非规范资源、8KiB上限、严格JSON和密钥冲突。未用跳过替代PG实测。
+- `python scripts/test-customer-rls.py --with-ai`：**70项Java真实PG + 4项KB PG通过**，`b1-source-api-pg-first.log`。新5项用真实controller/filter/interceptor/事务与受限PG验证创建/重读同快照、错Run/tenant与非法body、认证先于缺schema的Readiness、资源撤销/源变更、INSERT撤销503与原地恢复、错误无SQL/原文泄露。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-source-api-ai.xml`：**134 passed、54 skipped、1 xfailed**，`b1-source-api-ai.log`。其中Source SDK **32项**，包括固定Java MAC、只发引用/不发JWT、资源/版本/hash/日期/主体替换、重复字段/超大/压缩/重定向/网络/正文卡住、稳定错误分类、恢复ID/hash不匹配拒绝。54跳过中的48项Runtime真PG由下面专项实际执行；既有引用正文xfail仍保留。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**64项Python专项 + 6次能力组负面 + 2项实际Java→AI交付 + 2条实际Python→customer JAR来源流程**通过，`b1-source-api-real-final.log`。保持原FastAPI与Spring应用、鉴权、Readiness和受限账号，无存储mock；来源流程含相同snapshot/hash、恢复绑定、匿名/错密钥/跨租户拒绝，以及人工接手后原快照重读撤销。实际客户JAR测试只验收文本来源接口，对象存储未作为此夹具依赖；媒体功能另由完整服务回归验证。
+- `python scripts/test-security-flow.py`：默认新库、历史升级、CLI init三套实际Java/AI/RustFS服务均通过，含原用户/企业审核、平台/媒体权限、知识/WS机器人、签名计费、45次Java Readiness故障及91表/6条customer历史与Snapshot最小权限；新来源接口默认关闭，证明原闭环不退化，`b1-source-api-services.log`。所有一次性资源清理，未操作用户其他项目容器。
+
+本子批次各组首轮均通过；后补恢复绑定/禁读body/真实恢复引用校验后分别重跑对应单元、实际互通及完整回归。服务密钥、bootstrap密码与原始私有日志不进入仓库/报告；公开内容使用合成数据。未计生产流量/用户/收益，没有将4条桥接流程等同Agent任务成功率。
+
+剩余风险/回滚：没有结果回写、写入执行权校验/幂等、业务handler或自动触发，B1未闭环。Run可处PENDING时读取来源用于准备输入，此权限不能用于业务写操作。SchemaReadiness是最低列/SELECT检查，未代替完整漂移与DML权限核验；缺INSERT时API明确503，发布仍须migrate/provision/verify。恢复/审批、长历史策略、敏感用户输入出站策略与物理清理留后续。回滚关闭runtime-source-enabled并保留快照/回执；原FAQ/图片Workflow不受此开关控制，不清表或重用新eventId。

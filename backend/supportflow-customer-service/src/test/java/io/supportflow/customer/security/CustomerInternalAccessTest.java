@@ -34,6 +34,17 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request;
 
 class CustomerInternalAccessTest {
+    @Test void aRuntimeAnnotationAndAHeaderCannotForgeTheVerifiedRequestAttribute() throws Exception {
+        var access = new CustomerInternalAccess(KEYS.get(Caller.REALTIME), KEYS.get(Caller.OPS), KEYS.get(Caller.TENANT));
+        var controller = new io.supportflow.customer.controller.internal.RuntimeSourceController(
+                mock(org.springframework.jdbc.core.JdbcTemplate.class), mock(org.springframework.transaction.PlatformTransactionManager.class));
+        var handler = new org.springframework.web.method.HandlerMethod(controller,
+                controller.getClass().getMethod("read", RuntimeCustomerCall.class, java.util.UUID.class, java.util.UUID.class));
+        var request = new org.springframework.mock.web.MockHttpServletRequest();
+        request.addHeader(RuntimeCustomerCall.ATTRIBUTE, "forged");
+        var response = new org.springframework.mock.web.MockHttpServletResponse();
+        assertFalse(access.interceptor().preHandle(request, response, handler)); assertEquals(401, response.getStatus());
+    }
     private static final String PREFIX = "/api/customer/internal";
     private static final String SESSION = PREFIX + "/sessions/test-session";
     private static final String PUBLISH = PREFIX + "/notifications/publish";

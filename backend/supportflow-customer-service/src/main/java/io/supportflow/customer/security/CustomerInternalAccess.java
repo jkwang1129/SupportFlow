@@ -52,6 +52,12 @@ public class CustomerInternalAccess implements WebMvcConfigurer {
                 if (!(handler instanceof HandlerMethod method)) {
                     return true;
                 }
+                if (method.hasMethodAnnotation(RuntimeCustomerEndpoint.class)
+                        || method.getBeanType().isAnnotationPresent(RuntimeCustomerEndpoint.class)) {
+                    if (request.getAttribute(RuntimeCustomerCall.ATTRIBUTE) instanceof RuntimeCustomerCall) return true;
+                    response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                    return false;
+                }
                 var guard = method.getMethodAnnotation(InternalCustomerEndpoint.class);
                 if (guard == null) {
                     guard = method.getBeanType().getAnnotation(InternalCustomerEndpoint.class);
