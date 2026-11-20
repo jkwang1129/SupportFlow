@@ -25,7 +25,7 @@ def admin():
 @pytest.fixture
 def receiver(monkeypatch):
     with admin() as connection:
-        connection.execute('TRUNCATE public.agent_step, public.agent_run')
+        connection.execute('TRUNCATE public.agent_payload, public.agent_step, public.agent_run')
     def connect(**kwargs):
         return psycopg.connect(os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'], row_factory=dict_row, **kwargs)
     store = RuntimeStore(connect)
@@ -114,6 +114,11 @@ def test_backlog_rejects_new_work_but_allows_retry_of_same_event(receiver, monke
 
 
 @pytest.mark.parametrize('fault,repair', [
+    ('ALTER TABLE agent_payload RENAME COLUMN payload_hash TO hidden_hash','ALTER TABLE agent_payload RENAME COLUMN hidden_hash TO payload_hash'),
+    ('ALTER TABLE agent_payload NO FORCE ROW LEVEL SECURITY','ALTER TABLE agent_payload FORCE ROW LEVEL SECURITY'),
+    ('GRANT UPDATE ON agent_payload TO supportflow_ai','REVOKE UPDATE ON agent_payload FROM supportflow_ai'),
+    ('REVOKE INSERT ON agent_payload FROM supportflow_agent_runtime,supportflow_ai','GRANT INSERT ON agent_payload TO supportflow_agent_runtime,supportflow_ai'),
+    ('REVOKE SELECT ON agent_payload FROM supportflow_agent_runtime,supportflow_ai','GRANT SELECT ON agent_payload TO supportflow_agent_runtime,supportflow_ai'),
     ('ALTER TABLE agent_step RENAME COLUMN intent_hash TO hidden_intent_hash',
      'ALTER TABLE agent_step RENAME COLUMN hidden_intent_hash TO intent_hash'),
     ('ALTER TABLE agent_run RENAME TO hidden_agent_run', 'ALTER TABLE hidden_agent_run RENAME TO agent_run'),

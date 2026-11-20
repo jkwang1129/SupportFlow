@@ -36,6 +36,23 @@ def existing_runtime_source(connection):
     return read
 
 
+def existing_ai_step(url):
+    """An already charged/reserved 002 model step must survive 003 unchanged."""
+    sys.path.insert(0,str(ROOT/'ai-service'))
+    from psycopg.rows import dict_row
+    from ai.runtime.store import RuntimeStore
+    from ai.runtime.types import RunInput,Lease
+    store=RuntimeStore(lambda:psycopg.connect(url,row_factory=dict_row))
+    value=RunInput('PAYLOAD_UP',uuid4(),'PAYLOAD_UPGRADE',1,774002,'visitor-session:774001','payload-upgrade')
+    row=store.enqueue(value);lease=Lease.from_run(store.claim_next(value.tenant,'migration-worker'))
+    store.reserve_step(lease,'existing-model','MODEL','NONE',{'operation':'upgrade-test','version':'test-v1'})
+    def read():
+        with psycopg.connect(url) as connection:
+            return (connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s',(value.tenant,row['run_id'])).fetchone(),
+                    connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s',(value.tenant,row['run_id'])).fetchone())
+    return read
+
+
 def main():
     name="supportflow-migrations-test-"+secrets.token_hex(6)
     password=secrets.token_hex(24)
@@ -64,12 +81,20 @@ def main():
                     applied=run_plan(connection,plan[:-1])["applied"]
                     read=existing_runtime_source(connection)
                     before=read()
+                if database=='ai_db':
+                    assert plan[-1].version=='003'
+                    applied=run_plan(connection,plan[:-1])["applied"]
+                    read_ai=existing_ai_step(dsn(database));before_ai=read_ai()
                 result=run_plan(connection,plan)
                 assert applied+result["applied"]==[migration.version for migration in plan]
                 if database=='customer_db':
                     assert result['applied']==['007'] and read()==before
                     assert connection.execute('SELECT count(*) FROM agent_result_receipt').fetchone()==(0,)
                     print('006 -> 007 upgrade preserved exact existing message, delivered event and immutable snapshot; new result receipt table empty',flush=True)
+                if database=='ai_db':
+                    assert result['applied']==['003'] and read_ai()==before_ai
+                    assert connection.execute('SELECT count(*) FROM agent_payload').fetchone()==(0,)
+                    print('AI 002 -> 003 upgrade preserved existing leased Run, reserved model Step and charged counters; payload table empty',flush=True)
                 assert run_plan(connection,plan)["applied"]==[]
                 run_plan(connection,plan,verify=True)
         runtime_password=secrets.token_hex(24)

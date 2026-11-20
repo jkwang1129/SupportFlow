@@ -7,6 +7,129 @@
         "supportflow_agent_due_tenants(p_limit integer)": "CREATE OR REPLACE FUNCTION public.supportflow_agent_due_tenants(p_limit integer)\n RETURNS TABLE(tenant_code character varying)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n SELECT r.tenant_code FROM public.agent_run r\n WHERE ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())\n    OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))\n AND NOT EXISTS(SELECT 1 FROM public.agent_run earlier WHERE earlier.tenant_code=r.tenant_code AND earlier.session_no=r.session_no\n    AND earlier.run_id<>r.run_id AND (earlier.state='RUNNING' OR\n       (earlier.event_seq<r.event_seq AND (earlier.state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR earlier.error_code='SIDE_EFFECT_UNKNOWN'))))\n GROUP BY r.tenant_code ORDER BY min(r.created_at),r.tenant_code\n LIMIT greatest(1,least(coalesce(p_limit,32),100))\n$function$\n"
       },
       "tables": {
+        "agent_payload": {
+          "columns": {
+            "created_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "expires_at": {
+              "default": "(clock_timestamp() + '7 days'::interval)",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "fence": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "payload_hash": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "payload_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "payload_json": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "text"
+            },
+            "payload_schema": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(32)"
+            },
+            "run_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "step_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            }
+          },
+          "constraints": {
+            "agent_payload_check": "CHECK ((expires_at > created_at))",
+            "agent_payload_fence_check": "CHECK ((fence > 0))",
+            "agent_payload_payload_hash_check": "CHECK ((payload_hash ~ '^[0-9a-f]{64}$'::text))",
+            "agent_payload_payload_json_check": "CHECK (((octet_length(payload_json) <= 65536) AND (jsonb_typeof((payload_json)::jsonb) = 'object'::text)))",
+            "agent_payload_payload_schema_check": "CHECK (((payload_schema)::text = ANY ((ARRAY['model-output-v1'::character varying, 'tool-output-v1'::character varying, 'working-state-v1'::character varying])::text[])))",
+            "agent_payload_pkey": "PRIMARY KEY (tenant_code, payload_id)",
+            "agent_payload_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
+            "agent_payload_tenant_code_run_id_step_no_fkey": "FOREIGN KEY (tenant_code, run_id, step_no) REFERENCES agent_step(tenant_code, run_id, step_no)",
+            "agent_payload_tenant_code_run_id_step_no_key": "UNIQUE (tenant_code, run_id, step_no)"
+          },
+          "indexes": {
+            "agent_payload_expiry": {
+              "definition": "CREATE INDEX agent_payload_expiry ON public.agent_payload USING btree (expires_at, tenant_code)",
+              "valid": true
+            },
+            "agent_payload_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_payload_pkey ON public.agent_payload USING btree (tenant_code, payload_id)",
+              "valid": true
+            },
+            "agent_payload_tenant_code_run_id_step_no_key": {
+              "definition": "CREATE UNIQUE INDEX agent_payload_tenant_code_run_id_step_no_key ON public.agent_payload USING btree (tenant_code, run_id, step_no)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_payload_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_payload_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "agent_run": {
           "columns": {
             "attempt": {
@@ -12974,6 +13097,10 @@
       {
         "checksum": "a0242920169783cad7f4996c9372e9084d454be8bfc5b2def52696761385d5f5",
         "version": "002"
+      },
+      {
+        "checksum": "7554ba37f84a5b9f2f8d96d0c385845ba006e46d55b2f40f7b01c735d66109e6",
+        "version": "003"
       }
     ],
     "billing_db": [

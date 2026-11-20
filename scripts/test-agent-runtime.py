@@ -64,6 +64,7 @@ def main():
         subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/test_runtime_types.py',
                         'tests/test_runtime_store_postgres.py', 'tests/test_runtime_worker_postgres.py',
                         'tests/test_runtime_api_postgres.py', 'tests/test_runtime_authority_postgres.py',
+                        'tests/test_runtime_payloads_postgres.py',
                         f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)
         if args.with_java_delivery:

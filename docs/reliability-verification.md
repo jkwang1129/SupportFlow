@@ -489,3 +489,29 @@ ResultClient按可信RunInput/Lease构造固定reply路径与六字段正文，�
 首次SDK测试25项因MockTransport响应构造预消费body而失败，改为与现有来源测试一致的未消费ByteStream后82项通过；`b1-result-sdk-unit-first.log`/`unit-final.log`保留。第一次实际写入联调拒绝回执：实际Spring的LongToStringJacksonConfig把seq变为字符串，standalone MockMVC的默认mapper之前输出数字。明确Java wire字段为字符串、SDK只收规范十进制字符串，并增加JS安全整数以外的精度/格式负面用例后，86项及真实写入通过；`b1-result-sdk-real-first.log`保留，没有通过接受任意数值类型放松验证。首个成功故障场景在Windows的预期连接中止后产生代理keep-alive读取日志；固定代理Connection:close并只处理预期断连后，保持原2秒/5秒时限和所有断言，完整专项再跑通过（`real-final.log`与`real-clean.log`均保留）。
 
 边界/回滚：仍无实际模型/检索工具循环、业务handler或源端自动触发；UNKNOWN业务回执已能核验，但不自动把失败Run改成成功或恢复后续任务。Run/Step目前只持引用，模型/检索中间正文的可恢复持久化尚需补齐，再接B2。原三套完整服务本批未在本地重复，沿用上批记录，当前提交的远端CI将重跑；本批真实启用结果API的JAR和默认关闭来源JAR均已专项实测。网络信任/生产TLS、外部渠道送达、物理清理和费用硬额度仍属后续。回滚关闭结果开关/停止新客户端，保留007消息/回执和Run/Step；不因超时生成新run/event、不删除UNKNOWN或重置预算。
+
+c1a2978对应的[CI 44701513973](https://github.com/jkwang1129/SupportFlow/actions/runs/44701513973)两个job全部通过，包括新实际写入/回执丢失场景、机器可读结果报告及原三套实际服务流程。
+
+## B1 子批次 14：中间正文与步骤成功原子存储（2026-11-20）
+
+基线c1a2978。源码核查：ai_usage_record仅best-effort计量，不存恢复用的模型/检索正文；session_message是业务事实，不能提前写模型中间动作。因此沿用AI库新增003/agent_payload，不建新服务或另起Checkpoint真相。设计见ADR-0006；先交付存储基础，Worker接口在下一批独立实施。
+
+修改：`ai/runtime/payloads.py`/RuntimeStore.complete_payload_step与payload读取；AI003/manifest/40-runtime-roles/current-schema；AI schema_guard的列/权限/RLS检查；17项JSON单元、20项真实PG与5项新增Readiness故障；更新Runtime PG清理、版本/init/security验收脚本及本计划/记录。没有Java源码、依赖或业务入口改动。
+
+表与Step同tenant/run/step复合FK、一Step一正文，schema按MODEL/NONE、TOOL/READ、INTERNAL/NONE分别匹配；WRITE不能用此表代替业务回执。纯JSON根对象、有限int64/float、32层/4096节点/64KiB上限，流式编码时有界计数，拒绝NUL/非法Unicode/任意Python对象/重复键，Hash验证精确UTF-8；DTO repr隐藏正文。完成时先验当前租约/fence，再将正文和SUCCEEDED/result_ref同事务提交，最后再次查DB时钟；重复相同内容返回原ref、修改冲突，预算和TTL不刷新。读取限定tenant/run/payload，七天读取期限、不做物理清理。SI-only、FORCE RLS、restrictive guard及Runtime能力组安全检查，Readiness拒绝意外UPDATE权限。Hash不是事实/权限/审批保证，载荷仍是不可信数据。
+
+本地Python3.11.5/PG17、合成结构化输出，不调用模型：
+
+- `cd ai-service; python -m pytest -q tests/test_runtime_payloads.py tests/test_runtime_types.py`：**33项通过**（新JSON17+原类型16），`b1-payload-unit-first.log`。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-payload-ai-final.xml`：**228 passed、106 skipped、1 xfailed**，`b1-payload-ai-final.log`；外部PG条件跳过另由专项执行，引用正文xfail仍保留。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**116项Python专项+6次危险角色负面**，原真实Java交付/来源/控制面/双向回复全部通过，`b1-payload-runtime-final.log`。其中新PG20：三类正文与Step共同成功、预算不变；8路相同提交仅一正文；内容/版本冲突；WRITE/非RESERVED/取消/过期/旧fence拒绝；等待Step锁越过lease后无正文；INSERT权限失败；触发器在“本事务已可见INSERT正文”后故障使正文/Step一起回滚；提交完成但注入丢DB回执后重读成功、重试同引用不增加调用；过期不刷新/Hash损坏拒绝；FK/跨租户RLS/额外宽松策略/U-D-TRUNCATE-DDL拒绝。新Readiness5例覆盖缺列/无FORCE/误授UPDATE/撤销S-I并在恢复后原地开放。
+- `python scripts/test-versioned-migrations.py`：**17项+CLI**通过；额外AI002→003升级保留真实Store建立的已租约Run/已RESERVED模型Step及扣过的调用计数，payload表为空，原customer006→007数据保留仍通过，`b1-payload-migrations.log`。
+- `python scripts/test-schema-drift.py`：六库**93表/1视图/5受控函数**、14个SQL及3个metadata故障/CLI修复通过，`b1-payload-drift.log`；候选审查只有AI新payload表/索引/策略和003历史，其他五库及旧baseline不变。
+- `python scripts/test-database-init.py`：六库93表、CREATEDB拒绝/锁/失败回滚/拒绝覆盖通过，`b1-payload-init.log`。
+- `python scripts/test-security-flow.py`：**默认新库、历史升级、CLI初始化三套实际服务通过**，原业务/媒体/知识/WS/计费与45次Java Readiness故障全部保留；额外核对AI历史3条、payload有效SI且无U/D/TRUNCATE，`b1-payload-services.log`。本批Java未改，使用上一批已验证九模块JAR，专项仍实际执行Java交付/许可JUnit；不重复记一次Maven九模块构建。
+
+本批首轮专项115项均通过；增加锁等待到期与过期不刷新断言后116项通过，初始`b1-payload-runtime-first.log`保留。各迁移/初始化/结构/完整服务组首次通过；没有删负例或放宽资源限制。
+
+边界/风险：这里只提供存储与严格读取，尚未接RuntimeWorker的正文步骤，不能宣称模型/检索已在实际Agent中完成恢复；无自动Unknown写核销、审批、工具Registry或bounded loop。七天是读取TTL，不是物理清理或法规保留承诺；日志/脱敏、知识ACL重新校验、模型输出语义验证与生产运维仍按原阶段实施。数据均为合成样例，未计真实Token/费用/任务成功率或性能。
+
+回滚停用新存储方法/后续开关，保留AI003及payload/Step引用/Run计数；不改旧SQL或用日志拼凑已成功模型输出，不清空UNKNOWN或重置预算。若载荷缺失/损坏/过期，应明确失败或待核验，不能静默重调模型冒充恢复。

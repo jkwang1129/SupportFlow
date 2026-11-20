@@ -11,6 +11,7 @@
     {"database":"billing_db","version":"001","name":"usage batch deduplication ledger","source":"backend/deploy/db-init/30-usage-batches.sql"},
     {"database":"ai_db","version":"001","name":"adopt canonical AI baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/ai_db.json"},
     {"database":"ai_db","version":"002","name":"durable runtime execution primitives","source":"backend/deploy/migrations/sql/ai_db_002_agent_runtime.sql"},
+    {"database":"ai_db","version":"003","name":"atomic durable step payloads","source":"backend/deploy/migrations/sql/ai_db_003_agent_payload.sql"},
     {"database":"user_db","version":"001","name":"adopt canonical user baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/user_db.json"},
     {"database":"tenant_db","version":"001","name":"adopt canonical tenant baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/tenant_db.json"},
     {"database":"ops_db","version":"001","name":"adopt canonical operations baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/ops_db.json"}

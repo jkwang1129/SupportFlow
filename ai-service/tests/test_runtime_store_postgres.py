@@ -22,7 +22,7 @@ def admin():
 @pytest.fixture
 def store():
     with admin() as connection:
-        connection.execute('TRUNCATE public.agent_step,public.agent_run')
+        connection.execute('TRUNCATE public.agent_payload,public.agent_step,public.agent_run')
     return RuntimeStore(lambda: psycopg.connect(os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'],row_factory=dict_row))
 
 

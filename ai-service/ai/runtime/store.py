@@ -9,6 +9,7 @@ from psycopg.types.json import Jsonb
 from ..core.db import connect
 from .types import (RunInput, Limits, Lease, tenant_code, identifier, fingerprint, reference,
                     RuntimeConflict, LostLease, BudgetExceeded, QueueFull, ActionDenied)
+from .payloads import SCHEMAS,StepPayload,encode as encode_payload,decode as decode_payload
 
 TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELLED'}
 
@@ -218,6 +219,42 @@ class RuntimeStore:
         if exhausted:
             raise BudgetExceeded('Runtime call/step budget exhausted')
         return step,True
+
+    def complete_payload_step(self,lease: Lease,step_key,schema,value):
+        identifier(step_key)
+        raw,digest=encode_payload(schema,value)
+        with self._scope(lease.tenant) as connection:
+            self._owned(connection,lease)
+            step=connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s AND step_key=%s FOR UPDATE',
+                                   (lease.tenant,lease.run_id,step_key)).fetchone()
+            if not step or step['fence']!=lease.fence: raise LostLease('Payload step belongs to another attempt')
+            if (step['kind'],step['effect'])!=SCHEMAS[schema]: raise RuntimeConflict('Payload schema does not match step kind')
+            previous=connection.execute('SELECT * FROM agent_payload WHERE tenant_code=%s AND run_id=%s AND step_no=%s',
+                                         (lease.tenant,lease.run_id,step['step_no'])).fetchone()
+            self._owned(connection,lease)  # Recheck DB time after all row locks.
+            if previous:
+                result={'resource_ref':'payload:'+str(previous['payload_id'])}
+                if (previous['payload_schema']!=schema or previous['payload_hash']!=digest or previous['payload_json']!=raw
+                        or step['state']!='SUCCEEDED' or step['result_ref']!=result):
+                    raise RuntimeConflict('Persisted step payload changed')
+                return result
+            if step['state']!='RESERVED': raise RuntimeConflict('Payload step is not reserved')
+            payload_id=uuid4();result={'resource_ref':'payload:'+str(payload_id)}
+            connection.execute('''INSERT INTO agent_payload(tenant_code,payload_id,run_id,step_no,fence,payload_schema,payload_json,payload_hash)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s)''',(lease.tenant,payload_id,lease.run_id,step['step_no'],lease.fence,schema,raw,digest))
+            connection.execute("""UPDATE agent_step SET state='SUCCEEDED',result_ref=%s,completed_at=clock_timestamp()
+                WHERE tenant_code=%s AND run_id=%s AND step_no=%s""",(Jsonb(result),lease.tenant,lease.run_id,step['step_no']))
+            self._owned(connection,lease)
+            return result
+
+    def payload(self,tenant,run_id,payload_id):
+        with self._scope(tenant) as connection:
+            row=connection.execute('''SELECT * FROM agent_payload WHERE tenant_code=%s AND run_id=%s AND payload_id=%s
+                AND expires_at>clock_timestamp()''',(tenant,UUID(str(run_id)),UUID(str(payload_id)))).fetchone()
+            if row is None:return None
+            try:value=decode_payload(row['payload_schema'],row['payload_json'],row['payload_hash'])
+            except (ValueError,TypeError,UnicodeError,RecursionError):raise RuntimeConflict('Persisted payload is invalid') from None
+            return StepPayload(row['payload_id'],row['run_id'],row['step_no'],row['payload_schema'],row['payload_hash'],value,row['created_at'],row['expires_at'])
 
     def complete_step(self, lease: Lease, step_key, state, result_ref):
         identifier(step_key)
