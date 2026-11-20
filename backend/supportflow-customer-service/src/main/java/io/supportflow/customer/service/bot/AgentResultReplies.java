@@ -27,20 +27,28 @@ public final class AgentResultReplies {
 
     /** Safe short-transaction preflight for retries; returns references only, never executes a write. */
     public Receipt find(AgentReplyArguments reply) {
-        requireScope(reply);
-        var rows = jdbc.query("SELECT * FROM agent_result_receipt WHERE tenant_code=? AND run_id=?", (row, index) ->
-                new Receipt(row.getObject("run_id", UUID.class), row.getObject("event_id", UUID.class), row.getObject("snapshot_id", UUID.class),
-                        row.getString("arguments_sha256"), row.getLong("message_id"), row.getString("message_no"), row.getLong("message_seq")),
-                reply.tenant(), reply.runId());
-        if (rows.isEmpty()) return null;
-        var result = rows.getFirst();
-        if (!result.eventId().equals(reply.eventId()) || !result.snapshotId().equals(reply.snapshotId())
-                || !result.argumentsSha256().equals(reply.argumentsSha256())) throw conflict();
+        if (reply==null) throw new IllegalArgumentException("Reply arguments required");
+        var result=get(reply.tenant(),reply.eventId(),reply.runId());
+        if (result==null) return null;
+        if (!result.snapshotId().equals(reply.snapshotId()) || !result.argumentsSha256().equals(reply.argumentsSha256())) throw conflict();
         return result;
     }
 
+    public Receipt get(String tenant,UUID eventId,UUID runId) {
+        requireScope(tenant);
+        if (eventId==null || runId==null) throw new IllegalArgumentException("Result references required");
+        var rows = jdbc.query("SELECT * FROM agent_result_receipt WHERE tenant_code=? AND run_id=?", (row, index) ->
+                new Receipt(row.getObject("run_id", UUID.class), row.getObject("event_id", UUID.class), row.getObject("snapshot_id", UUID.class),
+                        row.getString("arguments_sha256"), row.getLong("message_id"), row.getString("message_no"), row.getLong("message_seq")),
+                tenant,runId);
+        if (rows.isEmpty()) return null;
+        var result = rows.getFirst();
+        return result.eventId().equals(eventId) ? result : null;
+    }
+
     public Receipt append(AgentActionPermit permit, AgentReplyArguments reply) {
-        requireScope(reply);
+        if (reply==null) throw new IllegalArgumentException("Reply arguments required");
+        requireScope(reply.tenant());
         if (permit == null || !permit.request().tenant().equals(reply.tenant()) || !permit.request().runId().equals(reply.runId())
                 || !permit.request().eventId().equals(reply.eventId()) || !permit.request().snapshotId().equals(reply.snapshotId())
                 || !permit.request().argumentsSha256().equals(reply.argumentsSha256())) throw conflict();
@@ -84,8 +92,9 @@ public final class AgentResultReplies {
         try { permit.requireValidAt(now.toInstant()); }
         catch (IllegalStateException expired) { throw new BizException(40903, "执行许可已过期"); }
     }
-    private void requireScope(AgentReplyArguments reply) {
-        if (reply == null || !reply.tenant().equals(TenantContext.get()) || !TransactionSynchronizationManager.isActualTransactionActive())
+    private void requireScope(String tenant) {
+        if (tenant==null || !tenant.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,15}") || tenant.equalsIgnoreCase("PLATFORM")
+                || !tenant.equals(TenantContext.get()) || !TransactionSynchronizationManager.isActualTransactionActive())
             throw new IllegalStateException("Bind the trusted tenant before the result transaction");
         jdbc.execute("SET LOCAL lock_timeout='2s'; SET LOCAL statement_timeout='5s'");
     }

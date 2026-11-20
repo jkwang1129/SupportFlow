@@ -33,27 +33,35 @@ import java.util.regex.Pattern;
 public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
     private static final String AUDIENCE = "supportflow-customer-runtime:v1";
     private static final String UUID_PATTERN = "[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}";
-    private static final Pattern ROUTE = Pattern.compile("/api/customer/internal/runtime/events/(" + UUID_PATTERN + ")/runs/(" + UUID_PATTERN + ")/snapshot");
+    private static final Pattern ROUTE = Pattern.compile("/api/customer/internal/runtime/events/(" + UUID_PATTERN + ")/runs/(" + UUID_PATTERN + ")/(snapshot|reply)");
     private static final Pattern CREDENTIAL = Pattern.compile("runtime:ai:([0-9]{1,12}):([0-9a-f]{64}):([0-9a-f]{64})");
     private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private final String secret;
-    private final boolean enabled;
+    private final boolean sourceEnabled;
+    private final boolean resultEnabled;
     private final Clock clock;
 
     @Autowired
     public RuntimeSourceAccessFilter(@Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String secret,
                                      @Value("${supportflow.bot.runtime-source-enabled:false}") boolean enabled,
+                                     @Value("${supportflow.bot.runtime-result-enabled:false}") boolean resultEnabled,
                                      @Value("${SUPPORTFLOW_CUSTOMER_REALTIME_SECRET:}") String realtime,
                                      @Value("${SUPPORTFLOW_CUSTOMER_OPS_SECRET:}") String ops,
                                      @Value("${SUPPORTFLOW_CUSTOMER_TENANT_SECRET:}") String tenant) {
-        this(secret, enabled, List.of(realtime, ops, tenant), Clock.systemUTC());
+        this(secret, enabled, resultEnabled, List.of(realtime, ops, tenant), Clock.systemUTC());
+    }
+    public RuntimeSourceAccessFilter(String secret,boolean enabled,String realtime,String ops,String tenant) {
+        this(secret,enabled,false,List.of(realtime,ops,tenant),Clock.systemUTC());
     }
     RuntimeSourceAccessFilter(String secret, boolean enabled, List<String> otherSecrets, Clock clock) {
-        if (enabled && !CustomerInternalCredential.usable(secret)) throw new IllegalArgumentException("Runtime source credential is not configured");
+        this(secret,enabled,false,otherSecrets,clock);
+    }
+    RuntimeSourceAccessFilter(String secret, boolean enabled, boolean resultEnabled, List<String> otherSecrets, Clock clock) {
+        if ((enabled || resultEnabled) && !CustomerInternalCredential.usable(secret)) throw new IllegalArgumentException("Runtime service credential is not configured");
         if (CustomerInternalCredential.usable(secret) && otherSecrets.stream().filter(CustomerInternalCredential::usable).anyMatch(secret::equals))
             throw new IllegalArgumentException("Runtime source credential must be distinct from other callers");
-        this.secret = secret; this.enabled = enabled; this.clock = clock;
+        this.secret = secret; this.sourceEnabled = enabled; this.resultEnabled=resultEnabled; this.clock = clock;
     }
 
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -78,13 +86,18 @@ public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
                 || request.getQueryString() != null || !tenant.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,15}") || tenant.equalsIgnoreCase("PLATFORM")) {
             reject(response, 403, "Runtime operation is not authorized"); return;
         }
-        if (!enabled) { reject(response, 503, "Runtime source API is disabled"); return; }
-        if (request.getContentLengthLong() > 8192) { reject(response, 413, "Runtime reference body is too large"); return; }
-        byte[] body = request.getInputStream().readNBytes(8193);
-        if (body.length > 8192) { reject(response, 413, "Runtime reference body is too large"); return; }
-        if (!MessageDigest.isEqual(HexFormat.of().parseHex(parsed.group(2)), sha(body))) {
+        boolean reply=route.group(3).equals("reply");
+        if (!(reply ? resultEnabled : sourceEnabled)) { reject(response, 503, "Runtime API is disabled"); return; }
+        // Exact reply JSON may escape each content byte as six characters.
+        // The parsed content still has the independent 8192 UTF-8 byte bound.
+        int limit=reply ? 65536 : 8192;
+        if (request.getContentLengthLong() > limit) { reject(response, 413, "Runtime body is too large"); return; }
+        byte[] body = request.getInputStream().readNBytes(limit+1);
+        if (body.length > limit) { reject(response, 413, "Runtime body is too large"); return; }
+        if (clock.instant().getEpochSecond()>=expiry || !MessageDigest.isEqual(HexFormat.of().parseHex(parsed.group(2)), sha(body))) {
             reject(response, 401, "Runtime body does not match its credential"); return;
         }
+        var call=new RuntimeCustomerCall(tenant, UUID.fromString(route.group(1)), UUID.fromString(route.group(2)));
         if (request.getMethod().equals("GET")) {
             if (body.length != 0) { reject(response, 400, "Runtime GET cannot carry a body"); return; }
         } else {
@@ -94,12 +107,16 @@ public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
             }
             try {
                 var object = mapper.readTree(body);
-                if (object == null || !object.isObject() || !object.isEmpty()) { reject(response, 400, "Runtime source request must be an empty object"); return; }
+                if (object == null || !object.isObject()) { reject(response, 400, "Runtime request must be an object"); return; }
+                if (reply) {
+                    try { request.setAttribute(RuntimeReplyCommand.ATTRIBUTE,RuntimeReplyCommand.parse(object,call)); }
+                    catch (IllegalArgumentException invalid) { reject(response,422,"Invalid runtime reply request"); return; }
+                } else if (!object.isEmpty()) { reject(response, 400, "Runtime source request must be an empty object"); return; }
             } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
                 reject(response, 400, "Invalid runtime JSON request"); return;
             }
         }
-        request.setAttribute(RuntimeCustomerCall.ATTRIBUTE, new RuntimeCustomerCall(tenant, UUID.fromString(route.group(1)), UUID.fromString(route.group(2))));
+        request.setAttribute(RuntimeCustomerCall.ATTRIBUTE,call);
         chain.doFilter(request, response);
     }
 

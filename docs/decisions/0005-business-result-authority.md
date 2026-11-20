@@ -17,3 +17,7 @@ Java接入进一步拆分：先扩展现有AgentRuntimeClient的有界传输，�
 结果存储子批次沿用customer版本迁移新增007。回执以tenant+run主键稳定去重，引用同tenant/event/run/snapshot和实际消息；运行账号只有S/I、FORCE RLS及restrictive guard。正文仍只写既有session_message，不复制到回执。参数摘要为UTF-8换行连接`supportflow-session-reply:v1,tenant,run,event,snapshot,sha256(精确回复UTF-8)`再SHA256，无尾换行；正文1～8192字节，拒绝空白、NUL和非法UTF-16，不做隐式trim/截断。owner/fence不放进稳定内容摘要，故重试不能通过更换owner来修改回复。
 
 存储组件只接受已验签许可与可信tenant事务，不自动装配或暴露新业务API。写前按tenant+run事务advisory锁串行，已提交同内容回执直接返回引用（即便后来人工接手/来源过期），异内容409；这不执行新动作或暴露正文。新写先锁session UPDATE，再用已有快照组件重验来源/主体/快照，避免多写者先SHARE后升级的死锁；用客户DB时钟检查许可，复用SessionService以固定BOT/文本/全可见和稳定clientMsgNo落库，同时插入回执，再检查有效期。任一步失败全事务回滚，计费等afterCommit只执行一次。最终提交仍属在途动作，不承诺跨库事务或取消可撤销已授权写。后续API应先短事务核对已有回执，再在无事务时请求当前AI许可，最后新事务执行上述存储；不要为重试已提交结果要求已终态Run重新取得新写许可。
+
+结果API使用同一RuntimeCustomer服务鉴权（原过滤器扩展两条窄路由），独立默认关闭`SUPPORTFLOW_BOT_RUNTIME_RESULT_ENABLED=false`。GET/POST `/api/customer/internal/runtime/events/{event}/runs/{run}/reply`；GET仅返回已提交回执引用，不取原文，也不以当前Run仍RUNNING为前提。POST严格六字段snapshot_id/owner/fence/arguments_sha256/content/version；身份/目标/角色/操作不能从额外字段指定。认证先验原始路径/方法/租户/声明body摘要MAC，再有界接收正文并复验摘要和到期；最多64KiB原始JSON（覆盖8192字节正文的JSON转义开销），内容仍单独8192字节。来源接口保持原8KiB/空对象规则。解析后的不可变命令通过服务端request attribute交给controller，不重读流、不转发终端JWT。
+
+POST先短事务find同参数回执；已提交时不调用AI控制面，所以终态Run和回执丢失不会导致重复写。新动作在无事务时主动请求配置的既有AI bot-base-url（固定Runtime路径、控制面deadline 3秒），验签许可后才新事务调用append。原SessionService/事务计费事件复用，GET回执可供未来UNKNOWN写核验。Biz错误映射明确HTTP404/409/410等；DB或控制面基础设施失败不泄露SQL/正文。此API阶段尚未有Python结果SDK/实际AI+客户JAR写回验收，Worker/业务路由不自动接入；开启Java进程开关仍需先部署受限账号/007并启用对应AI Runtime API。

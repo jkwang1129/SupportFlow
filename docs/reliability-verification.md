@@ -443,3 +443,23 @@ a839f15对应的[CI 44672099556](https://github.com/jkwang1129/SupportFlow/actio
 本地JDK25/Python3.11：修复前`TicketTimestampTest` **5项中3项StringIndexOutOfBoundsException**，`ticket-time-before.log`；修复后`mvn -B -f backend/pom.xml verify`九模块成功、**5项全部通过**，`ticket-time-java-after.log`。`python -m unittest discover -s scripts/security -p 'unit_*.py' -v` **6项通过**，`ticket-time-diagnostics.log`。本次原始失败保留`b1-result-api-services.log`，私有客户服务日志/脱敏堆栈另存`.local/implementation/ticket-time-*`，未上传正文/密钥。本地构建工作区还包含未提交的结果API，修复提交只包含上述Ticket/诊断和回归测试；提交后由远端CI验证精确提交，完整服务会在本地继续重跑。没有把重跑成功当作根因修复证据。
 
 回滚可单独revert本修复提交（将重新暴露已复现边界错误），不涉及SQL或数据改写。新结果API仍为独立未完成批次，不混入这个缺陷提交。
+
+## B1 子批次 12：鉴权结果API与提交回执查询（2026-11-20）
+
+基线0cc1492；验收途中另行提交eb44d06工单时间修复，以下结果来自包含该修复的工作区。新增`RuntimeReplyController`/`RuntimeReplyCommand`，扩展既有RuntimeSourceAccessFilter，提取AgentResultReplies的受Scope约束只读get；application.yml增加独立默认关闭结果开关。修改7项API PG/7项认证单元测试与合成签名夹具、customer PG/实际JAR验收脚本、ADR-0005/阶段矩阵。没有新SQL、依赖、服务或业务入口自动切换。
+
+GET/POST固定event/run的reply路径，只允许原Runtime AI服务凭据与业务tenant，无JWT/query/任意角色/工具/URL字段。POST精确6字段并验证owner/fence/规范UUID/版本/正文UTF-8字节与参数SHA；64KiB原始JSON上限用于转义开销，正文仍≤8192字节。来源接口保持原8KiB/空对象。认证先于body/Readiness，收完body后再核过期和摘要；命令经服务端属性传递，不重读请求流。
+
+controller先短事务查询已提交回执；同内容直接确认，无需终态Run重新取得写许可。新写在事务外向既有AI bot-base-url的固定Runtime路径请求许可（3秒deadline），验签后新事务资源重验/DB时钟消费/写消息和回执。GET只返回10个版本化结果引用，不返回内容；404表示“尚未观测到回执”，不证明外部动作永不发生，UNKNOWN不可据此自动盲重放。业务冲突、权限/资源撤销和过期返回明确HTTP状态，基础设施错误不透传SQL或上游正文。
+
+实际验证（JDK25.0.5+8/Maven3.9.16/Python3.11.5/隔离PG17、合成数据/离线模型）：
+
+- 窄认证/参数回归 **33项通过**，`b1-result-api-unit-first.log`；含新7项result filter，严格字段/角色/版本/摘要绑定、8KiB正文与64KiB wire边界、双开关独立、关闭不读body、旧snapshot凭据不能反射到reply、正文读取途中到期拒绝。后续Maven亦重跑这些用例。
+- `python scripts/test-customer-rls.py --with-ai`：**91项Java真实PG + 4项KB通过**，新7项API，`b1-result-api-pg-first.log`。实际controller/filter/interceptor/客户端/受限PG：正常创建/GET/丢回执重试，内容冲突不再核权，4路同时POST一条消息/回执/计费，跨tenant/错event/匿名拒绝，认证先于缺表Readiness，控制面401/404/409/503不写也不泄露正文；核权期间人工接管后拒绝；回执INSERT撤销导致消息/seq回滚，恢复后可重试。核权HTTP服务断言Hikari活跃连接为0，并用另连接NOWAIT取得会话锁；证明该RPC期间不持有业务连接/锁。
+- `mvn -B -f backend/pom.xml verify`九模块通过，`b1-result-api-java.log`；工单修复后再跑九模块通过，`ticket-time-java-after.log`。条件PG测试由上述专项实测，不计普通构建跳过为通过。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**91项Python、6次角色负面、2项真实Java交付、2条实际来源流程、1项实际许可联调通过**，`b1-result-api-runtime.log`。真实customer JAR来源开启时，匿名reply仍401、有效凭据的reply默认503/Retry-After5，验证新接口未随来源开关意外开启。
+- `python scripts/test-security-flow.py`：修复工单时间边界后，**默认新库/历史升级/CLI初始化三套实际服务全部通过**，含原业务/媒体/知识/WS/计费、45个Readiness故障、customer 7条历史及回执SI权限，`b1-result-api-services-final.log`；第一次失败及确定性修复见上一节，不能省略该失败。一次性资源均清理。
+
+边界/风险：新7项API PG测试的AI控制面是合成HMAC/HTTP故障服务；真实AI控制面核权在独立夹具中验收，结果API尚未与实际AI+JAR串成同一回复写入测试，也没有Python结果SDK/Worker业务handler/自动调度。原afterCommit渠道送达与原始计数、日志治理、时钟监控/生产TLS仍按M07/M11/M12保留；不宣称取消能撤销已在途写。无任务成功率、性能/Token费用或生产业务指标。下一批完成结果SDK与实际双向写入、回执丢失/UNKNOWN核验，再接B2工具层。
+
+回滚关闭Java进程`SUPPORTFLOW_BOT_RUNTIME_RESULT_ENABLED`（默认false）；source开关可单独保留。保留007消息/回执和Run/Step，停止新写但不要删除或更换事件；既有已提交结果可在受鉴权/Scope约束下核验。二进制回滚遵守原schema兼容性，不回写已应用SQL。

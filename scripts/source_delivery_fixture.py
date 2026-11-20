@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def verify_sources(connect, environment, passwords, secret, sources):
     sys.path.insert(0,str(ROOT/'ai-service'))
-    from ai.runtime.source import SourceClient
+    from ai.runtime.source import SourceClient, credential, HEADER
     from ai.runtime.types import RunInput
     from ai.runtime.worker import PermanentFailure
 
@@ -82,11 +82,16 @@ def verify_sources(connect, environment, passwords, secret, sources):
                 async with httpx.AsyncClient(trust_env=False,timeout=3) as anonymous:
                     path=f'/api/customer/internal/runtime/events/{source.source_event_id}/runs/{run_id}/snapshot'
                     assert (await anonymous.get(base+path)).status_code==401
+                    result_path=path.removesuffix('snapshot')+'reply'
+                    assert (await anonymous.get(base+result_path)).status_code==401
+                    disabled=await anonymous.get(base+result_path,headers={HEADER:credential(secret,'GET',result_path,source.tenant,b''),
+                                                                        'X-Tenant-Code':source.tenant})
+                    assert disabled.status_code==503 and disabled.headers['Retry-After']=='5'
             asyncio.run(qualify())
             with connect('customer_db') as connection:
                 count=connection.execute("SELECT count(*) FROM agent_source_snapshot WHERE event_id=ANY(%s)",([row[1] for row in sources],)).fetchone()[0]
                 assert count==2
-            print('Actual Python SDK -> signed customer JAR -> immutable source: 2 flows passed; same snapshots, hash checks, foreign/anonymous/credential/takeover denials passed',flush=True)
+            print('Actual Python SDK -> signed customer JAR -> immutable source: 2 flows passed; same snapshots, hash checks, foreign/anonymous/credential/takeover denials passed; result API default closed',flush=True)
         except BaseException:
             failed=True
             raise
