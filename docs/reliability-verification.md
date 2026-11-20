@@ -531,3 +531,19 @@ c1a2978对应的[CI 44701513973](https://github.com/jkwang1129/SupportFlow/actio
 - `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-worker-payload-ai-final.xml`：**228 passed、120 skipped、1 xfailed**，`b1-worker-payload-ai-final.log`。新增14项条件PG与其余Runtime外部条件测试由前述专项实测，不把skip计为通过；现有RAG引用正文xfail保持。
 
 本批首轮均通过；不重复迁移/九模块构建/三套完整服务的本地验收（无相应改动），远端CI会对本次精确提交重跑。工程故障测试数不等于任务质量/生产成功率、性能、Token或费用指标。没有业务handler/真实模型与工具循环/自动触发，不能宣布B1整体完成。读取TTL仍不做物理清理；数据库长期故障、监督进程、网络分区运维属后续。回滚停用payload_step/回退Worker，保留AI003、正文、Step/Run和预算，不删除UNKNOWN、不重置调用数。
+
+a9dd99c对应的[CI 44706510968](https://github.com/jkwang1129/SupportFlow/actions/runs/44706510968)两个job全部成功，含Worker真实进程恢复和三套实际服务流程。
+
+## B2 子批次1：内部只读工具Registry/Executor（2026-11-20）
+
+基线a9dd99c。新增`ai/runtime/tools.py`、`test_runtime_tools.py`、`test_runtime_tools_postgres.py`、ADR-0007；更新Runtime专项入口/矩阵/本记录。只复用已有Pydantic、ExecutionContext、Run/Step/payload与总预算，不新增依赖/SQL/Java改动，不自动切换Workflow。固定版本的宿主注册只读工具、最多32个、串行；参数与结果导出JSON Schema，严格类型/禁止多余字段与开放嵌套对象；提案仅name/version/arguments，≤8KiB且重复字段拒绝。身份从Run/Lease重建，模型不能选择tenant/principal/Scope/URL/headers；静态Scope仅第一道白名单，资源授权仍由mandatory authorize落实。
+
+每次访问先新预留一个TOOL/READ完成当前资源授权，成功才能取/复用工具正文，再次检查结果Schema与资源对应关系（mandatory纯代码verify）。首次读取通常消耗2次工具预算，恢复缓存仍消耗1次，不把权限RPC藏在预算之外。输出Schema合法并不证明它是请求的工单。限定超时/明确不可用/限流可重试，其他错误稳定失败且不保存异常正文；无本地隐式重发。适配器必须落实Deadline至实际I/O，返回后拒绝迟到结果；没有强杀同步Python代码的承诺。通用WRITE不开放，已有业务回执协议保留。
+
+本地Python3.11.5/隔离PG17，工具/资源ACL是确定性合成适配器，无实际模型调用：
+
+- `cd ai-service; python -m pytest -q tests/test_runtime_tools.py`：首轮59项通过（保留`b2-tools-unit-first.log`），随后增加返回资源绑定/注册必选verify及校验器不污染返回值，最终**62项**随全量通过。首轮bytes字面量触发无效转义告警，改raw bytes后消失。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b2-tools-ai-final.xml`：**290 passed、133 skipped、1 xfailed**，`b2-tools-ai-final.log`。原引用正文xfail保留；条件PG由专项实际执行，不把skip算通过。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：最终**143项Python专项+6次角色负面通过**，原真实Java交付/来源/AI许可/双向写入/丢回执场景全部通过，`b2-tools-runtime-final.log`。新13项真PG覆盖授权+工具2次计数/正文仅引用、恢复缓存重新核当前ACL及撤权阻断、预算1在实际调用前停止/预算2不允许免费重验缓存、超时按原Run重试、非法输出不存成功正文、资源归属拒绝、授权中取消无工具调用、完整性有效但Schema或返回资源被改仍拒绝、参数更改不套用旧结果、连续限流在原max_retries=2后停止（实际3次尝试/6次工具计数）。首轮142项通过，补完整性有效但资源错误的缓存负例后143项；`b2-tools-runtime-first.log`保留。
+
+边界：本批未把工单/知识HTTP接到Registry，真实Java授权不由合成ACL测试替代；也不是实际模型Tool选择准确率/性能或Token成本。ReadTool适配器必须可信，强制终止、出站网络策略、脱敏保留、MCP动态接入与HITL留原后续任务。没有SQL/Java改动，本地不重复迁移或全栈三场景，当前精确提交仍由远端CI验证。回滚停止新工具注册/调用，原Workflow保持；保留Step/payload与预算，不删除UNKNOWN或重置计数。

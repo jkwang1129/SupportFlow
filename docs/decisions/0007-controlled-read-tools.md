@@ -1,0 +1,13 @@
+# ADR-0007：受控只读工具与当前权限核验
+
+日期：2026-11-20。B1已有Run/Step预算、Worker正文恢复和双向业务回执，旧brain.py仍为固定Workflow。B2先做内部Registry/Executor，不增加服务/依赖，不把MCP协议当授权，也不让模型动态加载模块、选择URL或授予Scope。
+
+Registry只能由可信宿主代码构造，最多32个唯一名称、固定版本的ReadTool，串行执行。参数与结果沿用已有Pydantic，统一ToolModel严格类型/禁止额外字段，导出JSON Schema；所有嵌套对象也必须闭合。参数契约拒绝tenant/principal/run/fence/scopes/URL/header/token等执行身份字段。模型提案仅name/version/arguments，原始JSON≤8KiB，拒绝重复字段/非法JSON类型。结构化输出有既有64KiB/深度/节点限制；不把完整Provider对象塞进持久化载荷。
+
+主体只从当前ExecutionContext可信Run/Lease重建；宿主给定不可变Scope集合只是第一道允许清单，不能代替Java对当前资源/用户的授权。每个工具必须注册authorize、invoke、verify：authorize核验当前资源，invoke通过固定受控业务适配器取数据，verify用纯确定性代码绑定返回资源与当前主体/参数。Schema合法不等于业务归属正确。当前批次的适配器为确定性测试夹具，实际Java工单/知识API接入另批交付，不能凭测试夹具声称真实业务鉴权已完成。
+
+Executor复用ExecutionContext.step/payload_step和同一Run预算，没有第二套执行表、重试器或计数。每次访问（包括恢复缓存）先执行一个新TOOL/READ授权步骤；授权成功才可取已成功工具正文，并重新做结果Schema/资源绑定校验。新工具调用再预留一个TOOL/READ，成功正文原子持久化。故初次读通常消耗2个tool_calls，恢复缓存仍消耗1个；默认8次工具预算并不等于8个业务查询。随机授权步骤键只保证检查不缓存，不能绕过持久化总预算。失败READ可按Run总重试预算重新预留，未知WRITE沿用原阻断策略；Registry暂不接受通用WRITE。
+
+超时/明确不可用/限流为稳定可重试码；资源拒绝、Schema或资源绑定失败、未知工具/版本为永久失败；不持久化异常正文或默认隐式重发。每个适配器收到单调时钟Deadline，必须把剩余时间落实到自己的外部I/O；返回时再次检查，拒绝迟到结果。同步Python不能强杀阻塞函数，本层不创建无界线程或假装提供硬抢占；真实HTTP适配器的整体deadline需单独验收。取消/租约/Run总期限仍由既有Worker前后边界核验。
+
+回滚停止注册/调用新Executor，原Workflow不变；无SQL迁移、默认业务路由或外部副作用。保留已生成Step/payload及所有预算，不清空UNKNOWN或用新Run绕过失败。后续依次接实际只读业务适配器、幂等写工具/回执、bounded loop、HITL；MCP只做同一契约的可信适配。
