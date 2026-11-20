@@ -76,6 +76,8 @@ def verify_delivery(connect, environment, passwords, runtime_environment):
             verify_sources(connect,environment,passwords,secret,sources,runtime_environment['SUPPORTFLOW_RUNTIME_TEST_DSN'])
             from ticket_tool_fixture import verify_ticket_tools
             verify_ticket_tools(connect,environment,passwords,secret,base,runtime_environment)
+            from ticket_loop_fixture import verify_ticket_loop
+            verify_ticket_loop(connect,environment,passwords,secret,base,runtime_environment)
             from action_authority_fixture import verify_authority
             verify_authority(connect, test_env, runtime_environment)
             from result_delivery_fixture import verify_results

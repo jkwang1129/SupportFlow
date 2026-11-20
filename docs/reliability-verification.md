@@ -662,3 +662,36 @@ Python3.11.5/隔离PG17，模型和业务HTTP为确定性协议Stub，无付费�
 新15项真PG：正常Loop2Model/5Tool/10Step、5正文产物/固定事实；澄清1Model/2Tool/5Step且无工单查询；规划期间状态2→4后新核权报告4（模型此前只看到2）；归属撤销无报告；4类坏模型动作（假观察/未知shell/租户参数/自由完成声明）在工单请求前停止；503一次后保原预算3Model/6Tool/12Step/retry1完成；模型预算1无免费第二调用；工具预算4不能免费用缓存跳过最终核权；轮数1不隐式续问；MODEL提交丢DB回执后不重复已成功规划且原预算完成；模型应答阶段取消不保存迟到计划/报告；报告提交丢DB回执后管理员把status=1改true并同步Hash，恢复仍REPORT_CHECKPOINT_INVALID，模型HTTP保持2次（此故障用例显式Limits16Step/12Tool）。没有假称执行shell或写业务成功。
 
 本地首轮全部通过；新增澄清专项补测由最终PG通过。无Java/SQL变化，不重复九模块/103客服PG/4KB/三套完整服务，基线CI已有通过，当前CI仍重跑精确提交。边界：目前只有协议Stub模型选择，不是AI语义评测/真实供应商质量；新Loop尚未组合实际模型HTTP/客户JAR，下一批做该验收。报告私有存储不等于渠道回复，知识/写工具/审批/UNKNOWN核销/可信触发/长历史/成本结算仍缺，不宣布B1整体完成。回滚不注册Loop/回退handler，保留所有绑定/模型/工具/报告与预算，无SQL回滚、不清空UNKNOWN。
+
+c4ff0e0对应的[CI 44741139233](https://github.com/jkwang1129/SupportFlow/actions/runs/44741139233)两个job全部成功，含只读Loop核心/报告Checkpoint负例和三套完整部署路径。
+
+## B1 只读Loop实际组合验收子批次（2026-11-20）
+
+基线c4ff0e0。新增`scripts/ticket_loop_fixture.py`、`ticket_loop_process.py`，接入原runtime_delivery_fixture；ADR-0012/矩阵/本记录更新。没有产品Python/Java源码、SQL、依赖、默认路由/开关改变，复用上一批已验收JAR。模型为真实本机chat/completions HTTP协议服务器、预设JSON决策和usage；来源/工单/权限为真实客户JAR/受限PG，不替换SDK/Store/业务授权为Stub。模型决策不是实际LLM能力评测。
+
+每例在JAR就绪后由受限RuntimeStore登记Run，客户/来源消息/已交付Outbox/工单显式SQL夹具；不把setup说成自动入队或真实用户上线。Java所有AI目标仍指向显式Mock AI，模型profile仅指回环Stub，Worker不读开发者.env或真实模型密钥。JAR仅开启source/read-tools，result默认关闭；产物为私有报告，不发业务回复或建工单。
+
+复现`python scripts/test-agent-runtime.py --with-java-delivery`，本地Python3.11.5/隔离PG17/JDK25：
+
+- 首轮**183项Python+6次角色负面、原全部实际交付/来源/工单/许可/回复丢回执通过**，新增组合8例通过，`b1-ticket-loop-real-first.log`；原8例机器数据保留`.local/implementation/b1-ticket-loop-real-eight-cases.json`。
+- 增补真实Worker进程退出/接管后，最终同命令**183项Python+6次角色负面及所有既有实际场景+新9例全部通过**，`b1-ticket-loop-real-final.log`；首次即通过，没有修改原120秒deadline/调用计数/ready_at/数据库租约时刻。
+
+实际九例逐案从AI与客户库读事实：
+
+| 场景 | 实际终态 | 模型HTTP/Model预留 | Tool预留/Step/retry | 报告 |
+| --- | --- | --- | --- | --- |
+| 正常当前状态 | SUCCEEDED | 2/2 | 5/10/0 | 1，status2 |
+| 规划期间实际SQL状态2→4 | SUCCEEDED | 2/2 | 6/11/0 | 1，status4，固定模板 |
+| 规划期间实际SQL归属撤销 | FAILED/TICKET_REVOKED | 2/2 | 5/9/0 | 0 |
+| 模型传其他tenant参数 | FAILED/TOOL_ARGUMENTS_INVALID | 1/1 | 2/4/0 | 0 |
+| 模型假观察引用 | FAILED/REPORT_EVIDENCE_INVALID | 1/1 | 2/4/0 | 0 |
+| 模型自由宣称已退款 | FAILED/PLANNER_DECISION_INVALID | 1/1 | 2/4/0 | 0 |
+| HTTP503一次 | SUCCEEDED | 3/3 | 6/12/1 | 1；等待实际ready_at，不回写时间 |
+| max_turns=1 | FAILED/PLANNER_TURN_LIMIT | 1/1 | 4/7/0 | 0 |
+| 模型Checkpoint提交后真实进程os._exit(23) | SUCCEEDED | 2/2 | 6/11/1 | 1；新进程attempt2 |
+
+进程故障首个子进程留下MODEL_CHECKPOINT_COMMITTED/exit23，Run实查RUNNING/model1；第二个真实进程等待3秒夹具租约自然到期后接管、复用首次模型输出，实际HTTP总数仅2（原规划+后续报告），不是重新规划3次。生产默认lease30秒不改；两次子进程只收allowlist环境、受限AI DSN/当前服务测试凭据/合成模型key，不传客户库/管理员/开发者真实模型密钥。私有原始stdout/stderr为`loop-crash-process.log`、`loop-resume-process.log`。
+
+所有例实际客户库均只有原来源消息1、原工单1、结果回执0；`runtime-ticket-loop.json`机器证据保留4个成功/5个预期失败、实际状态/计数/报告数/进程重启标志；source_enrollment=EXPLICIT_FIXTURE_SETUP、publication=NOT_IMPLEMENTED、provider_usage=SYNTHETIC_VALUES、performance/token_cost=NOT_MEASURED。已有CI artifact自动收集，无正文/凭据。纯测试/文档变化，本地不重复493普通AI/103客服PG/4KB/九模块/三套完整服务，当前精确提交CI仍重跑；不把条件skip计为通过。
+
+边界：这是实际本地协议/业务服务组合验收，不是付费模型质量/业务收益/生产性能；只读报告完成不等于渠道消息送达。可信触发/租户Profile Resolver、知识Embedding预算、业务回复发布、建工单/审批、UNKNOWN核销与完整成本/上下文治理仍后续。回滚移除新验收入口/不注册Loop，默认Workflow不变；不删业务/Runtime历史或预算，无SQL回滚。
