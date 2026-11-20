@@ -13,10 +13,13 @@ import java.time.Instant;
 import java.util.UUID;
 
 /** Durable source-event primitives. Caller binds tenant BEFORE a short transaction.
- * Not yet wired into SessionService or a network dispatcher: no duplicate bot path.
+ * Not automatically wired into SessionService; explicit delivery commits before network I/O.
  */
 @Component
 public class AgentEventOutbox {
+    public static final class DeliveryLeaseLost extends IllegalStateException {
+        DeliveryLeaseLost() { super("Event delivery lease was lost"); }
+    }
     public record Event(String tenant, UUID eventId, long messageId, String sessionNo, long sequence,
                         String principalRef, String traceId, String runtimeVersion, String state,
                         int attempts, long fence, String owner, Instant leaseUntil, UUID runId) {}
@@ -108,6 +111,15 @@ public class AgentEventOutbox {
                 """, errorCode, delaySeconds, lease.tenant(), lease.eventId().toString());
     }
 
+    public void hold(Event lease, String errorCode) {
+        requireScope(lease.tenant()); requireId(errorCode, 64);
+        owned(lease);
+        jdbc.update("""
+                UPDATE agent_event_outbox SET state='HELD',owner=NULL,lease_until=NULL,fence=fence+1,error_code=?
+                WHERE tenant_code=? AND event_id=CAST(? AS uuid)
+                """, errorCode, lease.tenant(), lease.eventId().toString());
+    }
+
     private void owned(Event lease) {
         // Recheck the database clock after locking, so waiting cannot revive a lease.
         var rows = jdbc.query("""
@@ -115,7 +127,7 @@ public class AgentEventOutbox {
                   AND state='SENDING' AND owner=? AND fence=? FOR UPDATE
                 """, ROW, lease.tenant(), lease.eventId().toString(), lease.owner(), lease.fence());
         if (rows.size() != 1 || !Boolean.TRUE.equals(jdbc.queryForObject("SELECT ?::timestamptz>clock_timestamp()", Boolean.class,
-                Timestamp.from(rows.getFirst().leaseUntil())))) throw new IllegalStateException("Event delivery lease was lost");
+                Timestamp.from(rows.getFirst().leaseUntil())))) throw new DeliveryLeaseLost();
     }
 
     private void requireScope(String tenant) {

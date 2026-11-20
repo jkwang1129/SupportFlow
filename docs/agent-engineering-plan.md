@@ -18,7 +18,7 @@
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
 | PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 登记的 90 张表/索引/RLS 核验、默认新库/历史升级/CLI init 实际服务已通过；生产备份/运维属 M12。A5 本地完成 |
-| PR-8 持久化 Run | 部分实现：Run/Step、Worker、内部接收协议 | `ai/runtime/{types,store,worker}.py`、AI 002、`ai/api/runtime.py`；64项类型/真PG/进程故障/HTTP接收测试 | Run/Worker、Java Outbox及鉴权接收已测；Outbox尚未自动接消息触发，实际派发和结果回写仍缺。B1 进行中 |
+| PR-8 持久化 Run | 部分实现：存储、Worker、接收、显式单次派发 | `ai/runtime/{types,store,worker}.py`、AI 002、`api/runtime.py`、Java `AgentEventDispatcher/AgentRuntimeClient`；64项Runtime专项及13项真PG派发 | Dispatcher与真Python的单次交付验收、可信调度/自动登记、业务快照/结果幂等仍缺。B1进行中 |
 | PR-9 Tool Calling | 未实现通用层 | `ai/agents/brain.py` 固定图；Java 工单/知识 API 为可复用业务能力 | 内部 Registry/Executor、可信主体、Schema、只读和写工具、结果验证；MCP 只做适配。B2 |
 | PR-10 Checkpoint/HITL | 未实现 | `brain.py`、`rag/graph.py` 均 `compile()` 无 checkpointer；`docs/architecture.md` 明示缺失 | 业务对话状态不能代替执行 checkpoint；审批绑定参数、恢复重新鉴权、未知副作用核验。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
@@ -74,8 +74,8 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-19，B1 接收子批次）
+## 当前执行位置（2026-11-20，B1 派发子批次）
 
 阶段 A 的本地退出条件已完成：A1/A2/A3 并发与事务、A4 客服计费批次、A5 六库迁移/Readiness/实际结构核验、A6 低证据拒答首批均有本地记录。网关 tenant_usage_daily 与尚未持久化原始计数的边界仍保留到 M11；RAG 事实支持/引用正文问题保留阶段 C，不冒充已完成。新旧服务与 CLI init 三条业务部署路径本地实测通过。14个原阶段提交及诊断补充已推送开发分支，4b2c306对应的远端CI全部通过。首轮平台创建工单500未复现，根因未确定，后续失败会保留结构化诊断；不把重跑成功描述成根因修复，不合并main。
 
-B1 的 ADR-0003、Run/Step 存储、Worker执行原语、Java Outbox及带body绑定鉴权的AI持久化接收已落地，实际测试见阶段验收。当前六库 desired-state 为90表/1视图/5受控函数，原四库历史基线不改。消息与Outbox同事务的组合测试已实现，但没有自动接入消息触发，接收API默认关闭。下一批补Dispatcher、业务快照和结果幂等回写，最后切换触发入口。Worker尚未接入现有客服触发路径，B1未完成前，不将存储表、固定Workflow或状态枚举称为完整Agent Runtime；B2/B3的工具授权、MCP适配、审批与Checkpoint仍待实现。阶段C～F状态不变。
+B1的Run/Step、Worker原语、Java Outbox、带body鉴权的持久化接收已落地；0906c03对应的[远端CI](https://github.com/jkwang1129/SupportFlow/actions/runs/44657155805)全部通过。本批补显式单次Dispatcher及有限重试/回执核验，尚无自动调度/自动消息登记，接收API默认关闭。六库仍为90表/1视图/5受控函数，无新SQL。下一批先补Dispatcher→真实Python接收的交付验收，然后业务快照/结果幂等，最后切换触发入口。Worker未接客服业务，B1仍未闭环；B2/B3的工具授权、MCP、审批、Checkpoint与阶段C～F继续按依赖推进。

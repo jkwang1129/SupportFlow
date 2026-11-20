@@ -63,3 +63,13 @@ Java 继续拥有消息、会话、工单、资源权限和最终业务事务。
 `SUPPORTFLOW_AI_RUNTIME_API_ENABLED=false`为默认。启用后只读Readiness增查Run/Step所有使用列、有效S/I/U、无DELETE/TRUNCATE、强制RLS、非owner/非管理角色、能力组成员和队列发现函数EXECUTE，失败阻断业务而live仍可用；不执行DDL，不代替发布前的权威schema verify。回退先停Dispatcher/Worker再关闭开关，保留事件、Run和Step；本批尚无Dispatcher自动运行，也不接入现有消息触发。
 
 服务签名证明可信调用方，不能代替Java业务资源授权。此批尚未实现Java来源快照/结果写入、Dispatcher、用户取消权限与传播、实际业务handler及恢复后的业务权限检查。接收端的引用不能被视作任意资源操作许可；后续Java最终操作仍须核验租户/资源/主体/当前状态/幂等键/执行权。没有端到端恢复或生产吞吐声明。
+
+## B1 第五子批次：按可信租户执行一次可靠派发
+
+本批沿用既有Outbox与接收协议，新增显式调用的单次Dispatcher和有界HTTP客户端；暂不创建定时任务、不自动登记消息、不切换原机器人入口。租户来自后续可信调度器/业务来源，不接受公开请求头作为权威值。源端领取短事务提交后才发HTTP，回执/重试/挂起另开短事务；禁止在已有事务中调用Dispatcher，网络期间不持有行锁或JDBC连接。接收回执必须是202/JSON、匹配tenant/event且含canonical Run UUID和合法状态；DELIVERED仍只代表目标已持久化接收。
+
+HTTP整体deadline最多10秒、连接最多2秒、响应最多8192字节、不跟随重定向、不转发用户JWT，复用第四批相同wire bytes签名，Trace头来自已持久化事件。`sendAsync`外层deadline覆盖响应body完成，不能只等headers后无界读InputStream；受限subscriber超过上限即取消，不缓冲完整超大响应。显式瞬态HTTP/网络故障只登记有限重试，不在一次派发中循环重发；内容冲突、认证/Schema错误、错误回执和协议越界挂起HELD，保留来源并阻断同会话后续事件。丢响应以原event重发；晚到回执只能被当前有效lease/fence确认，失效执行者报告STALE，不覆盖新执行者状态。进程被取消时停止确认并保留租约等待接管；未知DB提交结果不重新生成事件。
+
+每个Dispatcher只有一个执行槽，`tryLock`占用时立即返回BUSY，不把并发调用堆进无界等待队列；多实例依赖数据库领取，而非进程锁保证唯一性。领取lease=30秒；瞬态失败退避1/2/4/8/16/32/60秒，累计最多8次后保留HELD。中断后保留SENDING等待接管，不尝试在已中断线程中写确认。新`DeliveryLeaseLost`仅区分已失效执行权；其他DB/提交异常向调用方传播，不能被当成安全重试成功或删除事件。
+
+本批实际使用真PG与回环HTTP故障服务验证存储/派发组合，Python接收端沿用第四批独立真PG HTTP与跨语言签名样本；尚未用单个测试进程把Java Dispatcher发往实际Python接收端。下一批先补此跨语言交付验收，再进入业务快照/幂等结果回写和源端自动切换。完整Agent业务链路与模型/工具执行仍待后续阶段，不能把DELIVERED或Stub接收计作任务成功率。

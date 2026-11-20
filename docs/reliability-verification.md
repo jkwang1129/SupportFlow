@@ -289,3 +289,20 @@ init 本身不配置运行密码、不启动业务，不保证跨库原子性或
 - 首轮接收单元有1项断言把有效异租户签名/正文不符的403误当签名篡改401，修正为实际篡改header后通过。首轮59项PG有1项注入仅撤继承组INSERT、遗漏业务账号直接授权，无法构成有效权限缺失；改为撤双重授权后通过，并补充其他负面故障，最终64项完整重跑。失败日志`b1-receiver-pg-first.log`保留；这些是测试构造问题，不声称产品漏洞修复。
 
 剩余风险/回滚：没有Java Dispatcher、业务快照/幂等结果、用户取消授权传播或Python实际业务handler，B1仍未闭环。服务签名不代替资源授权；后续Java最终写入仍须核验主体、租户/资源、当前状态、执行权及幂等键。Readiness不是完整策略漂移审计，发布仍须权威schema verify。回滚先停后续派发/Worker，再关闭接收开关，保留全部事件/Run/Step；不清表、不换eventId绕过去重。没有生产吞吐、准确率、费用或端到端恢复的新增声明。
+
+0906c03推送后的[CI 44657155805](https://github.com/jkwang1129/SupportFlow/actions/runs/44657155805)两个job均已成功；本地接收协议、Runtime专项与原三条业务部署路径的远端门禁通过。首轮f373666工单500仍未复现，保留既有未确定根因边界。
+
+## B1 子批次 5：显式单次可靠派发（2026-11-20）
+
+基线0906c03。新增`AgentEventDispatcher`、`AgentRuntimeClient`、真PG派发测试和回环HTTP故障夹具/单元测试；Outbox增加受lease/fence约束的hold及专用失权异常。扩展既有`test-customer-rls.py`并复用CI，不新增服务、依赖、SQL或迁移版本。两类不是自动启动组件，仍没有调度器/消息自动登记，接收API默认关闭。
+
+设计：单执行槽tryLock满时立即BUSY；先短事务领取并提交、再HTTP、最后另开短事务确认/重试/挂起。已有事务/错Scope/非法tenant拒绝；领取后、网络前再次检查中断。网络总deadline≤10秒（包括body）、连接≤2秒、响应≤8192字节；不跟随重定向、无JWT转发，复用body-bound签名并恢复持久化Trace头。202回执必须匹配tenant/event/canonical Run UUID/合法状态；坏回执及永久HTTP错误HELD，408/425/429/5xx/网络瞬态有限退避，最多8次投递；中断保留SENDING等待接管。旧lease的成功/失败回执均返回STALE，不覆盖新执行者。DB提交异常原样交调用者，重新检查持久状态，不能自动生成新事件。
+
+实际验证（本地JDK25.0.5+8/Maven3.9.16/Python3.11.5/隔离PG17、合成数据）：
+
+- `python scripts/test-customer-rls.py --with-ai`：**50项Java真实PG测试通过**（原37+新13），另**4项KB PG通过**；日志`.local/implementation/b1-dispatcher-pg-final.log`。首次10项派发完成47项全通过，补异常回执/HTTP中断后49项全通过，最后补领取提交后的停止边界后50项完整通过；每次均执行全组，没有选取有利子集。
+- 13项PG派发覆盖：网络期间Hikari活跃连接为0且另连接可NOWAIT锁源行；禁止外层业务事务/错tenant/预先中断；领取提交后中断不发HTTP；瞬态失败保持源顺序；永久HELD不阻塞独立会话；8次耗尽保留事件；丢响应后沿用event及原Run回执；坏租户回执不能释放后续消息；HTTP中断保留原lease；同Dispatcher立即BUSY；另Dispatcher接管后旧成功和旧失败都STALE；确认事务回滚后可重发；真实提交已完成但注入“提交结果丢失”异常后，重调只见DELIVERED且不再发HTTP。
+- `AgentRuntimeClientTest` **7项**、`AgentRuntimeProtocolTest` **3项**通过。回环HTTP覆盖13种状态分类、重复/畸形/错身份回执、非JSON、8193字节响应、正文晚到/响应头晚到的整体timeout、禁止redirect、中断标记、连接失败和非法配置；验证实际请求只有引用、无Authorization，Trace来自源事件，发送字节与签名一致。故障超时断言只是注入延迟的停止边界，不是延迟/吞吐基准。
+- `mvn -B -f backend/pom.xml verify`：九模块成功，日志`b1-dispatcher-java-final.log`；PG条件测试由上述专项实际执行，普通构建的跳过不计通过。本批原语与测试不依赖付费模型或真实客户数据。
+
+边界/回滚：上述派发的HTTP目标是受控故障服务；Python真接收、RLS/重复/取消已在前批独立验收，单个Java→真Python交付仍留下一子批次。没有实际业务handler、自动调度、业务快照/结果幂等或自动触发，DELIVERED不等于Agent成功，B1未关闭。HELD缺运营核验入口，租户公平性与费用硬额度未完成。此批未改现有业务触发/认证/SQL，本地完整服务沿用前批证据，不冒充本批新跑；远端全流程由推送CI验证。回滚停止使用新Dispatcher/client，保留全部Outbox/Run/Step与HELD；不清表或换UUID绕过去重。

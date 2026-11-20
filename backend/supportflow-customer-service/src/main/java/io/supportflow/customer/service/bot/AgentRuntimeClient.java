@@ -1,0 +1,134 @@
+package io.supportflow.customer.service.bot;
+
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+/** A bounded, reference-only delivery operation, with no implicit retry. */
+public final class AgentRuntimeClient implements AutoCloseable {
+    public record Receipt(UUID eventId, UUID runId) { }
+    public static final class DeliveryFailure extends RuntimeException {
+        private final boolean retryable;
+        DeliveryFailure(boolean retryable, String code) { super(code); this.retryable = retryable; }
+        public boolean retryable() { return retryable; }
+        public String code() { return getMessage(); }
+    }
+    private static final Set<String> STATES = Set.of("PENDING", "RUNNING", "RETRY_WAIT", "SUCCEEDED", "FAILED", "CANCELLED");
+    private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+            .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+    private final HttpClient client;
+    private final URI endpoint;
+    private final String secret;
+    private final Duration deadline;
+
+    public AgentRuntimeClient(URI endpoint, String secret) { this(endpoint, secret, Duration.ofSeconds(10)); }
+
+    /** Smaller deadlines support deterministic local fault injection. Maximum stays 10s. */
+    public AgentRuntimeClient(URI endpoint, String secret, Duration deadline) {
+        if (endpoint == null || endpoint.getRawPath() == null
+                || !endpoint.getRawPath().matches("(?:/[A-Za-z0-9_-]+)*/ai/v1/runtime/runs"))
+            throw new IllegalArgumentException("Expected the runtime admission endpoint");
+        if (deadline == null || deadline.compareTo(Duration.ofMillis(100)) < 0 || deadline.compareTo(Duration.ofSeconds(10)) > 0)
+            throw new IllegalArgumentException("Invalid runtime delivery deadline");
+        AgentRuntimeProtocol.request(endpoint, "POST", "CONFIG_CHECK", new byte[0], secret);
+        this.endpoint = endpoint; this.secret = secret; this.deadline = deadline;
+        this.client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2))
+                .followRedirects(HttpClient.Redirect.NEVER).version(HttpClient.Version.HTTP_1_1).build();
+    }
+
+    public Receipt enqueue(AgentEventOutbox.Event event) {
+        final byte[] body;
+        try {
+            body = mapper.writeValueAsBytes(Map.of("tenant_code", event.tenant(), "source_event_id", event.eventId().toString(),
+                    "session_no", event.sessionNo(), "event_seq", event.sequence(), "message_id", event.messageId(),
+                    "principal_ref", event.principalRef(), "trace_id", event.traceId(), "runtime_version", event.runtimeVersion()));
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_SOURCE_REFERENCE"); }
+        var request = HttpRequest.newBuilder(AgentRuntimeProtocol.request(endpoint, "POST", event.tenant(), body, secret),
+                        (name, value) -> true)
+                .header("X-Request-Id", event.traceId()).build();
+        var future = client.sendAsync(request, ignored -> new BoundedBody());
+        final HttpResponse<byte[]> response;
+        try {
+            // Covers headers AND body completion; no unbounded InputStream read.
+            response = future.get(deadline.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException timeout) {
+            future.cancel(true);
+            throw new DeliveryFailure(true, "DELIVERY_TIMEOUT");
+        } catch (InterruptedException interrupted) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            throw new DeliveryFailure(true, "DELIVERY_INTERRUPTED");
+        } catch (ExecutionException failure) {
+            Throwable cause = failure.getCause();
+            for (int depth = 0; cause != null && depth < 8; depth++, cause = cause.getCause())
+                if (cause instanceof OversizeBody) throw new DeliveryFailure(false, "RESPONSE_TOO_LARGE");
+            throw new DeliveryFailure(true, "DELIVERY_NETWORK_ERROR");
+        }
+        int code = response.statusCode();
+        if (code != 202) {
+            boolean retry = code == 408 || code == 425 || code == 429 || code >= 500;
+            throw new DeliveryFailure(retry, "RECEIVER_HTTP_" + code);
+        }
+        var contentTypes = response.headers().allValues("Content-Type");
+        if (contentTypes.size() != 1 || !contentTypes.getFirst().split(";", 2)[0].trim().equalsIgnoreCase("application/json"))
+            throw new DeliveryFailure(false, "INVALID_RECEIPT");
+        try {
+            JsonNode root = mapper.readTree(response.body());
+            if (root == null || !root.isObject() || !event.tenant().equals(text(root, "tenant_code"))
+                    || !event.eventId().toString().equals(text(root, "source_event_id")) || !STATES.contains(text(root, "state")))
+                throw new IllegalArgumentException();
+            String run = text(root, "run_id");
+            UUID runId = UUID.fromString(run);
+            if (!runId.toString().equals(run)) throw new IllegalArgumentException();
+            return new Receipt(event.eventId(), runId);
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_RECEIPT"); }
+    }
+
+    private static String text(JsonNode node, String key) {
+        JsonNode value = node.get(key);
+        if (value == null || !value.isTextual()) throw new IllegalArgumentException();
+        return value.textValue();
+    }
+
+    @Override public void close() { client.shutdownNow(); }
+
+    private static final class OversizeBody extends IOException { }
+    private static final class BoundedBody implements HttpResponse.BodySubscriber<byte[]> {
+        private final CompletableFuture<byte[]> result = new CompletableFuture<>();
+        private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        private Flow.Subscription subscription;
+        public CompletionStage<byte[]> getBody() { return result; }
+        public void onSubscribe(Flow.Subscription value) { subscription = value; value.request(1); }
+        public void onNext(List<ByteBuffer> chunks) {
+            for (var chunk : chunks) {
+                if (chunk.remaining() > 8192 - bytes.size()) {
+                    subscription.cancel(); result.completeExceptionally(new OversizeBody()); return;
+                }
+                byte[] part = new byte[chunk.remaining()]; chunk.get(part); bytes.writeBytes(part);
+            }
+            subscription.request(1);
+        }
+        public void onError(Throwable error) { result.completeExceptionally(error); }
+        public void onComplete() { result.complete(bytes.toByteArray()); }
+    }
+}
