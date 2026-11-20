@@ -42,7 +42,7 @@ class SourceSnapshot:
     expires_at: datetime
 
 
-class SourceClient:
+class _CustomerTransport:
     def __init__(self, base_url, secret, *, deadline=10, transport=None):
         if not isinstance(base_url,str) or '?' in base_url or '#' in base_url:
             raise ValueError('Invalid customer service base URL')
@@ -59,21 +59,14 @@ class SourceClient:
             raise ValueError('Invalid runtime source configuration')
         self.base_url, self._secret, self.deadline, self.transport = base_url.rstrip('/'), secret, deadline, transport
 
-    async def capture(self, source: RunInput, run_id: UUID):
-        return await self._request('POST', source, run_id)
-
-    async def read(self, source: RunInput, run_id: UUID, *, expected_snapshot_id=None, expected_hash=None):
-        value = await self._request('GET', source, run_id)
-        if ((expected_snapshot_id is not None and str(value.snapshot_id) != str(expected_snapshot_id))
-                or (expected_hash is not None and value.payload_hash != expected_hash)):
-            raise PermanentFailure('SOURCE_CHANGED')
-        return value
-
-    async def _request(self, method, source, run_id):
+    async def _exchange(self, method, source, run_id, resource, body, *, prefix, limit=MAX_RESPONSE, accepted=(200,)):
+        if resource not in ('snapshot','reply') or method not in ('GET','POST') or prefix not in ('SOURCE','REPLY'):
+            raise ValueError('Unsupported customer runtime operation')
+        if not isinstance(body,bytes) or len(body)>(65536 if resource=='reply' else 8192):
+            raise ValueError('Customer runtime request too large')
         run_id = UUID(str(run_id))
-        target = self.base_url+f'/api/customer/internal/runtime/events/{source.source_event_id}/runs/{run_id}/snapshot'
+        target = self.base_url+f'/api/customer/internal/runtime/events/{source.source_event_id}/runs/{run_id}/{resource}'
         raw_path = httpx.URL(target).raw_path.decode('ascii')
-        body = b'{}' if method == 'POST' else b''
         headers = {HEADER: credential(self._secret, method, raw_path, source.tenant, body),
                    'X-Tenant-Code': source.tenant, 'X-Request-Id': source.trace_id,
                    'Accept-Encoding': 'identity', 'Content-Type': 'application/json'}
@@ -85,26 +78,42 @@ class SourceClient:
                                             timeout=httpx.Timeout(min(5,self.deadline), connect=min(2,self.deadline))) as client:
                     async with client.stream(method, target, headers=headers, content=body) as response:
                         if response.status_code in (408, 425, 429) or response.status_code >= 500:
-                            raise TransientFailure('SOURCE_UNAVAILABLE')
+                            raise TransientFailure(prefix+'_UNAVAILABLE')
                         if response.status_code in (401, 403):
-                            raise PermanentFailure('SOURCE_AUTHORIZATION_DENIED')
-                        if response.status_code != 200:
-                            raise PermanentFailure('SOURCE_PROTOCOL_ERROR')
+                            raise PermanentFailure(prefix+'_AUTHORIZATION_DENIED')
+                        if response.status_code not in accepted:
+                            raise PermanentFailure(prefix+'_PROTOCOL_ERROR')
                         types = response.headers.get_list('content-type')
                         if len(types) != 1 or types[0].split(';')[0].strip().lower() != 'application/json':
-                            raise PermanentFailure('SOURCE_PROTOCOL_ERROR')
+                            raise PermanentFailure(prefix+'_PROTOCOL_ERROR')
                         if response.headers.get('content-encoding', 'identity').lower() != 'identity':
-                            raise PermanentFailure('SOURCE_PROTOCOL_ERROR')
+                            raise PermanentFailure(prefix+'_PROTOCOL_ERROR')
                         content = bytearray()
                         async for chunk in response.aiter_raw():
-                            if len(content)+len(chunk) > MAX_RESPONSE:
-                                raise PermanentFailure('SOURCE_RESPONSE_TOO_LARGE')
+                            if len(content)+len(chunk) > limit:
+                                raise PermanentFailure(prefix+'_RESPONSE_TOO_LARGE')
                             content.extend(chunk)
         except (TimeoutError, httpx.TimeoutException):
-            raise TransientFailure('SOURCE_TIMEOUT') from None
+            raise TransientFailure(prefix+'_TIMEOUT') from None
         except httpx.RequestError:
-            raise TransientFailure('SOURCE_NETWORK_ERROR') from None
-        return self._decode(bytes(content), source, run_id)
+            raise TransientFailure(prefix+'_NETWORK_ERROR') from None
+        return response.status_code,bytes(content)
+
+
+class SourceClient(_CustomerTransport):
+    async def capture(self, source: RunInput, run_id: UUID):
+        return await self._request('POST', source, run_id)
+
+    async def read(self, source: RunInput, run_id: UUID, *, expected_snapshot_id=None, expected_hash=None):
+        value = await self._request('GET', source, run_id)
+        if ((expected_snapshot_id is not None and str(value.snapshot_id) != str(expected_snapshot_id))
+                or (expected_hash is not None and value.payload_hash != expected_hash)):
+            raise PermanentFailure('SOURCE_CHANGED')
+        return value
+
+    async def _request(self, method, source, run_id):
+        _,content=await self._exchange(method,source,run_id,'snapshot',b'{}' if method=='POST' else b'',prefix='SOURCE')
+        return self._decode(content,source,UUID(str(run_id)))
 
     @staticmethod
     def _decode(content, source, run_id):

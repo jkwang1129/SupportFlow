@@ -67,7 +67,7 @@ public class RuntimeReplyController {
     private static Map<String,Object> wire(String tenant,AgentResultReplies.Receipt result) {
         return Map.of("tenant_code",tenant,"source_event_id",result.eventId().toString(),"run_id",result.runId().toString(),
                 "snapshot_id",result.snapshotId().toString(),"schema_version","reply-v1","operation","session.reply",
-                "arguments_sha256",result.argumentsSha256(),"message_id",Long.toString(result.messageId()),"message_no",result.messageNo(),"seq",result.sequence());
+                "arguments_sha256",result.argumentsSha256(),"message_id",Long.toString(result.messageId()),"message_no",result.messageNo(),"seq",Long.toString(result.sequence()));
     }
     @ExceptionHandler(DataAccessException.class) public ResponseEntity<ApiResponse<Void>> persistenceFailure() {
         return ResponseEntity.status(503).body(ApiResponse.fail(503,"Runtime persistence unavailable"));

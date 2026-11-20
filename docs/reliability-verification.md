@@ -463,3 +463,29 @@ controller先短事务查询已提交回执；同内容直接确认，无需终�
 边界/风险：新7项API PG测试的AI控制面是合成HMAC/HTTP故障服务；真实AI控制面核权在独立夹具中验收，结果API尚未与实际AI+JAR串成同一回复写入测试，也没有Python结果SDK/Worker业务handler/自动调度。原afterCommit渠道送达与原始计数、日志治理、时钟监控/生产TLS仍按M07/M11/M12保留；不宣称取消能撤销已在途写。无任务成功率、性能/Token费用或生产业务指标。下一批完成结果SDK与实际双向写入、回执丢失/UNKNOWN核验，再接B2工具层。
 
 回滚关闭Java进程`SUPPORTFLOW_BOT_RUNTIME_RESULT_ENABLED`（默认false）；source开关可单独保留。保留007消息/回执和Run/Step，停止新写但不要删除或更换事件；既有已提交结果可在受鉴权/Scope约束下核验。二进制回滚遵守原schema兼容性，不回写已应用SQL。
+
+eb44d06工单时间修复的[CI 44697476589](https://github.com/jkwang1129/SupportFlow/actions/runs/44697476589)、5b51616结果API的[CI 44697848121](https://github.com/jkwang1129/SupportFlow/actions/runs/44697848121)两个job分别全部成功，包含原三套实际服务流程。
+
+## B1 子批次 13：Python结果SDK与真实双向写入/回执丢失验收（2026-11-20）
+
+基线5b51616。新增`ai/runtime/result.py`/38项结果SDK测试/`scripts/result_delivery_fixture.py`，在原Runtime联调入口增加两条真实写入场景。SourceClient与ResultClient复用抽取的私有_CustomerTransport（原有HTTPX、每操作client生命周期、统一deadline/禁重定向/identity/响应上限），来源接口32项契约保持。Java仅明确reply响应seq为十进制字符串，并同步API PG断言；没有SQL/账号/默认开关/业务自动触发改变。ADR-0005和实施矩阵更新。
+
+ResultClient按可信RunInput/Lease构造固定reply路径与六字段正文，先校验租户/owner/fence/内容/SHA。POST回执与请求的tenant/event/run/snapshot/hash/版本/操作逐项绑定；GET可绑定原snapshot/hash。message_id/seq严格正的规范十进制字符串且≤int64，Python用int无损接收；拒绝bool、浮点、数字型seq、前导零、越界、重复字段和未知字段。成功信封≤8KiB，整体deadline≤10秒，不隐式重发写请求，不复制上游错误正文。超时可能已经提交；GET返回None不证明未执行，UNKNOWN仍需独立核验和恢复策略。
+
+本地工具链/PG17、合成消息与独立测试密钥，真实AI测试进程显式Mock且不读开发者.env；客户JAR只获customer/platform账号及服务凭据，Java所有AI目标均指向本次Mock服务。新结果用例在JAR就绪后才用真实受限RuntimeStore登记Run/认领/预留WRITE，客户来源由隔离SQL构造；不改120秒deadline、不重置预算，不冒充自动业务触发。
+
+| 复现命令 | 实际结果/原始证据 |
+| --- | --- |
+| `cd ai-service; python -m pytest -q tests/test_runtime_source.py tests/test_runtime_result.py tests/test_runtime_reply.py` | **86项通过**＝来源32+结果38+摘要16；`b1-result-sdk-unit-wire.log` |
+| `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-result-sdk-ai-final.xml` | **211 passed、81 skipped、1 xfailed**，`b1-result-sdk-ai-final.log`；75项Runtime PG由专项实测，原正文引用xfail保留 |
+| `python scripts/test-customer-rls.py --with-ai` | **91项Java真PG + 4项KB通过**，包含明确字符串seq的API断言，`b1-result-sdk-pg.log` |
+| `mvn -B -f backend/pom.xml verify` | 九模块成功，`b1-result-sdk-java.log` |
+| `python scripts/test-agent-runtime.py --with-java-delivery` | **91项Python专项+6次角色负面+原2项Java交付/2条来源流程/1项真实许可联调+新2条真实回复场景通过**，`b1-result-sdk-real-clean.log`；真实SDK→客户JAR→真实AI控制面→受限PG，不是替换Store或控制面Stub |
+
+两条新实际场景：①正常回复，相同POST和GET得到同一消息；修改内容409，终态SUCCEEDED后确认仍同回执，跨tenant查无回执/错误服务密钥401；②回环代理把原始签名/body转给真JAR，收到已提交HTTP200后延迟body 5秒，SDK整体2秒超时且只有一次HTTP尝试，断言超时前已收到上游提交回执。随后真实Runtime取消把Step标UNKNOWN/Run FAILED/SIDE_EFFECT_UNKNOWN；SDK按原snapshot/hash查询业务回执，再用原fence确认相同回复，仍同一消息且Runtime保持FAILED。逐案从客户库核对每Run一回执、一条BOT回复、总两条消息/seq=2及精确文本；Runtime均只有1个WRITE预留、model=0、tool预算=1、retry=0。该计数是合成协议验收，未调用真实模型，不是任务成功率、生产吞吐或费用报告。
+
+补充生成机器可读`.local/verification/runtime-results.json`（由现有CI artifact步骤收集）：从实际查询结果记录逐案Run/event/snapshot/message引用、SHA、消息/回执数、Runtime状态/预算，并明确performance/token_cost为NOT_MEASURED，不含正文/密钥。报告生成后的完整专项再跑通过，`b1-result-sdk-real-report.log`；两例分别SUCCEEDED与FAILED/SIDE_EFFECT_UNKNOWN，数据没有被统一改成成功。
+
+首次SDK测试25项因MockTransport响应构造预消费body而失败，改为与现有来源测试一致的未消费ByteStream后82项通过；`b1-result-sdk-unit-first.log`/`unit-final.log`保留。第一次实际写入联调拒绝回执：实际Spring的LongToStringJacksonConfig把seq变为字符串，standalone MockMVC的默认mapper之前输出数字。明确Java wire字段为字符串、SDK只收规范十进制字符串，并增加JS安全整数以外的精度/格式负面用例后，86项及真实写入通过；`b1-result-sdk-real-first.log`保留，没有通过接受任意数值类型放松验证。首个成功故障场景在Windows的预期连接中止后产生代理keep-alive读取日志；固定代理Connection:close并只处理预期断连后，保持原2秒/5秒时限和所有断言，完整专项再跑通过（`real-final.log`与`real-clean.log`均保留）。
+
+边界/回滚：仍无实际模型/检索工具循环、业务handler或源端自动触发；UNKNOWN业务回执已能核验，但不自动把失败Run改成成功或恢复后续任务。Run/Step目前只持引用，模型/检索中间正文的可恢复持久化尚需补齐，再接B2。原三套完整服务本批未在本地重复，沿用上批记录，当前提交的远端CI将重跑；本批真实启用结果API的JAR和默认关闭来源JAR均已专项实测。网络信任/生产TLS、外部渠道送达、物理清理和费用硬额度仍属后续。回滚关闭结果开关/停止新客户端，保留007消息/回执和Run/Step；不因超时生成新run/event、不删除UNKNOWN或重置预算。

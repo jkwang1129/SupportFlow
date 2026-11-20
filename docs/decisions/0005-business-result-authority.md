@@ -21,3 +21,7 @@ Java接入进一步拆分：先扩展现有AgentRuntimeClient的有界传输，�
 结果API使用同一RuntimeCustomer服务鉴权（原过滤器扩展两条窄路由），独立默认关闭`SUPPORTFLOW_BOT_RUNTIME_RESULT_ENABLED=false`。GET/POST `/api/customer/internal/runtime/events/{event}/runs/{run}/reply`；GET仅返回已提交回执引用，不取原文，也不以当前Run仍RUNNING为前提。POST严格六字段snapshot_id/owner/fence/arguments_sha256/content/version；身份/目标/角色/操作不能从额外字段指定。认证先验原始路径/方法/租户/声明body摘要MAC，再有界接收正文并复验摘要和到期；最多64KiB原始JSON（覆盖8192字节正文的JSON转义开销），内容仍单独8192字节。来源接口保持原8KiB/空对象规则。解析后的不可变命令通过服务端request attribute交给controller，不重读流、不转发终端JWT。
 
 POST先短事务find同参数回执；已提交时不调用AI控制面，所以终态Run和回执丢失不会导致重复写。新动作在无事务时主动请求配置的既有AI bot-base-url（固定Runtime路径、控制面deadline 3秒），验签许可后才新事务调用append。原SessionService/事务计费事件复用，GET回执可供未来UNKNOWN写核验。Biz错误映射明确HTTP404/409/410等；DB或控制面基础设施失败不泄露SQL/正文。此API阶段尚未有Python结果SDK/实际AI+客户JAR写回验收，Worker/业务路由不自动接入；开启Java进程开关仍需先部署受限账号/007并启用对应AI Runtime API。
+
+Python结果SDK与来源SDK共用同一私有有界传输（每操作创建HTTPX客户端，支持Worker在不同asyncio.run循环使用）。ResultClient只按可信Run/Lease构造reply路径，不隐式重试；POST核对正文精确SHA，GET可绑定原snapshot/hash。结果信封固定10字段，message_id和seq均为正的规范十进制字符串，≤int64；Java显式输出字符串，兼容项目既有LongToStringJacksonConfig，避免MockMVC默认序列化与实际JAR不同。Python转为无精度损失int，拒绝浮点、bool、前导零或越界值。响应≤8KiB/identity JSON/禁重定向/整体deadline≤10秒，错误不带原文或密钥。Transient/Permanent是错误分类，不证明没有副作用；None只表示当前未观测到回执。
+
+实际双向验收使用真实AI应用/控制面、真实客户JAR和受限账号；SQL仅生成合成客户来源，Run/Step由真实受限RuntimeStore登记。JAR就绪后才登记各用例的新Run，保留真实120秒deadline，绝不重写期限。正常回复/终态确认及丢已提交回执→查询→取消后确认只读原回执各一例；不在此SDK内修改FAILED/SIDE_EFFECT_UNKNOWN或伪造Run成功。自动UNKNOWN核销/恢复仍交B3，业务handler/工具循环尚未接入。

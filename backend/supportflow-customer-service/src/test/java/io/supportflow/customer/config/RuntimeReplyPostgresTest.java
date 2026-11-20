@@ -101,7 +101,7 @@ class RuntimeReplyPostgresTest extends SessionPostgresFixture {
 
     @Test void currentPermissionCreatesOneReplyAndDuplicateAckDoesNotReauthorizeAfterCommit()throws Exception{
         var created=post();assertEquals(200,created.getResponse().getStatus());
-        var data=JSON.readTree(created.getResponse().getContentAsString()).get("data");assertEquals(10,data.size());assertEquals(2,data.get("seq").longValue());
+        var data=JSON.readTree(created.getResponse().getContentAsString()).get("data");assertEquals(10,data.size());assertEquals("2",data.get("seq").textValue());
         assertFalse(created.getResponse().getContentAsString().contains(reply.content()));
         authorityStatus.set(503);tx(()->{jdbc.update("UPDATE session SET status=4,agent_id=99 WHERE id=?",sessionId);return null;});
         assertEquals(data,JSON.readTree(post().getResponse().getContentAsString()).get("data"));
