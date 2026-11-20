@@ -53,6 +53,7 @@ def verify_publication(connect,environment,passwords,secret,ai_base,runtime_env)
     from ai.runtime.models import ChatProfile,RuntimeChatClient
     from ai.runtime.publication import TicketReplyHandler
     from ai.runtime.result import ResultClient
+    from ai.runtime.reconciliation import ReplyReconciler
     from ai.runtime.source import SourceClient
     from ai.runtime.store import RuntimeStore
     from ai.runtime.ticket_loop import TicketReadLoop
@@ -85,7 +86,7 @@ def verify_publication(connect,environment,passwords,secret,ai_base,runtime_env)
                     except httpx.HTTPError:pass
                     time.sleep(.25)
                 else:raise RuntimeError('Disposable publication service not ready')
-            observations=[];scenarios={}
+            observations=[];scenarios={};recovery_observations=[]
             with planner_server(scenarios,connect) as model_base:
                 for index,mode in enumerate(('normal','lost_ack','absent_write','cancel_after_commit','step_ack_lost')):
                     tenant='PUB_'+chr(ord('A')+index);session_id=16_900_001+index*10;message_id=session_id+1;customer_id=session_id+2;ticket_id=session_id+3
@@ -142,6 +143,29 @@ def verify_publication(connect,environment,passwords,secret,ai_base,runtime_env)
                     if committed:assert messages[1]==(3,1,f'工单 {ticket_no} 当前状态：处理中。',2)
                     writes=[step for step in store.steps(tenant,run) if step['effect']=='WRITE']
                     assert len(writes)==1 and writes[0]['state']==('UNKNOWN' if unknown else 'SUCCEEDED')
+                    if unknown:
+                        following=store.enqueue(RunInput(tenant,uuid4(),source.session_no,2,message_id+100,source.principal_ref,'recovery-following'))
+                        assert store.claim_next(tenant,'recovery-following') is None
+                        if committed:
+                            with connect('customer_db') as db:db.execute('UPDATE session SET agent_id=12345 WHERE id=%s',(session_id,))
+                        reconciler=ReplyReconciler(store,ResultClient(base,secret),'operator:qualification')
+                        audit=reconciler.reconcile(tenant,run);after=store.get(tenant,run)
+                        assert after['state']=='FAILED' and after['cancel_requested']==result['cancel_requested']
+                        assert after['error_code']==('SIDE_EFFECT_CONFIRMED' if committed else 'SIDE_EFFECT_UNKNOWN')
+                        for key in ('step_count','model_calls','tool_calls','retry_count','finished_at','deadline_at','attempt'):
+                            assert after[key]==result[key]
+                        assert (audit is not None)==committed
+                        if committed:
+                            assert reconciler.reconcile(tenant,run)==audit
+                            assert store.claim_next(tenant,'recovery-following')['run_id']==following['run_id']
+                            store.cancel(tenant,following['run_id'])
+                        else:assert store.claim_next(tenant,'recovery-following') is None
+                        with connect('customer_db') as db:
+                            assert db.execute('SELECT count(*),max(seq) FROM session_message WHERE tenant_code=%s AND session_id=%s',(tenant,session_id)).fetchone()==(len(messages),last_seq)
+                        assert scenario['model_http_calls']==2
+                        recovery_observations.append(dict(case=mode,original_state=result['state'],original_error=result['error_code'],
+                            state=after['state'],error_code=after['error_code'],audit_count=1 if audit else 0,
+                            next_event_claimable=committed,budgets_unchanged=True,new_business_messages=0,model_http_calls=2))
                     observations.append(dict(case=mode,run_id=str(run),event_id=str(source.source_event_id),state=result['state'],error_code=result['error_code'],
                         model_http_calls=scenario['model_http_calls'],model_reservations=result['model_calls'],tool_reservations=result['tool_calls'],steps=result['step_count'],retries=result['retry_count'],
                         source_and_reply_messages=len(messages),result_receipts=receipts,last_message_seq=last_seq,write_state=writes[0]['state'],
@@ -149,7 +173,11 @@ def verify_publication(connect,environment,passwords,secret,ai_base,runtime_env)
             report=ROOT/'.local/verification/runtime-publication.json';report.parent.mkdir(parents=True,exist_ok=True)
             report.write_text(json.dumps(dict(schema_version='publication-qualification-v1',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_AI_AUTHORITY_PG',cases=observations,
                 source_enrollment='EXPLICIT_FIXTURE_SETUP',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
+            (report.parent/'runtime-reconciliation.json').write_text(json.dumps(dict(schema_version='reply-reconciliation-qualification-v1',
+                mode='REAL_CUSTOMER_RECEIPT_API_RESTRICTED_PG',cases=recovery_observations,automatic_polling=False,
+                external_channel_delivery='NOT_VERIFIED',performance='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
             print('Actual model TCP/Loop -> verified report -> signed reply API/AI authority/restricted PG: 5 publication cases passed; one reply/receipt on commit; lost ack recovered by query; absent receipt/cancel held UNKNOWN; successful Step resumed without replan/repost; external channel delivery not qualified',flush=True)
+            print('Explicit terminal reply reconciliation -> actual customer receipt API/restricted PG: committed cancelled reply confirmed without restarting task or new messages; missing receipt retained UNKNOWN and session hold; budgets unchanged',flush=True)
         except BaseException:
             failed=True;raise
         finally:

@@ -714,3 +714,29 @@ Python3.11.5/隔离PG17/JDK25，模型为合成协议，未使用真实模型或
 适用边界：这是本地协议/服务/事务验收，不是LLM正确率、真实Token成本或生产性能。报告事实为最后核权读取时点，当前reply-v1未把工单事实版本绑定进随后跨服务提交事务；不声称外部渠道已送达/恰好一次。终态UNKNOWN仍需受控核销；没有自动可信路由、租户Profile Resolver、知识Embedding预算、创建工单或HITL。回滚停用TicketReplyHandler/关闭result开关，保留历史消息/回执、Run/Step/预算/UNKNOWN，不删数据或更换Run绕过幂等。ADR-0013记录设计取舍。
 
 完整最终重跑`b1-publication-real-final.log`退出0：193项Python专项+6次角色负面，原交付/来源/工具/九例Loop、五例报告发布、当前写许可和双向回复全部通过。旧丢响应用例核实提交后超时、只一条消息/回执；没有通过删除断言或改产品超时绕开失败。
+
+7370c5c对应的[CI 44763844891](https://github.com/jkwang1129/SupportFlow/actions/runs/44763844891)两个job全部成功，含193项Runtime专项、五例核验报告发布及三套完整部署路径。
+
+## B1/B3 终态未知回复核销子批次（2026-11-20）
+
+基线7370c5c。新增`ai/runtime/reconciliation.py`、`test_reconciliation_postgres.py`、AI004增量及ADR-0014；RuntimeStore增加原子核销/一致性读，ResultClient原typed receipt核验提取为共享receipt_reference，发布逻辑调用它而无协议改变。manifest/当前schema契约/唯一账号provisioning/readiness、原fixture清理、迁移/初始化/全服务断言更新；实际publication_fixture追加显式核销场景。没有公开核销API、模型工具、自动轮询、重发业务请求或新框架。
+
+设计：仅runtime-v1、FAILED/SIDE_EFFECT_UNKNOWN、无owner/lease、恰一个session.reply/reply-v1 UNKNOWN WRITE可核销。可信宿主注入预配ResultClient/operator_ref，单次有界GET严格核对tenant/event/run/snapshot/参数Hash；无回执/异常保留阻断。短事务按Run→Step锁，重验观察fence/来源/原意图Hash/唯一WRITE；插入不可改账本、原Step确认成功、Run保持FAILED而error变SIDE_EFFECT_CONFIRMED并递增fence。保留cancel_requested、finished_at、原Step completed_at、全部预算/attempt/retry；原未知错误/Step结果、操作者、业务消息/seq/DB确认时间入账。只有未知副作用顺序阻断解除，取消任务不复活，也不声称渠道送达。重复/六路并发同一证明只一条记录/一次fence变化，首次操作者/时间不覆盖。最终幂等分支另重验完整来源与物理Step key，防止只比摘要漏掉错观察。
+
+本地Python3.11.5/隔离PG17，模型与客户HTTP在PG专项为协议Stub，实际JAR组合另记：
+
+- AI普通全量：503 passed、204 skipped、1 xfailed，`b1-reconciliation-ai-final.log/xml`。21项新增PG在下面执行，未把skip当通过。
+- `python scripts/test-agent-runtime.py`：新增21项在214项专项中全部通过，`b1-reconciliation-runtime-second.log`。取消且已提交后核销，预算/时间/取消不变且后续事件可领取；无回执/503保持UNKNOWN；7种错回执/类型；错租户/非终态；过时fence/损坏意图；多WRITE拒绝；六路并发一致/改证明拒绝；最终Run更新故障时审计/Step/Run全回滚；过期后只确认过去事实、丢核销提交回执后不多发GET；损坏已核销Run拒绝；RLS无上下文/PLATFORM/跨租户/额外放宽策略仍隔离；无UPDATE/DELETE/TRUNCATE/DDL及复合FK，readiness拒绝UPDATE权限漂移；严格candidate类型防止bool冒充整数。
+- 最终补强幂等分支完整来源/Step key后，复用相同隔离初始化/账号配置只运行`tests/test_reconciliation_postgres.py`：21项通过，`b1-reconciliation-targeted-final.log/xml`（本机辅助入口`.local/implementation/run_reconciliation_tests.py`）。标准完整复现仍是Runtime专项命令；没有替换Store/跳过角色防护/用管理员执行产品SQL。
+- `python scripts/test-versioned-migrations.py`最终17项通过，`b1-reconciliation-upgrade-final.log`。保留002→003已认领Run/预留Step/预算精确不变，同时验证003→004原leased/reserved/committed Run、全部Step、正文/Hash/TTL/预算精确不变，新核销表为空；六库重复/只读校验、锁/校验和/历史/回滚/运行账号拒绝继续通过。
+- `python scripts/test-schema-drift.py`：94表/1视图/5函数、14个实际SQL和3个metadata负例通过，`b1-reconciliation-drift-final.log`。候选从独立canonical PG生成，审查差异只有新核销表与004清单Hash，旧SQL/checksum未修改。
+- `python scripts/test-database-init.py`：真实CLI空库94表、重复初始化拒绝、无关种子保留、锁/运行身份拒绝、故障库DDL回滚和部分init拒绝通过，`b1-reconciliation-init-final.log`。
+- `python scripts/test-runtime-security.py --with-ai-readiness`：新/旧环境分别28/29条数据库安全断言、每套4项AI/KB就绪测试通过，`b1-reconciliation-roles-final.log`。新表保持受限账号只SELECT/INSERT，无运行时DDL。
+
+首轮Runtime在角色故障注入阶段发现AI004缺少最新增量应具有的能力组安全检查，触发DuplicateTable而未按预期安全拒绝；补齐与003相同的NOLOGIN/非owner/非管理员检查，保留`b1-reconciliation-runtime-first.log`。首次升级主体已成功，但原版本测试仍只期望001～003而失败；更新明确清单断言为001～004，保留`b1-reconciliation-upgrade-first.log`。未修改旧迁移、角色约束或跳过负面用例。
+
+边界/回滚：核销只确认已有reply-v1提交，不裁定没有回执的写是否执行、不自动重试、不支持任意业务写、多WRITE或未知版本；手工控制面一次GET独立于已终止Run预算，不恢复/退还执行额度，没有模型费用。无回执/失败探测尚无独立运维审计流/自动策略；将来接运维UI须独立操作员认证和限流。追加账本不可改不等于防止已失陷的完整AI运行身份/DBA；已有角色的Run/Step写权限保持原边界。停用Reconciler、保留004/账本/原业务消息和回执，不物理降级/删历史或清空UNKNOWN；FAILED/SIDE_EFFECT_CONFIRMED不授予执行权。无真实LLM、Token费用、吞吐、业务收益数据。
+
+实际组合复现`python scripts/test-agent-runtime.py --with-java-delivery`最终退出0，`b1-reconciliation-real-final.log`：214项Python专项、6次角色负面、原全部实际Java交付/来源/工具/九例Loop/五例发布/许可/双向回复与新增两例核销通过。`runtime-reconciliation.json`按场景保留：未转发写且无回执→FAILED/SIDE_EFFECT_UNKNOWN、审计0、后续事件不可领取；真实提交后取消再显式核销→仍FAILED/SIDE_EFFECT_CONFIRMED、审计1、后续事件可领取；两例预算/结束时间/取消标记保持，新业务消息均0、模型HTTP仍2。确认已有提交前实际坐席接管来源也不会重新发消息。该脚本PG全量进程启动早于最后的幂等来源/Step key补强；当前版本补强由上述独立21项最终PG和后续实际组合部分覆盖，精确提交CI仍会重跑完整专项。
+
+最终独立运行`python scripts/test-security-flow.py`退出0，`b1-reconciliation-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整实际服务路径均通过，包含登录/企业授权、知识索引与A/B隔离、访客WS→AI→BOT回复、坐席认领/工单/计费批次、附件权限、五个Java服务readiness故障恢复、六库版本历史及新核销表SELECT/INSERT/无UPDATE/DELETE/TRUNCATE实查。完整服务验收期间未并行运行其他Maven或服务验收。

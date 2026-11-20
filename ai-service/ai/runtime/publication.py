@@ -8,10 +8,9 @@ import re
 from uuid import UUID
 
 from .reply import arguments_hash
-from .result import ResultClient,ReplyReceipt
+from .result import ResultClient,receipt_reference
 from .ticket_loop import TicketReadLoop
 from .tools import ToolIdentity
-from .types import identifier
 from .worker import PermanentFailure,TransientFailure
 
 
@@ -21,18 +20,6 @@ def _snapshot(value):
         if str(snapshot)!=value:raise ValueError()
         return snapshot
     except (ValueError,TypeError,AttributeError):raise PermanentFailure('REPLY_CHECKPOINT_INVALID') from None
-
-
-def _receipt_ref(receipt,source,run_id,snapshot,digest):
-    if (not isinstance(receipt,ReplyReceipt) or receipt.run_id!=run_id or receipt.event_id!=source.source_event_id
-            or receipt.snapshot_id!=snapshot or receipt.arguments_sha256!=digest
-            or type(receipt.message_id) is not int or not 1<=receipt.message_id<=9223372036854775807
-            or type(receipt.sequence) is not int or not 1<=receipt.sequence<=9223372036854775807):
-        raise PermanentFailure('REPLY_RECEIPT_MISMATCH')
-    try:identifier(receipt.message_no)
-    except ValueError:raise PermanentFailure('REPLY_RECEIPT_MISMATCH') from None
-    return dict(operation='session.reply',version='reply-v1',outcome='reply-committed',business_ref='message:'+str(receipt.message_id),
-                resource_ref=receipt.message_no,input_ref=str(snapshot),arguments_sha256=digest)
 
 
 class TicketReplyHandler:
@@ -46,7 +33,7 @@ class TicketReplyHandler:
     def _lookup(self,context,source,snapshot,digest,key):
         def read():
             receipt=asyncio.run(self.receipts.receipt(source,context.lease.run_id,expected_snapshot_id=snapshot,expected_hash=digest))
-            return {'outcome':'not-observed'} if receipt is None else _receipt_ref(receipt,source,context.lease.run_id,snapshot,digest)
+            return {'outcome':'not-observed'} if receipt is None else receipt_reference(receipt,source,context.lease.run_id,snapshot,digest)
         return context.step(key,'TOOL','READ',dict(operation='session.reply.receipt',version='reply-v1',
             resource_ref=source.principal_ref,input_ref=str(snapshot),arguments_sha256=digest),read)
 
@@ -80,7 +67,7 @@ class TicketReplyHandler:
         def publish():
             try:
                 receipt=asyncio.run(self.results.reply(source,context.lease,snapshot,text))
-                return _receipt_ref(receipt,source,identity.run_id,snapshot,digest)
+                return receipt_reference(receipt,source,identity.run_id,snapshot,digest)
             except TransientFailure:
                 # A timeout/5xx can follow an actual commit. One separately
                 # reserved READ may prove it; absence is never proof of no effect.

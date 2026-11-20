@@ -21,6 +21,19 @@ class ReplyReceipt:
     sequence: int
 
 
+def receipt_reference(receipt,source,run_id,snapshot,digest):
+    """Validate a typed receipt again before it can become a durable outcome."""
+    if (not isinstance(receipt,ReplyReceipt) or receipt.run_id!=run_id or receipt.event_id!=source.source_event_id
+            or receipt.snapshot_id!=snapshot or receipt.arguments_sha256!=digest
+            or type(receipt.message_id) is not int or not 1<=receipt.message_id<=9223372036854775807
+            or type(receipt.sequence) is not int or not 1<=receipt.sequence<=9223372036854775807):
+        raise PermanentFailure('REPLY_RECEIPT_MISMATCH')
+    try:identifier(receipt.message_no)
+    except ValueError:raise PermanentFailure('REPLY_RECEIPT_MISMATCH') from None
+    return dict(operation='session.reply',version='reply-v1',outcome='reply-committed',business_ref='message:'+str(receipt.message_id),
+                resource_ref=receipt.message_no,input_ref=str(snapshot),arguments_sha256=digest)
+
+
 class ResultClient(_CustomerTransport):
     async def reply(self, source: RunInput, lease: Lease, snapshot_id: UUID, content: str):
         if lease.tenant!=source.tenant or type(lease.fence) is not int or not 1<=lease.fence<=9223372036854775807:

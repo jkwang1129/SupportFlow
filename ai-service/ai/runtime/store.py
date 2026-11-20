@@ -68,6 +68,83 @@ class RuntimeStore:
         with self._scope(tenant) as connection:
             return connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s ORDER BY step_no', (tenant,UUID(str(run_id)))).fetchall()
 
+    @staticmethod
+    def _confirmed_reply(connection,run):
+        receipt=connection.execute('SELECT * FROM agent_reply_reconciliation WHERE tenant_code=%s AND run_id=%s',
+                                   (run['tenant_code'],run['run_id'])).fetchone()
+        if receipt is None:return None
+        step=connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s AND step_no=%s FOR SHARE',
+                                (run['tenant_code'],run['run_id'],receipt['step_no'])).fetchone()
+        expected=dict(operation='session.reply',version='reply-v1',outcome='reply-committed',
+                      business_ref='message:'+str(receipt['message_id']),resource_ref=receipt['message_no'],
+                      input_ref=str(receipt['snapshot_id']),arguments_sha256=receipt['arguments_sha256'])
+        intent=dict(operation='session.reply',version='reply-v1',resource_ref=run['principal_ref'],
+                    input_ref=str(receipt['snapshot_id']),arguments_sha256=receipt['arguments_sha256'])
+        if (run['state']!='FAILED' or run['error_code']!='SIDE_EFFECT_CONFIRMED' or run['owner'] is not None or run['lease_until'] is not None
+                or run['fence']!=receipt['observed_fence']+1 or run['source_event_id']!=receipt['source_event_id']
+                or run['runtime_version']!='runtime-v1' or run['result_ref']!=expected
+                or not step or step['kind']!='TOOL' or step['effect']!='WRITE' or step['state']!='SUCCEEDED'
+                or step['intent_ref']!=intent or step['intent_hash']!=receipt['intent_hash']
+                or step['intent_hash']!=fingerprint(dict(kind='TOOL',effect='WRITE',intent=intent)) or step['result_ref']!=expected):
+            raise RuntimeConflict('Reply reconciliation ledger is inconsistent')
+        return receipt
+
+    def reply_reconciliation(self,tenant,run_id):
+        with self._scope(tenant) as connection:
+            run=connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR SHARE',
+                                   (tenant,UUID(str(run_id)))).fetchone()
+            return None if run is None else self._confirmed_reply(connection,run)
+
+    def confirm_reply_commit(self,candidate,receipt,operator_ref):
+        """Trusted-host control plane only; never grants a lease or sends a write.
+
+        Receipt comes from the configured business SDK. Counters/deadline and
+        task failure/cancellation survive; only an unknown reply is confirmed.
+        """
+        from .reconciliation import ReplyRecoveryCandidate
+        from .result import receipt_reference
+        if not isinstance(candidate,ReplyRecoveryCandidate):raise ValueError('Typed reply recovery observation required')
+        identifier(operator_ref)
+        result=receipt_reference(receipt,candidate.source,candidate.run_id,candidate.snapshot_id,candidate.arguments_sha256)
+        tenant=candidate.source.tenant
+        with self._scope(tenant) as connection:
+            run=connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR UPDATE',
+                                   (tenant,candidate.run_id)).fetchone()
+            if not run:raise RuntimeConflict('Reply recovery run is unavailable')
+            previous=self._confirmed_reply(connection,run)
+            if previous is not None:
+                current_source=RunInput(run['tenant_code'],run['source_event_id'],run['session_no'],run['event_seq'],run['message_id'],
+                                        run['principal_ref'],run['trace_id'],run['runtime_version'])
+                current_key=connection.execute('SELECT step_key FROM agent_step WHERE tenant_code=%s AND run_id=%s AND step_no=%s',
+                                               (tenant,candidate.run_id,previous['step_no'])).fetchone()['step_key']
+                if (previous['observed_fence']!=candidate.fence or previous['step_no']!=candidate.step_no
+                        or candidate.source!=current_source or candidate.step_key!=current_key
+                        or previous['intent_hash']!=candidate.intent_hash or previous['source_event_id']!=candidate.source.source_event_id
+                        or previous['snapshot_id']!=candidate.snapshot_id or previous['arguments_sha256']!=candidate.arguments_sha256
+                        or previous['message_id']!=receipt.message_id or previous['message_no']!=receipt.message_no
+                        or previous['message_seq']!=receipt.sequence):
+                    raise RuntimeConflict('Reply recovery proof changed')
+                return previous
+            steps=connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s ORDER BY step_no FOR UPDATE',
+                                     (tenant,candidate.run_id)).fetchall()
+            if ReplyRecoveryCandidate.from_rows(run,steps)!=candidate:
+                raise RuntimeConflict('Reply recovery observation is stale')
+            step=next(s for s in steps if s['step_no']==candidate.step_no)
+            audit=connection.execute('''INSERT INTO agent_reply_reconciliation
+                (tenant_code,run_id,step_no,observed_fence,source_event_id,snapshot_id,arguments_sha256,intent_hash,
+                 message_id,message_no,message_seq,operator_ref,original_error_code,original_step_result)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'SIDE_EFFECT_UNKNOWN',%s) RETURNING *''',
+                (tenant,candidate.run_id,candidate.step_no,candidate.fence,candidate.source.source_event_id,candidate.snapshot_id,
+                 candidate.arguments_sha256,candidate.intent_hash,receipt.message_id,receipt.message_no,receipt.sequence,
+                 operator_ref,Jsonb(reference(step['result_ref'])))).fetchone()
+            # Retain original completed_at and finished_at: audit.confirmed_at is
+            # when the past effect was confirmed, not when execution finished.
+            connection.execute("UPDATE agent_step SET state='SUCCEEDED',result_ref=%s WHERE tenant_code=%s AND run_id=%s AND step_no=%s",
+                               (Jsonb(result),tenant,candidate.run_id,candidate.step_no))
+            connection.execute("""UPDATE agent_run SET error_code='SIDE_EFFECT_CONFIRMED',result_ref=%s,fence=fence+1,
+                updated_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s""",(Jsonb(result),tenant,candidate.run_id))
+            return audit
+
     def due_tenants(self, limit=32):
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError('Invalid queue discovery limit')
