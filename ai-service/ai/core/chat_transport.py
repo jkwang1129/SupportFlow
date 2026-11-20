@@ -46,7 +46,7 @@ class ModelCallFailure(RuntimeError):
         super().__init__(code)
 
 
-async def _send_chat_json(chosen,payload,timeout,*,transport=None):
+def _configuration(chosen,timeout):
     try:
         if type(chosen) is not dict or type(timeout) not in (int,float) or not .05<=timeout<=300:
             raise ValueError()
@@ -61,6 +61,11 @@ async def _send_chat_json(chosen,payload,timeout,*,transport=None):
             raise ValueError()
     except (ValueError,TypeError,KeyError,AttributeError):
         raise ModelCallFailure('MODEL_CONFIGURATION_INVALID',attempted=False) from None
+    return base,key,model
+
+
+async def _send_chat_json(chosen,payload,timeout,*,transport=None):
+    base,key,model=_configuration(chosen,timeout)
     try:
         if type(payload) is not dict or payload.get('model')!=model:raise ValueError()
         body=_request_body(payload)

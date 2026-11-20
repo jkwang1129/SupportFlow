@@ -67,6 +67,7 @@ def main():
                         'tests/test_runtime_payloads_postgres.py',
                         'tests/test_runtime_worker_payloads_postgres.py',
                         'tests/test_runtime_tools_postgres.py',
+                        'tests/test_runtime_models_postgres.py',
                         f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)
         if args.with_java_delivery:

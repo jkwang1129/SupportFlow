@@ -628,3 +628,19 @@ b2819d6的[CI 44732054985](https://github.com/jkwang1129/SupportFlow/actions/run
 - `python scripts/test-security-flow.py`：**默认新库/历史升级/CLI初始化三套实际服务全部通过**，含原业务/媒体/知识/WS/计费与45次Java Readiness故障，`b2-model-transport-services.log`。本组独立运行；使用上一批已验证JAR，未记为新九模块构建。这里模型显式Mock，不把全栈通过冒充真实供应商兼容性证明。
 
 边界/回滚：无真实模型质量/性能/Token/成本或生产流量数据，供应商路由/隐式全局选择/视觉/Embedding/完整计量治理仍未完成；旧同步计量器不在HTTP deadline内。某些非规范上游若返回压缩/非JSON/重复字段/超大正文会被明确拒绝，尚未实测付费供应商。下一批接Runtime模型适配与有界循环，保留原预算，真实Token/金额治理仍属M11。回滚本传输和call_chat委托，保留Run/Step/正文/计量；无SQL回滚。不能因为回退方便就把旧错误正文日志作为生产推荐。
+
+7bfb661对应的[CI 44736537509](https://github.com/jkwang1129/SupportFlow/actions/runs/44736537509)两个job全部成功，含受限Chat传输/更新后的RAG故障和三套完整服务路径。
+
+## B1 模型适配子批次：显式Profile/单次预留/正文与usage恢复（2026-11-20）
+
+基线7bfb661。新增`ai/runtime/models.py`、`test_runtime_models.py`、`test_runtime_models_postgres.py`、ADR-0011；core/chat_transport仅提取原配置校验私有函数供Profile复用、算法不变；Runtime专项入口/矩阵/本记录更新。无SQL/Java/新依赖/默认业务入口改变，不包装旧Workflow或使用旧Mock网关作真实调用入口。
+
+ChatProfile由可信宿主注入且绑定tenant，凭据隐藏/不进定义Hash；端点/模型/Prompt/预算策略入Hash，密钥轮换可复用原同策略结果。上下文固定首条system、后续user/assistant、闭合role/content，≤32条/每条16KiB/总编码32KiB，超限拒绝无截断。先预留MODEL/NONE才通过既有call_chat发送固定profile单次HTTP，稳定错误走同一Run重试，无选择其他provider/隐式再请求。成功单一stop/assistant有界正文≤8KiB、原生tool_calls/拒绝/截断/空值/非法Unicode/当前凭据原样回显拒绝；chat-result-v1及供应商usage随Step SUCCEEDED同事务。缺usage保留未知而非零。Runtime不再隐式写旧best-effort账本，失败/取消/提交前丢输出的未知费用结算仍待M11。恢复重新校验策略/request/版本/正文/usage，沿用原fence/预算。
+
+本地Python3.11.5/隔离PG17/JDK25旧已验收JAR；模型HTTP均确定性MockTransport，无真实付费模型/开发者.env：
+
+- `cd ai-service; python -m pytest -q tests/test_runtime_models.py tests/test_chat_transport.py`：**112项通过**＝新模型57+原共用传输55，`b1-model-adapter-unit-first.log`。配置Profile/租户与Lease、角色/结构/字节边界、单次HTTP与无第二账本、供应商结束/角色/正文/usage错误、缺usage未知、稳定瞬时/永久错误、缓存策略与请求Hash重验、凭据轮换和策略改变分别处理。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b1-model-adapter-ai-final.xml`：**476 passed、158 skipped、1 xfailed**，`b1-model-adapter-ai-final.log`。外部条件PG由专项实际执行，正文引用已知xfail仍保留且只允许AssertionError。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**168项Python专项+6次角色负面通过**，新16项真PG及原Java交付/Source/工单v2当前版本刷新/许可/双向回复与丢回执全部通过，`b1-model-adapter-runtime-first.log`。模型PG16例：同步骤两次访问仅一次HTTP/预留/正文及13/7合成usage原子保存；下游READ重试不再调模型；新Worker对象/换密钥复用；503后max_model=1在第二HTTP前预算拒绝/预算2成功；401永久失败不重试；截断/凭据回显不存成功正文；执行中取消不保存迟到输出也不退预留；正文提交成功但丢DB回执后复用且HTTP仍1；策略/消息改变不套旧逻辑步骤；Hash有效但Profile/usage/凭据正文被改仍拒绝；错租户Profile在Step/Model预留前拒绝。没有把MockTransport+真PG说成真实模型协议网络或模型质量验证，网络边界由前一批真实TCP三例另有证据。
+
+本批首轮均通过。成功usage=13/7只是合成供应商信封，不是项目Token实测或费用；模型次数是预留计数，不等于供应商确认付费次数。无Java/SQL改变，本地不重复九模块/103客服PG/4KB/三套完整服务（上批已实测，当前CI会重跑）。边界：无租户Profile Resolver、自动Worker或完整Agent loop；HTTP可在途到profile超时，取消不能保证供应商停止收费；当前配置密钥回显保护不等于通用PII/密钥识别，其他上下文/供应商/金额治理仍后续。回滚停用模型适配，保留MODEL步骤/正文/usage/调用计数；不把新策略计划指向旧版本或重置预算，旧Workflow不切换。
