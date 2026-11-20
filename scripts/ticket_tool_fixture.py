@@ -24,7 +24,7 @@ def verify_ticket_tools(connect,environment,passwords,secret,ai_base,runtime_env
     from ai.runtime.store import RuntimeStore
     from ai.runtime.tickets import TicketClient
     from ai.runtime.tools import ToolCall,ToolExecutor,ToolRegistry
-    from ai.runtime.types import RunInput
+    from ai.runtime.types import RunInput,Limits
     from ai.runtime.worker import RuntimeWorker,TransientFailure,PermanentFailure
 
     with socket.socket() as reserved:
@@ -59,12 +59,12 @@ def verify_ticket_tools(connect,environment,passwords,secret,ai_base,runtime_env
             client=TicketClient(base,secret)
             executor=ToolExecutor(ToolRegistry([ticket_status_tool(client)]),frozenset({'ticket:read'}))
             observations=[]
-            for case,mode in enumerate(('authorized_resume','owner_revoked','status_changed')):
+            for case,mode in enumerate(('authorized_resume','owner_revoked','status_changed','status_changed_budget3')):
                 tenant='TICKET_'+chr(ord('A')+case)
                 session_id=14_900_001+case*10;message_id=session_id+1;customer_id=session_id+2;ticket_id=session_id+3
                 ticket_no='TOOL_'+tenant;source=RunInput(tenant,uuid4(),'TICKET_JAR_'+str(case),1,message_id,
                                                        'visitor-session:'+str(session_id),'ticket-tool-'+str(case))
-                run=store.enqueue(source)['run_id']
+                run=store.enqueue(source,Limits(max_tool_calls=3) if case==3 else Limits())['run_id']
                 with connect('customer_db') as db:
                     db.execute("INSERT INTO customer(id,tenant_code,customer_no,name) VALUES(%s,%s,%s,'SYNTHETIC PRIVATE CUSTOMER')",(customer_id,tenant,'C_'+tenant))
                     db.execute("INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,customer_id,start_time) VALUES(%s,%s,%s,1,2,1,%s,CURRENT_TIMESTAMP)",
@@ -78,8 +78,8 @@ def verify_ticket_tools(connect,environment,passwords,secret,ai_base,runtime_env
                                (ticket_id,tenant,ticket_no,customer_id))
                 returned=[]
                 def handler(ctx):
-                    value=executor.execute(ctx,'ticket-1',ToolCall('get_ticket_status','ticket-status-v1',{'ticket_no':ticket_no}))
-                    assert value['status']==2 and value['ticket_no']==ticket_no and 'PRIVATE' not in str(value)
+                    value=executor.execute(ctx,'ticket-1',ToolCall('get_ticket_status','ticket-status-v2',{'ticket_no':ticket_no}))
+                    assert value['status']==(4 if case==2 and returned else 2) and value['ticket_no']==ticket_no and 'PRIVATE' not in str(value)
                     returned.append(value['status'])
                     if len(returned)==1:raise TransientFailure('AFTER_TICKET_READ',delay_seconds=0)
                     return {'outcome':'ticket-verified'}
@@ -91,10 +91,10 @@ def verify_ticket_tools(connect,environment,passwords,secret,ai_base,runtime_env
                         if case==1:db.execute('UPDATE ticket SET customer_id=%s WHERE id=%s',(customer_id+1,ticket_id))
                         else:db.execute('UPDATE ticket SET status=4 WHERE id=%s',(ticket_id,))
                 result=runner.run_once(tenant)
-                assert (result['tool_calls'],result['model_calls'],result['step_count'],result['retry_count'])==(3,0,3,1)
-                expected=(None,'TICKET_REVOKED','TOOL_RESULT_INVALID')[case]
-                assert result['state']==('SUCCEEDED' if case==0 else 'FAILED') and result['error_code']==expected
-                assert returned==([2,2] if case==0 else [2])
+                assert (result['tool_calls'],result['model_calls'],result['step_count'],result['retry_count'])==((4,0,5,1) if case==2 else (3,0,4,1))
+                expected=(None,'TICKET_REVOKED',None,'BUDGET_EXHAUSTED')[case]
+                assert result['state']==('SUCCEEDED' if case in (0,2) else 'FAILED') and result['error_code']==expected
+                assert returned==([2,2] if case==0 else [2,4] if case==2 else [2])
                 if case==0:
                     for foreign,key,code in [(replace(source,tenant='TICKET_FOREIGN'),secret,'TICKET_SOURCE_REVOKED'),
                                              (source,'wrong-ticket-key-'+'0'*40,'TICKET_AUTHORIZATION_DENIED')]:
@@ -107,15 +107,15 @@ def verify_ticket_tools(connect,environment,passwords,secret,ai_base,runtime_env
                     messages=db.execute('SELECT count(*) FROM session_message WHERE tenant_code=%s AND session_id=%s',(tenant,session_id)).fetchone()[0]
                     receipts=db.execute('SELECT count(*) FROM agent_result_receipt WHERE tenant_code=%s AND run_id=%s',(tenant,run)).fetchone()[0]
                     fact=db.execute('SELECT status FROM ticket WHERE tenant_code=%s AND id=%s',(tenant,ticket_id)).fetchone()[0]
-                assert (payloads,messages,receipts)==(1,1,0) and fact==(4 if case==2 else 2)
+                assert (payloads,messages,receipts)==((2,1,0) if case==2 else (1,1,0)) and fact==(4 if case>=2 else 2)
                 observations.append(dict(case=mode,run_id=str(run),event_id=str(source.source_event_id),state=result['state'],
                     error_code=result['error_code'],tool_calls=result['tool_calls'],model_calls=result['model_calls'],step_count=result['step_count'],
                     retry_count=result['retry_count'],payload_rows=payloads,session_messages=messages,result_receipts=receipts,
-                    observed_ticket_status=fact,handler_statuses=returned,automatic_cache_refresh=False))
+                    observed_ticket_status=fact,handler_statuses=returned,cache_policy='current-version',cache_refreshed=case==2))
             report=ROOT/'.local/verification/runtime-ticket-tools.json';report.parent.mkdir(parents=True,exist_ok=True)
-            report.write_text(json.dumps(dict(schema_version='ticket-tool-qualification-v1',mode='SYNTHETIC_LOCAL_REAL_HTTP_PG',cases=observations,
+            report.write_text(json.dumps(dict(schema_version='ticket-tool-qualification-v2',mode='SYNTHETIC_LOCAL_REAL_HTTP_PG',cases=observations,
                                              performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
-            print('Actual Worker -> ticket Executor/SDK -> customer JAR/restricted PG: 3 cases passed; valid cache resumed; changed owner and changed status blocked old results; no business message or result write; model calls 0',flush=True)
+            print('Actual Worker -> ticket Executor/SDK -> customer JAR/restricted PG: 4 cases passed; unchanged cache reused; changed status refreshed with new budget reservation; revoked owner and insufficient refresh budget blocked; no business message/result write; model calls 0',flush=True)
         except BaseException:
             failed=True;raise
         finally:

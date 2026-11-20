@@ -233,7 +233,8 @@ def test_catalog_is_closed_serial_and_detached_from_registration():
 
 
 @pytest.mark.parametrize('field,value', [('timeout_seconds', True), ('timeout_seconds', float('nan')),
-                                      ('timeout_seconds', 0), ('timeout_seconds', 11), ('authorize', None), ('verify', None)])
+                                      ('timeout_seconds', 0), ('timeout_seconds', 11), ('authorize', None), ('verify', None),
+                                      ('cache_policy','unsafe')])
 def test_invalid_host_registration_is_rejected(field, value):
     with pytest.raises(ValueError):
         definition(**{field: value})

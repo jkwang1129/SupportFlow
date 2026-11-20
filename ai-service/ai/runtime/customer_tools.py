@@ -116,5 +116,5 @@ def ticket_status_tool(client: TicketClient, *, timeout_seconds=3):
                 and ticket_digest(identity.source,identity.run_id,result['snapshot_id'],result['source_hash'],result['ticket_no'],
                                   result['status'],result['updated_at'])==result['resource_version'])
 
-    return ReadTool('get_ticket_status','ticket-status-v1','ticket:read',TicketArguments,TicketResult,
-                    authorize,invoke,verify,timeout_seconds)
+    return ReadTool('get_ticket_status','ticket-status-v2','ticket:read',TicketArguments,TicketResult,
+                    authorize,invoke,verify,timeout_seconds,cache_policy='current-version')

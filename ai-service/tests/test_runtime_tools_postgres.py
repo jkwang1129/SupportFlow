@@ -9,8 +9,8 @@ from threading import Event
 
 import pytest
 
-from ai.runtime.tools import ToolCall, ToolExecutor, ToolRegistry, ToolUnavailable
-from ai.runtime.types import Limits
+from ai.runtime.tools import ToolCall, ToolExecutor, ToolRegistry, ToolUnavailable, ReadAuthorization
+from ai.runtime.types import Limits, fingerprint
 from ai.runtime.worker import RuntimeWorker, TransientFailure
 from test_runtime_store_postgres import store, request, admin
 from test_runtime_tools import ANSWER, definition
@@ -197,3 +197,89 @@ def test_transient_reads_stop_at_existing_run_retry_budget(store):
             db.execute("UPDATE agent_run SET ready_at=clock_timestamp() WHERE state='RETRY_WAIT'")
     assert result['state'] == 'FAILED' and result['error_code'] == 'RETRY_EXHAUSTED'
     assert result['retry_count'] == 2 and result['tool_calls'] == 6 and calls == [1, 1, 1]
+
+
+def versioned(current, checks, calls):
+    def authorize(identity, args, deadline):
+        checks.append(1)
+        value=ANSWER | {'status':current['status']}
+        return ReadAuthorization({'resource_ref':args['ticket_no'],'version':'ticket-v1','arguments_sha256':fingerprint(value)})
+    def invoke(identity,args,deadline):
+        calls.append(current['status'])
+        return ANSWER | {'status':current['status']}
+    def verify(identity,args,result,grant):
+        return result['ticket_no']==args['ticket_no'] and fingerprint(result)==grant.references['arguments_sha256']
+    return executor(authorize=authorize,invoke=invoke,verify=verify,cache_policy='current-version')
+
+
+@pytest.mark.parametrize('changed', [False, True])
+def test_current_version_refreshes_only_when_proof_changes_with_original_counts(store,changed):
+    store.enqueue(request());current={'status':'OPEN'};checks=[];calls=[];returned=[]
+    tool=versioned(current,checks,calls)
+    def handler(ctx):
+        returned.append(tool.execute(ctx,'call-1',proposal())['status'])
+        if len(returned)==1:raise TransientFailure('AFTER_READ',delay_seconds=0)
+        return {'outcome':'done'}
+    runner=worker(store,handler);assert runner.run_once('TENANT_A')['state']=='RETRY_WAIT'
+    if changed:current['status']='CLOSED'
+    result=runner.run_once('TENANT_A')
+    assert result['state']=='SUCCEEDED' and result['retry_count']==1 and result['model_calls']==0
+    assert checks==[1,1] and returned==(['OPEN','CLOSED'] if changed else ['OPEN','OPEN'])
+    assert calls==(['OPEN','CLOSED'] if changed else ['OPEN'])
+    assert (result['tool_calls'],result['step_count'],payload_count())==((4,5,2) if changed else (3,4,1))
+
+
+def test_refresh_requires_a_new_tool_reservation_and_does_not_bypass_limit(store):
+    store.enqueue(request(),Limits(max_tool_calls=3));current={'status':'OPEN'};checks=[];calls=[]
+    tool=versioned(current,checks,calls)
+    def handler(ctx):
+        tool.execute(ctx,'call-1',proposal());raise TransientFailure('AFTER_READ',delay_seconds=0)
+    runner=worker(store,handler);assert runner.run_once('TENANT_A')['state']=='RETRY_WAIT'
+    current['status']='CLOSED';result=runner.run_once('TENANT_A')
+    assert result['state']=='FAILED' and result['error_code']=='BUDGET_EXHAUSTED'
+    assert result['tool_calls']==3 and result['step_count']==4 and calls==['OPEN'] and checks==[1,1] and payload_count()==1
+
+
+def test_logical_anchor_blocks_argument_substitution_before_any_new_authorization(store):
+    store.enqueue(request());current={'status':'OPEN'};checks=[];calls=[];attempts=[]
+    tool=versioned(current,checks,calls)
+    def handler(ctx):
+        attempts.append(1)
+        tool.execute(ctx,'call-1',proposal('T-1' if len(attempts)==1 else 'T-2'))
+        raise TransientFailure('AFTER_READ',delay_seconds=0)
+    runner=worker(store,handler);assert runner.run_once('TENANT_A')['state']=='RETRY_WAIT'
+    result=runner.run_once('TENANT_A')
+    assert result['state']=='FAILED' and result['error_code']=='EXECUTION_ERROR'
+    assert result['tool_calls']==2 and result['step_count']==3 and checks==[1] and calls==['OPEN']
+
+
+@pytest.mark.parametrize('proof',[True,ReadAuthorization({'resource_ref':'T-1'}),
+                                 ReadAuthorization({'resource_ref':'T-1','arguments_sha256':'not-a-digest'})])
+def test_versioned_reads_require_explicit_current_resource_version_proof(store,proof):
+    store.enqueue(request());tool=executor(cache_policy='current-version',authorize=lambda *_:proof,
+                                         invoke=lambda *_:pytest.fail('unversioned authorization invoked read'))
+    result=worker(store,lambda ctx:tool.execute(ctx,'call-1',proposal())).run_once('TENANT_A')
+    assert result['state']=='FAILED' and result['error_code']=='TOOL_AUTHORIZATION_INVALID'
+    assert result['tool_calls']==1 and result['step_count']==2 and payload_count()==0
+
+
+def test_changing_or_revisiting_cached_versions_still_stops_at_shared_tool_budget(store):
+    store.enqueue(request());current={'status':'OPEN'};checks=[];calls=[]
+    tool=versioned(current,checks,calls)
+    def handler(ctx):
+        for index in range(10):
+            current['status']='CLOSED' if index%2 else 'OPEN'
+            tool.execute(ctx,'call-1',proposal())
+        return {'outcome':'must-not-finish'}
+    result=worker(store,handler).run_once('TENANT_A')
+    assert result['state']=='FAILED' and result['error_code']=='BUDGET_EXHAUSTED'
+    assert result['tool_calls']==8 and result['step_count']==9 and result['model_calls']==0
+    assert checks==[1]*6 and calls==['OPEN','CLOSED'] and payload_count()==2
+
+
+def test_version_anchor_and_permission_steps_also_consume_the_total_step_budget(store):
+    store.enqueue(request(),Limits(max_steps=2));checks=[];calls=[]
+    tool=versioned({'status':'OPEN'},checks,calls)
+    result=worker(store,lambda ctx:tool.execute(ctx,'call-1',proposal())).run_once('TENANT_A')
+    assert result['state']=='FAILED' and result['error_code']=='BUDGET_EXHAUSTED'
+    assert result['step_count']==2 and result['tool_calls']==1 and checks==[1] and calls==[] and payload_count()==0

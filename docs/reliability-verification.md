@@ -593,3 +593,20 @@ SDK只GET空body、固定Run来源及ASCII工单路径、禁止模型URL/JWT；�
 - `python scripts/test-agent-runtime.py --with-java-delivery`：**143项Python专项+6次角色负面**，原实际Java交付/来源/Worker缓存撤权/许可/双向回复与丢回执全部通过，`b2-ticket-sdk-runtime-first.log`。新3条实际Worker→Executor/SDK→read-tools开启而source/result关闭的客户JAR→PG：①本人历史工单status2，首次读取后重试，当前授权相同才复用，SUCCEEDED且handler收到2次status2；②首次后工单改给别的客户，再读TICKET_REVOKED/FAILED，handler仅收到初次值；③首次后数据库status改4、更新时间不变，新授权投影SHA变化，旧缓存TOOL_RESULT_INVALID/FAILED，status4没有被错误替换为缓存status2向后交付。错租户/错误服务密钥实际HTTP拒绝。逐Run核实tool_calls=3、model_calls=0、step_count=3、retry_count=1、payload_rows=1、原来源消息=1、结果回执=0。生成`.local/verification/runtime-ticket-tools.json`，机器证据保留三例不同终态/实际工单状态/handler收到的值；performance/token_cost为NOT_MEASURED。
 
 本地首轮均通过。Java/SQL未改，本批不重复客服PG103/KB4/九模块/三套完整服务（上批已有实测，远端CI重跑精确提交）。边界：仍无真实模型工具选择/任务质量或生产数据。当前投影变化明确失败，不自动刷新缓存和继续任务，下一项补预算约束的可变只读失效策略；不能把该预期失败写成“已自动恢复”。之后再接知识/写工具、bounded loop、HITL/自动触发。回滚停止注册新Ticket工具/关闭read-tools开关，保留Step/正文/预算/快照，不换Run绕过失败；既有业务工单与Workflow保持。
+
+b2819d6的[CI 44732054985](https://github.com/jkwang1129/SupportFlow/actions/runs/44732054985)、a7a53c3的[CI 44733196937](https://github.com/jkwang1129/SupportFlow/actions/runs/44733196937)两个job分别全部通过，含工单最小接口/SDK三例真实Worker验证和原三套完整部署流程。
+
+## B2 子批次5：受预算约束的可变只读缓存失效（2026-11-20）
+
+基线a7a53c3。新增ADR-0009；修改tools.py的ReadTool/cache_policy、Executor稳定请求绑定与按当前授权版本选择正文键；工单执行版本ticket-status-v2，HTTP/schema仍ticket-status-v1；补纯契约/真PG、实际工单夹具四例、矩阵/本记录。无SQL/Java源码/依赖/默认开关或自动触发变化，不建第二套Checkpoint/缓存数据库。source工具默认immutable不变。
+
+先INTERNAL/NONE参数绑定Step固定逻辑key→工具/版本/主体/参数SHA，恢复参数替换在新授权前拒绝；再新TOOL/READ当前核权。current-version须有明确资源引用/64位小写Hex当前版本证明，只有True/缺证据不够。正文键包含逻辑key及本次证明：不变复用，变化须再预留TOOL/READ、核对当前证明并原子存新正文。绑定也消耗Step总预算；授权不能变成免费数据返回，刷新也不重置Run调用/重试预算。各版本正文保留审计。旧v1工具提案不被新Registry静默当v2执行。
+
+环境Python3.11.5/隔离PG17/上一批JDK25真实客户JAR，模型全Mock/合成工具适配器与实际业务接口分别注明：
+
+- `cd ai-service; python -m pytest -q tests/test_runtime_tools.py tests/test_runtime_tickets.py`：**121项通过**（工具63+工单58），`b2-versioned-read-unit-first.log`；含旧版本拒绝、非法缓存政策、当前版本变化读取新正文。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b2-versioned-read-ai-final.xml`：**364 passed、142 skipped、1 xfailed**，`b2-versioned-read-ai-final.log`。条件PG由专项执行；原引用正文xfail保留。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**152项Python专项+6次角色负面通过**，原实际交付/来源/许可/双向回复/丢回执均通过，`b2-versioned-read-runtime-first.log`。新增9项真PG：版本不变/改变分别复用/新读；max_tools=3在新读前失败不交付新数据；参数替换在第二次授权前拒绝；三种缺/非法资源版本证明拒绝；反复切换两个版本最终仍在tool_calls=8预算处停止（仅两次真正invoke、每次缓存访问均新授权）；max_steps=2使绑定+授权后在读取前停止。合成资源ACL不冒充业务端权限测试。
+- 同一专项内新增更新后的**4条实际Worker→Executor/TicketSDK→新客户JAR→受限PG**：①相同版本SUCCEEDED，tool=3/step=4/payload=1，handler=[2,2]；②归属撤销FAILED/TICKET_REVOKED，tool=3/step=4/payload=1，handler=[2]；③状态改4（更新时间未改）自动新预留读取后SUCCEEDED，tool=4/step=5/payload=2，handler=[2,4]；④同样改4但max_tool_calls=3，FAILED/BUDGET_EXHAUSTED，tool=3/step=4/payload=1，handler=[2]。均retry=1/model=0，业务来源消息=1/结果回执=0。真实SQL状态与收到的值分别记录在`.local/verification/runtime-ticket-tools.json` v2；旧v1三例原报告保留`.local/implementation/b2-ticket-sdk-results-v1.json`。performance/token_cost均NOT_MEASURED。
+
+本地首轮全部通过；没有把状态变化旧失败记录改写成旧版本已成功。Java/SQL未改，不重复上批103客服PG/4KB/九模块/三套完整服务，精确提交由远端CI重跑。边界：若资源在“本次授权→实际新读取”之间再次改变，仍拒绝不一致结果；尚无跨在途网络的即时撤权/无限刷新保证。无真正模型循环/知识Embedding预算/写工具/审批自动触发；下一项先核查模型单次调用入口再接最小循环，完整Gateway/上下文/知识工程沿用原计划。回滚停用v2注册/关闭read-tools，保留绑定/授权/所有版本正文/Run计数，不能把v2计划指向v1代码或删除UNKNOWN。

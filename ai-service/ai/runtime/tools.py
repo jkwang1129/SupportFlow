@@ -143,6 +143,7 @@ class ReadTool:
     invoke: Callable = field(repr=False)
     verify: Callable = field(repr=False)
     timeout_seconds: float = 3
+    cache_policy: str = 'immutable'
 
     def __post_init__(self):
         if not isinstance(self.name, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,47}', self.name):
@@ -155,6 +156,8 @@ class ReadTool:
             raise ValueError('Current resource authorization, adapter and result binding are required')
         if type(self.timeout_seconds) not in (int, float) or not .05 <= self.timeout_seconds <= 10:
             raise ValueError('Invalid tool deadline')
+        if self.cache_policy not in ('immutable','current-version'):
+            raise ValueError('Invalid tool cache policy')
 
 
 class ToolRegistry:
@@ -182,6 +185,7 @@ class ToolRegistry:
         # Fresh schemas: model/catalog consumers cannot mutate registered code.
         return [{'name': t.name, 'version': t.version, 'scope': t.scope,
                  'effect': 'READ', 'parallel': False, 'timeout_seconds': t.timeout_seconds,
+                 'cache_policy': t.cache_policy,
                  'arguments': _closed_schema(t.arguments, arguments=True),
                  'result': _closed_schema(t.result)} for t in self._tools.values()]
 
@@ -239,6 +243,11 @@ class ToolExecutor:
         intent = {'operation': tool.name, 'version': tool.version,
                   'resource_ref': identity.source.principal_ref, 'arguments_sha256': fingerprint(arguments)}
 
+        if tool.cache_policy=='current-version':
+            # A stable anchor forbids changing tool/arguments across resume.
+            # Only the separately authorized *resource version* may change.
+            context.step('bind:'+fingerprint(key)[:40],'INTERNAL','NONE',intent,lambda:{'outcome':'bound'})
+
         def authorize():
             grant = self._call(tool, tool.authorize, identity, json.loads(json.dumps(arguments)))
             if grant is True:
@@ -250,6 +259,11 @@ class ToolExecutor:
         # A fresh current-ACL check is itself an accounted read step, even when
         # a prior tool result is reusable. Never cache permission across resumes.
         grant = ReadAuthorization(context.step('auth:' + uuid4().hex, 'TOOL', 'READ', intent, authorize))
+        if tool.cache_policy=='current-version':
+            digest=grant.references.get('arguments_sha256')
+            if not isinstance(digest,str) or not re.fullmatch('[0-9a-f]{64}',digest) or not grant.references.get('resource_ref'):
+                raise PermanentFailure('TOOL_AUTHORIZATION_INVALID')
+            key='read:'+fingerprint({'logical_key':key,'authorization':dict(grant.references)})[:48]
 
         def verified(output):
             result = self._validate(tool.result, output, 'TOOL_RESULT_INVALID')

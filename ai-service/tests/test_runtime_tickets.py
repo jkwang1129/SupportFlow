@@ -106,7 +106,7 @@ def tool_executor(server):
     return ToolExecutor(ToolRegistry([ticket_status_tool(client)]),frozenset({'ticket:read'}))
 
 
-CALL=ToolCall('get_ticket_status','ticket-status-v1',{'ticket_no':'TK-1'})
+CALL=ToolCall('get_ticket_status','ticket-status-v2',{'ticket_no':'TK-1'})
 
 
 def test_tool_uses_current_business_proof_and_keeps_tenant_out_of_model_result():
@@ -130,19 +130,25 @@ def test_changed_resource_between_authorization_and_invoke_is_not_reported_as_ve
     assert calls==[1,1]
 
 
-def test_cache_is_not_delivered_as_current_after_actual_status_projection_changes():
-    value=envelope();calls=[];cached=[]
+def test_changed_current_version_refreshes_payload_instead_of_delivering_old_status():
+    value=envelope();calls=[];cached={}
     def server(_):calls.append(1);return response(value)
     ctx=source_context();original=ctx.payload_step
     def payload(*args):
-        if not cached:cached.append(original(*args))
-        return copy.deepcopy(cached[0])
+        if args[0] not in cached:cached[args[0]]=original(*args)
+        return copy.deepcopy(cached[args[0]])
     ctx.payload_step=payload;tools=tool_executor(server)
     tools.execute(ctx,'ticket-1',CALL)
     value['data']['status']=4
     value['data']['resource_version']=ticket_digest(INPUT,RUN,value['data']['snapshot_id'],value['data']['source_hash'],'TK-1',4,value['data']['updated_at'])
-    with pytest.raises(PermanentFailure,match='TOOL_RESULT_INVALID'):tools.execute(ctx,'ticket-1',CALL)
-    assert calls==[1,1,1]
+    assert tools.execute(ctx,'ticket-1',CALL)['status']==4
+    assert calls==[1,1,1,1] and len(cached)==2
+
+
+def test_old_tool_execution_version_is_not_silently_reinterpreted():
+    tools=tool_executor(lambda _:pytest.fail('old execution version reached network'))
+    with pytest.raises(PermanentFailure,match='TOOL_VERSION_MISMATCH'):
+        tools.execute(source_context(),'ticket-1',ToolCall('get_ticket_status','ticket-status-v1',{'ticket_no':'TK-1'}))
 
 
 def test_transport_does_not_allow_ticket_protocol_to_target_legacy_or_writable_operations():
