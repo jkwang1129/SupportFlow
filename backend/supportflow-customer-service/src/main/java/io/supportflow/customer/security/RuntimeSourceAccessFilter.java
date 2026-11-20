@@ -33,23 +33,28 @@ import java.util.regex.Pattern;
 public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
     private static final String AUDIENCE = "supportflow-customer-runtime:v1";
     private static final String UUID_PATTERN = "[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}";
-    private static final Pattern ROUTE = Pattern.compile("/api/customer/internal/runtime/events/(" + UUID_PATTERN + ")/runs/(" + UUID_PATTERN + ")/(snapshot|reply)");
+    private static final Pattern ROUTE = Pattern.compile("/api/customer/internal/runtime/events/(" + UUID_PATTERN + ")/runs/(" + UUID_PATTERN + ")/(snapshot|reply|tickets/([A-Za-z0-9][A-Za-z0-9_-]{0,63}))");
     private static final Pattern CREDENTIAL = Pattern.compile("runtime:ai:([0-9]{1,12}):([0-9a-f]{64}):([0-9a-f]{64})");
     private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private final String secret;
     private final boolean sourceEnabled;
     private final boolean resultEnabled;
+    private final boolean readToolsEnabled;
     private final Clock clock;
 
     @Autowired
     public RuntimeSourceAccessFilter(@Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String secret,
                                      @Value("${supportflow.bot.runtime-source-enabled:false}") boolean enabled,
                                      @Value("${supportflow.bot.runtime-result-enabled:false}") boolean resultEnabled,
+                                     @Value("${supportflow.bot.runtime-read-tools-enabled:false}") boolean readToolsEnabled,
                                      @Value("${SUPPORTFLOW_CUSTOMER_REALTIME_SECRET:}") String realtime,
                                      @Value("${SUPPORTFLOW_CUSTOMER_OPS_SECRET:}") String ops,
                                      @Value("${SUPPORTFLOW_CUSTOMER_TENANT_SECRET:}") String tenant) {
-        this(secret, enabled, resultEnabled, List.of(realtime, ops, tenant), Clock.systemUTC());
+        this(secret, enabled, resultEnabled, readToolsEnabled, List.of(realtime, ops, tenant), Clock.systemUTC());
+    }
+    public RuntimeSourceAccessFilter(String secret,boolean enabled,boolean resultEnabled,String realtime,String ops,String tenant) {
+        this(secret,enabled,resultEnabled,false,List.of(realtime,ops,tenant),Clock.systemUTC());
     }
     public RuntimeSourceAccessFilter(String secret,boolean enabled,String realtime,String ops,String tenant) {
         this(secret,enabled,false,List.of(realtime,ops,tenant),Clock.systemUTC());
@@ -58,10 +63,13 @@ public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
         this(secret,enabled,false,otherSecrets,clock);
     }
     RuntimeSourceAccessFilter(String secret, boolean enabled, boolean resultEnabled, List<String> otherSecrets, Clock clock) {
-        if ((enabled || resultEnabled) && !CustomerInternalCredential.usable(secret)) throw new IllegalArgumentException("Runtime service credential is not configured");
+        this(secret,enabled,resultEnabled,false,otherSecrets,clock);
+    }
+    RuntimeSourceAccessFilter(String secret, boolean enabled, boolean resultEnabled, boolean readToolsEnabled, List<String> otherSecrets, Clock clock) {
+        if ((enabled || resultEnabled || readToolsEnabled) && !CustomerInternalCredential.usable(secret)) throw new IllegalArgumentException("Runtime service credential is not configured");
         if (CustomerInternalCredential.usable(secret) && otherSecrets.stream().filter(CustomerInternalCredential::usable).anyMatch(secret::equals))
             throw new IllegalArgumentException("Runtime source credential must be distinct from other callers");
-        this.secret = secret; this.sourceEnabled = enabled; this.resultEnabled=resultEnabled; this.clock = clock;
+        this.secret = secret; this.sourceEnabled = enabled; this.resultEnabled=resultEnabled; this.readToolsEnabled=readToolsEnabled; this.clock = clock;
     }
 
     @Override protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -87,7 +95,9 @@ public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
             reject(response, 403, "Runtime operation is not authorized"); return;
         }
         boolean reply=route.group(3).equals("reply");
-        if (!(reply ? resultEnabled : sourceEnabled)) { reject(response, 503, "Runtime API is disabled"); return; }
+        boolean ticket=route.group(4)!=null;
+        if (ticket && !request.getMethod().equals("GET")) { reject(response,403,"Runtime read operation requires GET"); return; }
+        if (!(ticket ? readToolsEnabled : reply ? resultEnabled : sourceEnabled)) { reject(response, 503, "Runtime API is disabled"); return; }
         // Exact reply JSON may escape each content byte as six characters.
         // The parsed content still has the independent 8192 UTF-8 byte bound.
         int limit=reply ? 65536 : 8192;

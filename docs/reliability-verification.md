@@ -561,3 +561,21 @@ a9dd99c对应的[CI 44706510968](https://github.com/jkwang1129/SupportFlow/actio
 - `python scripts/test-agent-runtime.py --with-java-delivery`：**143项Python专项+6次角色负面、原真实Java交付/来源/控制面/双向写与丢回执全部通过**，`b2-source-tool-runtime-first.log`。额外2条实际Worker→Executor→签名SourceSDK→客户JAR→PG，不替换Store、SDK或业务授权为Stub：正常Run先读后RETRY_WAIT，恢复先当前授权再复用正文，终态SUCCEEDED且handler收到2次同正文；另一Run先读后人工接管，再尝试时SOURCE_REVOKED/FAILED，handler只曾收到第一次正文。逐Run从真实PG核对tool_calls=3（2个授权+1个读取）、model_calls=0、step_count=3、retry_count=1、payload_rows=1。终态失败是预期负例，不被改成成功。生成`.local/verification/runtime-source-tools.json`，仅引用/状态/计数、performance和token_cost均NOT_MEASURED，现有CI artifact自动收集。
 
 本批首次实际专项通过；新增两个单位负例没有改变实测适配器/HTTP夹具代码。没有重复本地SQL/Java九模块/三套完整部署验收，无相关源码改变；远端CI重跑精确提交。边界：get_current_message是现有业务来源读取，工单/知识工具仍待接入；没有真实模型Tool选择/任务质量、性能/费用数据，也未启动业务handler或自动Worker。撤权阻止后续读取/缓存交付，不能追回此前已交付内容；存储TTL不是物理清理。回滚停止注册此工具或关闭source开关，保留快照/payload/Step/预算，不删除UNKNOWN/失败证据。
+
+d0725c9的[CI 44707981353](https://github.com/jkwang1129/SupportFlow/actions/runs/44707981353)、1e55f8e的[CI 44708950147](https://github.com/jkwang1129/SupportFlow/actions/runs/44708950147)两个job分别全部成功，包括来源工具的实际Worker撤权验证和原三套完整服务部署路径。
+
+## B2 子批次3：Java工单最小状态业务API（2026-11-20）
+
+基线1e55f8e。原TicketService.detail只允许企业成员且返回完整描述/内部时间线，不能让访客伪装为成员。新增`service/bot/AgentTicketQueries.java`与`controller/internal/RuntimeTicketController.java`，复用现有工单表、客户服务、SourceSnapshot和同一RLS事务；扩展RuntimeSourceAccessFilter只接受精确ticket路径GET、独立默认关闭read-tools开关；新增5项窄认证测试/12项真实PG，更新PG和真实JAR默认关闭夹具、ADR-0008/矩阵/本记录。没有SQL迁移、凭据/账号、默认业务路由或新依赖变更。
+
+当前服务端source的customer_ref非空且客户未删除/匿名化/合并时，只读同一客户的企业内部工单；匿名/合成来源只读customer_id为空且source_session_id和session_no都对应当前来源的工单。平台工单、其他租户/客户、软删除统一无内容。读取先重验当前已交付来源/会话/消息/快照时效/摘要，再锁客户和工单，锁在同一事务持有。结果严格十字段状态投影（status整数1～5、无时区ISO原时间、当前来源绑定和投影SHA），不返回客户ID/姓名/电话或标题/描述/内部时间线。投影SHA不是权限或整行MVCC版本。来源准备期间可读，AI租约/取消仍由Worker执行层核验，读服务签名不是写许可。GET可能幂等创建派生快照，不改工单/业务消息/计费/结果回执。
+
+本地JDK25.0.5+8/Maven3.9.16/Python3.11.5/隔离PG17、合成源/工单/客户、Mock模型：
+
+- `mvn -B -f backend/pom.xml -pl supportflow-customer-service -am test -Dtest=RuntimeTicketAccessFilterTest,RuntimeSourceAccessFilterTest,RuntimeReplyAccessFilterTest -Dsurefire.failIfNoSpecifiedTests=false`：**21项通过**（新5+来源9+结果7），`b2-ticket-read-unit-first.log`。精确ticket/source/body绑定、三开关独立/关闭不读body、非GET/query/body/非法路径拒绝、默认凭据/共享其他角色密钥拒绝。
+- `python scripts/test-customer-rls.py --with-ai`：首轮**102项客服PG+4KB通过**，`b2-ticket-read-pg-first.log`；补同事务真实行锁观察后最终**103项客服PG+4KB通过**，`b2-ticket-read-pg-final.log`。新12项含匿名精确会话归属、客户本人历史、其他客户/租户、平台/删除/匿名化/合并、来源接管/关闭/删除、变更409/过期410、状态改变摘要变化（即使更新时间相同）、6路并发同一快照且无消息/结果回执新增、认证先于缺表Readiness、撤销SELECT后的503无SQL/恢复可读、缺事务/租户拒绝；真实管理员连接对已授权ticket/customer分别FOR UPDATE NOWAIT得到55P03，确认SHARE锁实际持有至事务完成。
+- `mvn -B -f backend/pom.xml verify`：**九模块成功**，`b2-ticket-read-java.log`。追加行锁PG测试单独由最终PG脚本编译执行，未把普通Maven的条件skip当通过。
+- `python scripts/test-security-flow.py`：**默认新库、历史升级、CLI初始化三套实际服务全部通过**，含原业务/媒体/知识/WS/计费和45项Java Readiness故障，`b2-ticket-read-services.log`。本组独立执行，期间没有并行其他验收。
+- `python scripts/test-agent-runtime.py --with-java-delivery`：**143项Python专项+6次危险角色负面**、原Java交付/来源/当前权限证明/真实Worker缓存撤权/许可控制面/双向回复与丢回执全部通过，`b2-ticket-read-runtime.log`。实际新客户JAR仅开启source时，ticket GET匿名401、有效签名503/Retry-After5，证明旧开关未开启新工具API；result默认关闭仍验证。Python实现未改，普通AI结果沿用上一批305/133/1，当前远端CI仍会重跑。
+
+所有本地组首轮通过；追加行锁测试由最后一次专项通过，没有放松权限/删负例。边界：本批尚无Ticket SDK/ReadTool或实际JAR启用工单API的Worker联调，不能把MockMVC+真PG冒充完整Agent工单链路；下一批独立完成。没有性能/模型质量/Token/费用或生产业务数据。回滚关闭SUPPORTFLOW_BOT_RUNTIME_READ_TOOLS_ENABLED/回退二进制，保留已产生快照、Run/Step及预算，无迁移回退；工单控制台和旧Workflow权限不变。

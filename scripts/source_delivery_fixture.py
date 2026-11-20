@@ -89,6 +89,11 @@ def verify_sources(connect, environment, passwords, secret, sources, runtime_dsn
                     disabled=await anonymous.get(base+result_path,headers={HEADER:credential(secret,'GET',result_path,source.tenant,b''),
                                                                         'X-Tenant-Code':source.tenant})
                     assert disabled.status_code==503 and disabled.headers['Retry-After']=='5'
+                    ticket_path=path.removesuffix('snapshot')+'tickets/NO-SUCH-TICKET'
+                    assert (await anonymous.get(base+ticket_path)).status_code==401
+                    disabled_read=await anonymous.get(base+ticket_path,headers={HEADER:credential(secret,'GET',ticket_path,source.tenant,b''),
+                                                                             'X-Tenant-Code':source.tenant})
+                    assert disabled_read.status_code==503 and disabled_read.headers['Retry-After']=='5'
             asyncio.run(qualify())
             with connect('customer_db') as connection:
                 count=connection.execute("SELECT count(*) FROM agent_source_snapshot WHERE event_id=ANY(%s)",([row[1] for row in sources],)).fetchone()[0]
