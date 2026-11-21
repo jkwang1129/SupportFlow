@@ -1173,3 +1173,12 @@ AI 新增签名客服查询。一条请求只接受一个会话编号。受限�
 - `PYTEST_ADDOPTS='-k runtime_approval_review' python scripts/test-agent-runtime.py --with-java-delivery` 真实数据库定向 13 项和完整服务组合通过。使用合成角色验证三条由会话查找、读取原提案和提交决定的路径。批准执行产生一张工单及一条回执。批准后接管及过期两案均无工单写入。原日志 `b3-customer-active-runtime.log` 和报告 `runtime-ticket-approval.json` v5。
 
 AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/jkwang1129/SupportFlow/actions/runs/44896041748) 和 [CI 44895871470](https://github.com/jkwang1129/SupportFlow/actions/runs/44895871470)。坐席工作台分批接入。
+
+## B3 坐席工作台审批（2026-11-22）
+
+工作台仅在 `VITE_RUNTIME_APPROVAL_REVIEW_ENABLED=true` 且当前登录人为企业管理员或主管、会话尚未接管时显示工单审批。点击时查询当前会话和原提案。标题和正文按纯文本展示，决定携带原审批 ID 与摘要。提交期间禁用重复操作。切换会话清空原内容，遇到冲突清除旧按钮并提供刷新。后端审批权限继续独立生效。显示已批准表示收到审查决定，工单创建由执行结果单独确认。
+
+- `cd frontend; npm run build` 通过 TypeScript 与生产构建。构建仍提示应用入口包含超过 500 kB 的分块。原日志 `b3-approval-workspace-build.log`。
+- 从仓库根启动 `node frontend/scripts/approval-workspace-fixture.mjs`，另一个终端执行 `./scripts/test-approval-workspace.ps1`。实际 Chromium 加载工作台，局部替身供应会话及审批 HTTP 流程。5 组浏览器断言通过，验证读取保留换行与标签文本、批准和撤销、空提案、过期冲突移除旧动作、拒绝，以及普通坐席不显示入口。替身记录提交携带的审批 ID、参数摘要和固定决定字段均匹配。后端真实数据库与真实服务证据见上一批。
+
+前端和客服、AI 审批开关均需启用。关闭前端开关即可撤下交互入口，数据库和既有决定继续保留。

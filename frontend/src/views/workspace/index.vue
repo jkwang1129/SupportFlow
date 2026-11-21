@@ -200,6 +200,11 @@
                 <el-icon :size="13"><Tickets /></el-icon>
                 转工单
               </el-button>
+              <TicketApprovalReview
+                v-if="approvalReviewEnabled && !activeSession.agentId && [1, 2].includes(activeSession.status)"
+                :key="activeSession.sessionNo"
+                :session-no="activeSession.sessionNo"
+              />
               <!-- 客户 360：接单前先看这个人是谁、之前发生过什么（按客户编号跳，不用再问一遍） -->
               <el-button
                 size="small"
@@ -654,6 +659,7 @@
 
 <script setup lang="ts">
 import SecureChatImage from '../../components/SecureChatImage.vue'
+import TicketApprovalReview from '../../components/TicketApprovalReview.vue'
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
@@ -712,6 +718,9 @@ import { RealtimeClient, type RealtimeMessage, type RealtimeState } from '../../
 const router = useRouter()
 
 const userStore = useUserStore()
+const approvalReviewEnabled = computed(() => import.meta.env.VITE_RUNTIME_APPROVAL_REVIEW_ENABLED === 'true'
+  && userStore.userType === 2
+  && userStore.roles.some((role) => role === 'ADMIN' || role === 'SUPERVISOR'))
 
 /** 聊天记录分页大小（与后端接口默认值一致） */
 const HISTORY_PAGE_SIZE = 30
