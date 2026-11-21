@@ -990,3 +990,24 @@ TicketCreationClient.create在I/O前核可信RunInput/Lease/tenant/owner/fence/U
 `python scripts/test-agent-runtime.py --with-java-delivery`最终退出0，`b2-ticket-sdk-runtime-final.log`：257项Runtime全部通过，原全部实际Java/来源/工单/知识/9例Loop与真实进程恢复/7例知识工具/5例发布/核销/操作许可/回复组合保持。更新后的3例建单组合通过，机器报告`runtime-ticket-creation-api.json` v2：首个未提交请求由产品TicketCreationClient真实POST→Java→受保护AI许可/受限PG，独立手工摘要/回执GET核对；共享摘要、全局long字符串元数据、冻结回执及receipt_reference写入实际AI Step/Run结果。取消后SDK只GET确认过去工单，Run保持FAILED/SIDE_EFFECT_UNKNOWN；来源接管时SDK拒绝且0业务写。原工单/事件/回执各1、客户3→4与原消息1保持，所有case仅预留1Tool/1Step/0Model/0Retry；独立协议负例是显式宿主请求，SDK本身尚非预算执行器。报告sdk=VERIFIED_EXPLICIT_WRITE_AND_RECEIPT_CLIENT，model_write_tool=NOT_IMPLEMENTED；没有把丢弃确认描述为完整恢复/核销。
 
 本批无Java生产/SQL/默认业务变更，不在本地重跑刚全绿6799b6c的139客服PG/19KB、六库迁移及三套完整服务；新Java参数向量、AI全量/共享transport单元、当前JAR全部组合已实跑。当前精确提交CI仍全跑这些专项与三套服务。无并行Maven或完整服务验收。
+
+8f65bf2对应的[CI 44882505302](https://github.com/jkwang1129/SupportFlow/actions/runs/44882505302)两个job全部成功；建单SDK子批次本地/远端退出条件完成。
+
+## B2 固定建单WRITE工具与共享执行预算（2026-11-21）
+
+基线8f65bf2。新增`ai/runtime/ticket_write_tool.py`、工具单元/PG测试、真实TCP故障组合及ADR-0027；在既有ToolRegistry/ToolExecutor增加WriteTool分支，ReadTool原执行路径保持。闭合参数只title/content，原8KiB ToolCall整体上限、业务文本边界、Scope/版本/当前身份及有界回调复用。默认不注册模型WRITE Loop/新路由，不加服务/库/依赖/表或通用网络代理。
+
+每Run每操作先固定工具/原文参数Hash/服务地址与策略Hash（不含可轮换密钥），换模型call key不能改变正文/目标；再计当前来源READ核权，构造ticket.create精确业务摘要，只有预留TOOL WRITE后才能调用SDK。Java再次核当前来源/主体/许可/原文并同事务创建业务/回执。Step只保存核验后的业务引用，不以payload缓存冒充写成功；任意同Run RESERVED/UNKNOWN写拒绝新的副作用。成功Step恢复只独立计READ查匹配回执，不重查当前来源或重发POST；更换正文/服务策略拒绝，旧成功Step保留。瞬时POST错误只允许一次独立预算GET；无回执/查询错/预算不足仍UNKNOWN并阻断下一来源，不回退预算、不自动核销终态。
+
+本地Python3.11.5/JDK25/隔离PG17，全为显式宿主合成ToolCall/数据/凭据；无.env/供应商调用或模型WRITE决策：
+
+- 工具单元首轮103过/2失败，`b2-ticket-write-unit-first.log`：NUL/超限ToolCall在构造时已拒绝，测试错误期待进入Executor；改成构造后篡改提案，检验Executor再次拒绝，未放松限制。最终`python -m pytest -q tests/test_runtime_write_tools.py tests/test_runtime_tools.py`105项全部通过＝新增42+原63，`b2-ticket-write-unit-final-v2.log/xml`。覆盖Scope/版本/字段/参数、伪授权/意图/结果、私有正文排除、回调参数副本、精确预留顺序、单次POST/查询、已有成功只确认、其他call key不可改原文及未知写不重放。
+- AI普通全量923 passed、281 skipped、1 xfailed，`b2-ticket-write-ai-final.log/xml`；新增19项PG由独立脚本实跑，原引用正文xfail保留。对应RAG契约24项全部执行通过、gate_passed=true。
+- `python scripts/test-agent-runtime.py --with-java-delivery`首轮276项中275过/1失败，`b2-ticket-write-runtime-first.log/xml`：新来源撤权Stub误用HTTP404，原source协议为HTTP200业务code40402，实际SDK正确报SOURCE_PROTOCOL_ERROR。只修夹具后，`PYTEST_ADDOPTS='-k ticket_write_tool' python scripts/test-agent-runtime.py --with-java-delivery`的新增19项全部通过、原257项deselected（其首轮全通过），`b2-ticket-write-runtime-targeted-final.log`。两轮累计覆盖276个不同用例，不声称本地曾单轮276全绿；精确提交CI不带筛选，重新全跑。
+- 新19项PG使用实际受限AI角色/Worker/SDK/Step许可，customer HTTP为确定性Stub。正常3Steps/2Tools/0Model；同Run另一个call key只GET确认总4Steps/3Tools；丢确认只1POST+1GET仍成功。无回执/查询故障/授权拒绝/坏回执均保留UNKNOWN、无自动重试且后续同会话来源PENDING；TOOL预算0/1先于来源/POST停止，预算2丢确认不能越限查询；来源撤权/无Scope无WRITE，取消后迟到结果不能成功。成功Step已提交但ACK丢失后新Worker只GET确认，总4Steps/3Tools/1Retry，来源撤权不抹去过去事实；更换服务地址/原文或篡改业务引用失败，轮换宿主Key不改变策略绑定。来源503在原预算自然ready_at重试，只有1POST，原正文不入Step或payload。Key轮换用例是配置绑定测试，不冒充真实服务凭据轮换演练。
+
+边界/回滚：显式宿主Scope允许的仅是本项目固定未指派内部工单，不代表退款/其他高风险动作免审批。模型WRITE选择Loop、可信触发/Profile Resolver、HITL、工单UNKNOWN终态核销和生产限额/运维仍未完成。回滚不注册新工具或回退执行器写分支，保留来源/Java许可/原子业务、已提交工单/回执、Run成功/未知Step与原预算。无语义质量/生产规模/性能/付费Token或收益成果。
+
+定向Runtime命令最终退出0，旧所有实际组合/3例建单SDK/5例报告发布/核销/操作许可/回复保持。新增`ticket_write_tool_fixture.py`复用实际JAR并记录TCP代理观察，`.local/verification/runtime-ticket-write-tool.json`10案全部通过：正常3Steps/2Tools，1来源HTTP/1POST/0GET；真实上游事务提交但代理扣留正文直到SDK总期限，Runtime单独计READ查询确认，总4Steps/3Tools，1POST/1GET；代理未转发POST时404回执保持UNKNOWN；预算2在GET前阻断且业务已提交不冒称失败无副作用；预算0/无Scope/坏参数在HTTP前拒绝；来源接管只有1次来源核权、0POST；成功WRITE Step提交丢ACK，新Worker在人工接管/关闭后仅GET确认，总4Steps/3Tools/1Retry，无重新来源/POST；取消发生在真实业务提交后不能写迟到成功，UNKNOWN保持。所有已提交案恰1工单/1事件/1回执、客户计数3→4、原消息仍1；未提交案0工单/事件/回执、客户计数3，均0模型调用/无正文payload。三种UNKNOWN案再次入队同会话来源仍PENDING。代理故意等5秒/SDK1秒是故障注入，不是P95。模型ToolCall为显式合成宿主选择，非模型自主建单质量评测。
+
+本批无Java生产/SQL/默认Workflow变更；刚全绿8f65bf2已包含139项客服PG/19KB/六库迁移/三套完整服务，本地不重复，保留当前原全部实际Runtime组合与新10例；精确提交CI继续全跑上述专项及276项Runtime（不带PYTEST_ADDOPTS筛选）。无并行Maven或完整服务验收。

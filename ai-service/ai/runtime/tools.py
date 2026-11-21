@@ -1,4 +1,4 @@
-"""Closed, host-registered read tools. Model proposals never grant authority.
+"""Closed, host-registered tools. Model proposals never grant authority.
 
 Adapters must bound their own I/O with Deadline.remaining(); this synchronous
 executor does not pretend it can forcibly terminate arbitrary Python code.
@@ -160,12 +160,39 @@ class ReadTool:
             raise ValueError('Invalid tool cache policy')
 
 
+@dataclass(frozen=True)
+class WriteTool:
+    """One fixed operation per Run, reference-only completion and receipt confirmation."""
+    name: str
+    version: str
+    scope: str
+    operation: str
+    policy_sha256: str
+    arguments: type[ToolModel]
+    result: type[ToolModel]
+    authorize: Callable = field(repr=False)
+    intent: Callable = field(repr=False)
+    invoke: Callable = field(repr=False)
+    confirm: Callable = field(repr=False)
+    verify: Callable = field(repr=False)
+    timeout_seconds: float = 8
+    cache_policy: str = field(default='receipt-only',init=False)
+
+    def __post_init__(self):
+        if not isinstance(self.name,str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,47}',self.name):raise ValueError('Invalid registered tool name')
+        identifier(self.version,32);identifier(self.scope,64);identifier(self.operation,64)
+        if type(self.policy_sha256) is not str or not re.fullmatch(r'[0-9a-f]{64}',self.policy_sha256):raise ValueError('Stable write policy hash required')
+        _closed_schema(self.arguments,arguments=True);_closed_schema(self.result)
+        if not all(callable(c) for c in (self.authorize,self.intent,self.invoke,self.confirm,self.verify)):raise ValueError('Write authority, intent, receipt and verification callbacks required')
+        if type(self.timeout_seconds) not in (int,float) or not .05<=self.timeout_seconds<=10:raise ValueError('Invalid tool deadline')
+
+
 class ToolRegistry:
     def __init__(self, tools):
         registered = {}
         for tool in tools:
-            if not isinstance(tool, ReadTool) or tool.name in registered:
-                raise ValueError('Unique host-registered read tools are required')
+            if not isinstance(tool, (ReadTool,WriteTool)) or tool.name in registered:
+                raise ValueError('Unique host-registered tools are required')
             registered[tool.name] = tool
         if not 1 <= len(registered) <= 32:
             raise ValueError('Tool registry exceeds limits')
@@ -184,7 +211,7 @@ class ToolRegistry:
     def catalog(self):
         # Fresh schemas: model/catalog consumers cannot mutate registered code.
         return [{'name': t.name, 'version': t.version, 'scope': t.scope,
-                 'effect': 'READ', 'parallel': False, 'timeout_seconds': t.timeout_seconds,
+                 'effect': 'WRITE' if isinstance(t,WriteTool) else 'READ', 'parallel': False, 'timeout_seconds': t.timeout_seconds,
                  'cache_policy': t.cache_policy,
                  'arguments': _closed_schema(t.arguments, arguments=True),
                  'result': _closed_schema(t.result)} for t in self._tools.values()]
@@ -240,6 +267,7 @@ class ToolExecutor:
         except ValueError:
             raise PermanentFailure('TOOL_ARGUMENTS_INVALID') from None
         arguments = self._validate(tool.arguments, proposal.arguments, 'TOOL_ARGUMENTS_INVALID')
+        if isinstance(tool,WriteTool):return self._execute_write(context,tool,identity,arguments)
         intent = {'operation': tool.name, 'version': tool.version,
                   'resource_ref': identity.source.principal_ref, 'arguments_sha256': fingerprint(arguments)}
 
@@ -283,3 +311,69 @@ class ToolExecutor:
 
         result = context.payload_step(key, 'TOOL', 'READ', intent, 'tool-output-v1', invoke)
         return verified(result)
+
+    def _execute_write(self,context,tool,identity,arguments):
+        # The business operation, not a model-chosen logical key, owns one intent
+        # per Run. Neither another call key nor another alias authorizes a new body.
+        context.step('bind-write:'+fingerprint(tool.operation)[:40],'INTERNAL','NONE',
+            dict(operation=tool.operation,version=tool.version,resource_ref=identity.source.principal_ref,
+                 input_ref=tool.name,arguments_sha256=fingerprint({'arguments':arguments,'policy':tool.policy_sha256})),lambda:{'outcome':'bound'})
+        writes=[step for step in context.store.steps(identity.source.tenant,identity.run_id) if step['effect']=='WRITE']
+        if any(step['state'] in ('RESERVED','UNKNOWN') for step in writes):raise PermanentFailure('SIDE_EFFECT_UNKNOWN')
+        previous=[]
+        for step in writes:
+            if step['kind']!='TOOL' or type(step['intent_ref']) is not dict:raise PermanentFailure('TOOL_WRITE_CHECKPOINT_INVALID')
+            if step['intent_ref'].get('operation')==tool.operation:previous.append(step)
+        if len(previous)>1:raise PermanentFailure('TOOL_WRITE_CHECKPOINT_INVALID')
+
+        def intent_for(input_ref):
+            try:
+                intent=reference(tool.intent(identity,json.loads(json.dumps(arguments)),input_ref))
+                if (set(intent)!={'operation','version','resource_ref','input_ref','arguments_sha256'}
+                        or intent['operation']!=tool.operation or intent['version']!=tool.version
+                        or intent['resource_ref']!=identity.source.principal_ref or intent['input_ref']!=input_ref
+                        or not re.fullmatch(r'[0-9a-f]{64}',intent['arguments_sha256'])):raise ValueError()
+                return intent
+            except Exception:raise PermanentFailure('TOOL_WRITE_INTENT_INVALID') from None
+
+        def verified(value,intent):
+            result=self._validate(tool.result,value,'TOOL_RESULT_INVALID')
+            try:
+                reference(result)
+                if tool.verify(identity,json.loads(json.dumps(arguments)),json.loads(json.dumps(result)),dict(intent)) is not True:raise ValueError()
+            except Exception:raise PermanentFailure('TOOL_RESULT_INVALID') from None
+            return result
+
+        def confirm(intent):
+            def read():
+                value=self._call(tool,lambda i,a,d:tool.confirm(i,a,dict(intent),d),identity,json.loads(json.dumps(arguments)))
+                return {'outcome':'not-observed'} if value is None else verified(value,intent)
+            return context.step('write-receipt:'+uuid4().hex,'TOOL','READ',intent,read)
+
+        if previous:
+            prior=previous[0]
+            if prior['state']!='SUCCEEDED':raise PermanentFailure('SIDE_EFFECT_UNKNOWN')
+            intent=intent_for(prior['intent_ref'].get('input_ref'))
+            if intent!=prior['intent_ref']:raise PermanentFailure('TOOL_WRITE_CHECKPOINT_INVALID')
+            expected=verified(prior['result_ref'],intent)
+            found=confirm(intent)
+            if found!=expected:raise PermanentFailure('TOOL_WRITE_CHECKPOINT_INVALID')
+            return found
+
+        def authorize():
+            grant=self._call(tool,tool.authorize,identity,json.loads(json.dumps(arguments)))
+            if not isinstance(grant,ReadAuthorization) or grant.references.get('resource_ref')!=identity.source.principal_ref:
+                raise PermanentFailure('TOOL_RESOURCE_DENIED')
+            return dict(grant.references)
+        grant=context.step('auth:'+uuid4().hex,'TOOL','READ',
+            dict(operation=tool.name,version=tool.version,resource_ref=identity.source.principal_ref,arguments_sha256=fingerprint(arguments)),authorize)
+        intent=intent_for(grant.get('input_ref'))
+        def invoke():
+            try:
+                result=self._call(tool,lambda i,a,d:tool.invoke(i,a,dict(intent),context.lease,d),identity,json.loads(json.dumps(arguments)))
+                return verified(result,intent)
+            except TransientFailure:
+                found=confirm(intent)
+                if found.get('outcome')!='not-observed':return found
+                raise TransientFailure('TOOL_WRITE_UNCONFIRMED') from None
+        return context.step('write:'+fingerprint(tool.operation)[:40],'TOOL','WRITE',intent,invoke)
