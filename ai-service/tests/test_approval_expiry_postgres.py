@@ -72,7 +72,7 @@ def test_read_only_worker_skips_approved_run_without_blocking_other_sessions(sto
     independent = store.enqueue(request(session='INDEPENDENT'))
     seen = []
     worker = RuntimeWorker(store, {'runtime-v1': lambda ctx: seen.append(ctx.lease.run_id) or {'outcome': 'read'}},
-                           'read-only', tenant=source.tenant, include_approval_runs=False)
+                           'read-only', tenant=source.tenant, approval_mode='without_approval')
     assert worker.tick()['run_id'] == independent['run_id']
     assert worker.tick() is None and seen == [independent['run_id']]
     assert store.get(source.tenant, row['run_id']) == approved
@@ -87,8 +87,21 @@ def test_read_only_worker_cannot_take_over_an_expired_approval_execution_lease(s
     expire(lease)
     before = store.get(source.tenant, row['run_id'])
     readonly = RuntimeWorker(store, {'runtime-v1': lambda _: pytest.fail('Approval reached the read-only worker')},
-                             'read-only', tenant=source.tenant, include_approval_runs=False)
+                             'read-only', tenant=source.tenant, approval_mode='without_approval')
     assert readonly.tick() is None
     assert store.get(source.tenant, row['run_id']) == before
     recovered = store.claim_next(source.tenant, 'trusted-next-owner')
     assert recovered['run_id'] == row['run_id'] and recovered['fence'] > lease.fence
+
+
+def test_approval_worker_ignores_pending_read_work_and_unapproved_proposal(store):
+    source, waiting, approvals, row = wait(store)
+    ordinary = store.enqueue(request(session='ORDINARY'))
+    seen = []
+    worker = RuntimeWorker(store, {'runtime-v1': lambda ctx: seen.append(ctx.lease.run_id) or {'outcome': 'preview'}},
+                           'approval-only', tenant=source.tenant, approval_mode='approved_only')
+    assert worker.tick() is None
+    assert store.get(source.tenant, row['run_id']) == waiting
+    decide(approvals, source, row)
+    assert worker.tick()['run_id'] == row['run_id'] and seen == [row['run_id']]
+    assert store.get(source.tenant, ordinary['run_id']) == ordinary

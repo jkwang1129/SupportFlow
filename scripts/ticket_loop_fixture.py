@@ -140,7 +140,8 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     except httpx.HTTPError:pass
                     time.sleep(.25)
                 else:raise RuntimeError('Disposable Loop customer service not ready')
-            verify_ticket_approval(connect,base,child['SUPPORTFLOW_JWT_SECRET'],secret,store)
+            verify_ticket_approval(connect,base,child['SUPPORTFLOW_JWT_SECRET'],secret,store,
+                                   runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'])
             observations=[];scenarios={}
             with planner_server(scenarios,connect) as model_base:
                 for index,mode in enumerate(('normal','late_status','owner_revoked','foreign_parameter','phantom_reference','fake_write_claim','model503','turn_limit','process_restart','configured_worker')):

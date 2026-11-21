@@ -5,13 +5,19 @@ from contextlib import contextmanager
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+from tempfile import TemporaryDirectory
 from threading import Thread
 import time
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import httpx
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _seed_source(connect, source, run, session_id):
@@ -117,17 +123,28 @@ def _staff_review(client, base, key, source, run, row, title, content):
         assert result.json()['data'] == {'approval_id': str(row['approval_id']), 'status': 'APPROVED'}
 
 
-def verify_ticket_approval(connect, base, jwt_key, secret, store):
+def _execute_with_worker(tenant, base, secret, runtime_dsn, *, authority_enabled):
+    allowed = ('PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'LANG', 'LC_ALL')
+    env = {key: os.environ[key] for key in allowed if key in os.environ}
+    env.update(PYTHONUTF8='1', PYTHONPATH=str(ROOT/'ai-service'),
+               SUPPORTFLOW_AI_DATABASE_URL=runtime_dsn, SUPPORTFLOW_AI_RUNTIME_API_ENABLED='true',
+               SUPPORTFLOW_AI_RUNTIME_TICKET_ACTIONS_ENABLED='true' if authority_enabled else 'false',
+               SUPPORTFLOW_AI_CUSTOMER_RUNTIME_URL=base, SUPPORTFLOW_AI_CUSTOMER_SECRET=secret)
+    command = [sys.executable, '-m', 'ai.runtime.ticket_worker', '--tenant', tenant, '--approved-tickets-only', '--once']
+    with TemporaryDirectory(prefix='supportflow-approval-worker-') as directory:
+        return subprocess.run(command, cwd=directory, env=env, capture_output=True, text=True,
+                              encoding='utf-8', timeout=35,
+                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+
+
+def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn):
     from ai.runtime.approvals import TicketApprovals
     from ai.runtime.source import SourceClient
     from ai.runtime.ticket_creation import TicketCreationClient
-    from ai.runtime.ticket_write_tool import ticket_create_tool
-    from ai.runtime.tools import ToolExecutor, ToolRegistry
     from ai.runtime.types import RunInput
     from ai.runtime.worker import RuntimeWorker
 
     source_client, tickets = SourceClient(base, secret), TicketCreationClient(base, secret)
-    executor = ToolExecutor(ToolRegistry([ticket_create_tool(source_client, tickets)]), frozenset({'ticket:create'}))
     approved_title, approved_body = '审批工单🙂', 'synthetic approved body\n原始内容 '
     observations = []
     for index, mode in enumerate(('accepted', 'taken_over_after_approval', 'expired_before_resume')):
@@ -163,12 +180,18 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store):
                     headers={'Authorization': _fixture_token(jwt_key, source.tenant, 123)})
                 assert unavailable.status_code == 404
                 assert approved_title not in unavailable.text
-        resumed = RuntimeWorker(store, {'runtime-v1': lambda ctx: TicketApprovals(store).execute(ctx, executor)}, 'approval-second')
-        result = resumed.run_once(tenant)
-        if mode == 'expired_before_resume':
-            assert result is None
-            result = store.get(tenant, run)
-        assert resumed.run_once(tenant) is None
+        other = store.enqueue(RunInput(tenant, uuid4(), 'READ_ONLY_COLLEAGUE_'+str(index), 1, session_id+3000,
+                                       'visitor-session:'+str(session_id+3000), 'approval-worker-ordinary'))
+        if mode == 'accepted':
+            approved = store.get(tenant, run)
+            disabled = _execute_with_worker(tenant, base, secret, runtime_dsn, authority_enabled=False)
+            assert disabled.returncode == 1 and store.get(tenant, run) == approved
+        worker = _execute_with_worker(tenant, base, secret, runtime_dsn, authority_enabled=True)
+        assert worker.returncode == 0 and secret not in worker.stderr, (mode, worker.returncode)
+        result = store.get(tenant, run)
+        repeated = _execute_with_worker(tenant, base, secret, runtime_dsn, authority_enabled=True)
+        assert repeated.returncode == 0 and store.get(tenant, run) == result
+        assert store.get(tenant, other['run_id']) == other
         audit = approvals.get(tenant, run)
         writes = [step for step in store.steps(tenant, run) if step['effect'] == 'WRITE']
         receipt = asyncio.run(tickets.receipt(source, run, expected_snapshot_id=snapshot.snapshot_id, expected_hash=row['arguments_sha256']))
@@ -189,7 +212,7 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store):
             approval_status=audit['status'], steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=int(receipt is not None), events=events))
     artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v5', mode='SYNTHETIC_ROLE_SOURCE_REAL_JAVA_AI_PG',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v6', mode='SYNTHETIC_ROLE_SOURCE_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
-    print('Authenticated customer-JAR approval discovery, preview and review: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
+    print('Authenticated customer-JAR approval discovery, preview, review and approval-only worker CLI: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
           'duplicate approval preserved, one approved ticket/receipt, zero writes after takeover or expiry', flush=True)

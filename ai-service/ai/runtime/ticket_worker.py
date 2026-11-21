@@ -1,4 +1,4 @@
-"""Opt-in service entry point for the existing read-only TicketReadLoop."""
+"""Run one tenant's ticket read loop or approved ticket executions."""
 import argparse
 import logging
 import signal
@@ -10,11 +10,14 @@ import psycopg
 from ..config import get_settings
 from ..core.llm_chat import provider_conf
 from ..core.schema_guard import runtime_missing
+from .approvals import TicketApprovals
 from .customer_tools import current_message_tool, ticket_status_tool
 from .models import ChatProfile, RuntimeChatClient
 from .source import SourceClient
 from .store import RuntimeStore
 from .ticket_loop import TicketReadLoop
+from .ticket_creation import TicketCreationClient
+from .ticket_write_tool import ticket_create_tool
 from .tickets import TicketClient
 from .tools import ToolExecutor, ToolRegistry
 from .types import tenant_code
@@ -39,17 +42,36 @@ def build_worker(settings, tenant, provider, *, owner):
     access = ToolExecutor(ToolRegistry([current_message_tool(SourceClient(base, secret))]), frozenset({'session:read'}))
     tools = ToolExecutor(ToolRegistry([ticket_status_tool(TicketClient(base, secret))]), frozenset({'ticket:read'}))
     loop = TicketReadLoop(access, tools, RuntimeChatClient(profile))
-    return RuntimeWorker(RuntimeStore(), {'runtime-v1': loop}, owner, tenant=tenant, include_approval_runs=False)
+    return RuntimeWorker(RuntimeStore(), {'runtime-v1': loop}, owner, tenant=tenant, approval_mode='without_approval')
+
+
+def build_approval_worker(settings, tenant, *, owner):
+    tenant_code(tenant)
+    if not settings.runtime_api_enabled or not settings.runtime_ticket_actions_enabled:
+        raise ValueError('Runtime and ticket action authority must be explicitly enabled')
+    base = settings.customer_runtime_url
+    secret = settings.customer_secret.get_secret_value()
+    tool = ticket_create_tool(SourceClient(base, secret), TicketCreationClient(base, secret))
+    executor = ToolExecutor(ToolRegistry([tool]), frozenset({'ticket:create'}))
+    store = RuntimeStore()
+    approvals = TicketApprovals(store)
+    return RuntimeWorker(store, {'runtime-v1': lambda context: approvals.execute(context, executor)},
+                         owner, tenant=tenant, approval_mode='approved_only')
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tenant', required=True, help='Tenant assigned to this worker by the operator')
-    parser.add_argument('--provider', required=True, choices=PROVIDERS)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument('--provider', choices=PROVIDERS)
+    mode.add_argument('--approved-tickets-only', action='store_true', help='Execute existing approved ticket proposals')
     parser.add_argument('--once', action='store_true', help='Run at most one due task and exit')
     args = parser.parse_args(argv)
     try:
-        worker = build_worker(get_settings(), args.tenant, args.provider, owner='ticket-worker:' + uuid4().hex)
+        settings = get_settings()
+        owner = 'ticket-worker:' + uuid4().hex
+        worker = (build_approval_worker(settings, args.tenant, owner=owner) if args.approved_tickets_only
+                  else build_worker(settings, args.tenant, args.provider, owner=owner))
         if runtime_missing():
             logger.error('Ticket worker schema or role is unavailable')
             return 1

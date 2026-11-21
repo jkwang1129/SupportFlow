@@ -1190,3 +1190,13 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - `PYTEST_ADDOPTS='-k "approval_expiry or runtime_worker or runtime_store"' python scripts/test-agent-runtime.py` 的 53 项真实 PostgreSQL 测试通过。新增两项覆盖批准后的同会话排序与异会话领取，以及已过期执行租约的接管资格。日志 `b3-approval-worker-exclusion-pg.log`。
 - `python scripts/test-versioned-migrations.py` 17 项通过。通用领取模式可继续在历史结构上运行。日志 `b3-approval-worker-exclusion-migrations.log`。
 - 普通 AI 测试 959 项通过、388 项条件跳过、1 项既有预期失败。日志、XML 与 RAG 契约证据在 `.local/implementation/b3-approval-worker-exclusion-*`。
+
+## B3 独立批准执行 Worker（2026-11-22）
+
+单租户进程用 `--approved-tickets-only` 模式领取已有批准或已消费的恢复任务。在任务锁内重验审批路由，执行复用原参数检查点、已核准工具、一次性消费及签名建单许可。该进程无需模型。未审批和普通只读任务由各自路径处理。启动与回滚见 [ADR-0033](decisions/0033-opt-in-ticket-worker.md)。
+
+- `PYTEST_ADDOPTS='-k "approval or runtime_worker"' python scripts/test-agent-runtime.py --with-java-delivery` 复跑通过 93 项真实 PostgreSQL 定向测试。首轮长时间运行时两项既有恢复用例分别报持久化不可用和结果尚在运行，复跑均通过。日志 `b3-approved-worker-runtime.log`、`b3-approved-worker-runtime-final.log`。
+- 当轮实际客服 JAR、AI、PostgreSQL 和独立 Worker 进程的三条审批链路通过。关闭写许可时进程退出且任务保持；打开后，批准建单、事件和回执各 1 条，重复启动没有重复业务写入。接管和过期两案业务写入均为 0。每案保留普通任务原状态。原始机器报告 `runtime-ticket-approval.json` v6。
+- AI 普通测试首轮一个既有 TCP 用例超时。定向复跑 106 项通过。普通全量复跑 960 项通过、389 项条件跳过、1 项既有预期失败。RAG 契约 24 项通过。日志、XML 和契约结果在 `.local/implementation/b3-approved-worker-*`。
+
+客服会话发现、工作台、队列隔离分别通过 [CI 44925123084](https://github.com/jkwang1129/SupportFlow/actions/runs/44925123084)、[CI 44926007346](https://github.com/jkwang1129/SupportFlow/actions/runs/44926007346) 和 [CI 44926118341](https://github.com/jkwang1129/SupportFlow/actions/runs/44926118341)。可信提案生成入口仍待交付。本批数据、角色和待审提案来自隔离合成夹具。

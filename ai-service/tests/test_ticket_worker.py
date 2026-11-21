@@ -24,7 +24,7 @@ def test_operator_config_is_bound_to_one_tenant_and_read_capabilities():
     worker = ticket_worker.build_worker(settings(), 'TENANT_A', 'qwen', owner='fixture-worker')
     loop = worker.handlers['runtime-v1']
     assert worker.tenant == loop.model.profile.tenant == 'TENANT_A'
-    assert not worker.include_approval_runs
+    assert worker.approval_mode == 'without_approval'
     assert loop.model.profile.model == 'fixture-chat'
     assert 'synthetic-test-qwen-key' not in repr(loop.model.profile)
     assert {v['name'] for v in loop.source_access.registry.catalog()} == {'get_current_message'}
@@ -62,3 +62,12 @@ def test_cli_once_requires_runtime_schema_and_restricted_role(monkeypatch):
     assert ticket_worker.main(args) == 1 and events == []
     monkeypatch.setattr(ticket_worker, 'runtime_missing', lambda: {})
     assert ticket_worker.main(args) == 0 and events == ['TENANT_A']
+
+
+def test_approval_worker_has_no_model_requirement_and_uses_only_approval_queue():
+    worker = ticket_worker.build_approval_worker(settings(runtime_ticket_actions_enabled=True, qwen_api_key=''),
+                                                'TENANT_A', owner='fixture-approved-worker')
+    assert worker.tenant == 'TENANT_A' and worker.approval_mode == 'approved_only'
+    with pytest.raises(ValueError):
+        ticket_worker.build_approval_worker(settings(runtime_ticket_actions_enabled=False),
+                                            'TENANT_A', owner='fixture-approved-worker')

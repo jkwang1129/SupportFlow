@@ -132,7 +132,7 @@ class RuntimeWorker:
     The FastAPI app does not auto-start this worker before business integration.
     """
     def __init__(self, store: RuntimeStore, handlers: Mapping[str, Callable], owner, *, lease_seconds=30,
-                 tenant=None, include_approval_runs=True):
+                 tenant=None, approval_mode='any'):
         self.store = store
         self.owner = identifier(owner)
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 60:
@@ -144,9 +144,9 @@ class RuntimeWorker:
         self.handlers = MappingProxyType(dict(handlers))
         self.lease_seconds = lease_seconds
         self.tenant = tenant_code(tenant) if tenant is not None else None
-        if type(include_approval_runs) is not bool:
+        if approval_mode not in ('any', 'without_approval', 'approved_only'):
             raise ValueError('Approval routing must be explicit')
-        self.include_approval_runs = include_approval_runs
+        self.approval_mode = approval_mode
         self._slot = Lock()
         self._last_tenant = None
 
@@ -161,7 +161,7 @@ class RuntimeWorker:
             from .approvals import TicketApprovals
             TicketApprovals(self.store).expire_due(tenant)
             run = self.store.claim_next(tenant, self.owner, lease_seconds=self.lease_seconds,
-                                        include_approval_runs=self.include_approval_runs)
+                                        approval_mode=self.approval_mode)
             if run is None:
                 return None
             lease = Lease.from_run(run)
