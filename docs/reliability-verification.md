@@ -1049,3 +1049,15 @@ b703d4f 的 [CI 44883937143](https://github.com/jkwang1129/SupportFlow/actions/r
 - `python scripts/test-database-init.py` 验证六库 CLI 初始化、重复拒绝和故障回滚。`python scripts/test-security-flow.py` 通过默认新库、历史库升级和 CLI 初始化三套完整服务，核实 AI006 历史和审批列权限。`b3-approval-init.log`、`b3-approval-services.log`。
 
 本批交付数据库契约和部署检查。暂停、决定、恢复与一次性消费分开验证。回滚时保留 AI006 和审计数据，待应用启用后需先处理仍在审批中的任务。设计与适用边界见 [ADR-0030](decisions/0030-durable-approval-boundary.md)。
+
+3316818 的 [CI 44889946045](https://github.com/jkwang1129/SupportFlow/actions/runs/44889946045) 前后端任务均通过，覆盖工单终态核销、旧回复核销和全部服务验收。
+
+## B3 审批暂停、决定与检查点恢复（2026-11-21）
+
+基于 cdda89c。`TicketApprovals.pause` 复用原子步骤正文，持久化审批请求、检查点引用及等待态，并在同一事务释放租约和递增令牌。可信控制面可重复读取原决定、通过、拒绝、撤销和按任务显式处理过期。取消与审批状态更新同事务。新 Worker 从已有快照和参数摘要恢复精确标题与正文，保留预算、截止时间和检查点。对带审批记录的工单，写许可要求当前步骤已经消费该审批。
+
+- 设置 `PYTEST_ADDOPTS='-k "approval_lifecycle or ticket_authority"'` 运行 `python scripts/test-agent-runtime.py --with-java-delivery`。真实 PostgreSQL 17 的定向部分 32 项通过，包含 16 项新审批生命周期和 16 项原建单许可用例，322 项未纳入定向执行。覆盖等待后重启、暂停事务崩溃后复用检查点、并发批准与取消竞争、拒绝、过期、撤销、跨租户、原文和参照替换、未消费审批拒绝。首轮筛选表达式缺内部引号，pytest 在收集前退出。修正命令后通过，保留 `b3-approval-lifecycle-first.log` 与 `b3-approval-lifecycle-targeted.log`。
+- AI 普通测试 923 项通过、359 项条件跳过、1 项既有预期失败。RAG 契约 24 项通过。`b3-approval-lifecycle-ai.log` 及对应 XML。
+- 真实 Java／AI／受限 PostgreSQL 验证通过。源服务实际创建签名快照，Worker 持久化等待和通过决定，新 Worker 取得原快照及原文。真实写许可拒绝已有写步骤但尚未消费的审批。工单、回执均为 0。`runtime-ticket-approval.json` 记录等待状态、新令牌和预算保留情况，续跑原建单与回复组合见同一 Runtime 日志。
+
+审批 ID 由可信宿主处理，当前过期入口按已知任务显式调用。后续加入一次性消费、真实工单执行、自动过期发现和 reviewer 入口。回滚时先处理仍在等待的请求，再停用宿主暂停入口，保留检查点和审批记录。设计见 [ADR-0030](decisions/0030-durable-approval-boundary.md)。

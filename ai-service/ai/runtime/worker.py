@@ -27,6 +27,10 @@ class PermanentFailure(Exception):
         super().__init__(self.code)
 
 
+class ApprovalPending(Exception):
+    """The approval request and release of the current lease have committed."""
+
+
 class ExecutionContext:
     def __init__(self, store, run, lost, lease_seconds):
         self.store = store
@@ -173,7 +177,7 @@ class RuntimeWorker:
                 result = reference(handler(context))
                 context.check_active()
                 return self.store.finish(lease, result)
-            except (LostLease, BudgetExceeded):
+            except (LostLease, BudgetExceeded, ApprovalPending):
                 # A budget failure has already committed its terminal state;
                 # lost leases belong to another worker/cancellation/deadline.
                 return self.store.get(tenant, run['run_id'])

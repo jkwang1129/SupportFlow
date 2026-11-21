@@ -289,6 +289,10 @@ class RuntimeStore:
                 raise ActionDenied('Action is not authorized')
             expected=dict(operation=operation,resource_ref=row['principal_ref'],input_ref=str(snapshot_id),
                           arguments_sha256=arguments_hash,version=version)
+            approval = None
+            if operation == 'ticket.create':
+                approval = connection.execute("""SELECT * FROM agent_approval
+                    WHERE tenant_code=%s AND run_id=%s FOR SHARE""", (tenant, run_id)).fetchone()
             steps=connection.execute("""SELECT step_key,step_no FROM agent_step WHERE tenant_code=%s AND run_id=%s
                  AND fence=%s AND state='RESERVED' AND kind='TOOL' AND effect='WRITE' AND intent_ref=%s
                  ORDER BY step_no LIMIT 2 FOR SHARE""",(tenant,run_id,fence,Jsonb(expected))).fetchall()
@@ -297,7 +301,15 @@ class RuntimeStore:
             now=connection.execute('SELECT clock_timestamp() AS now').fetchone()['now']
             if len(steps)!=1 or row['lease_until']<=now or row['deadline_at']<=now:
                 raise ActionDenied('Action is not authorized')
-            expires=min(row['lease_until'],row['deadline_at'],now+timedelta(seconds=5))-timedelta(milliseconds=100)
+            expires = min(row['lease_until'], row['deadline_at'], now + timedelta(seconds=5))
+            if approval is not None:
+                if (approval['status'] != 'CONSUMED' or approval['snapshot_id'] != snapshot_id
+                        or approval['principal_ref'] != row['principal_ref'] or approval['operation'] != operation
+                        or approval['schema_version'] != version or approval['arguments_sha256'] != arguments_hash
+                        or approval['consumed_step_no'] != steps[0]['step_no'] or approval['expires_at'] <= now):
+                    raise ActionDenied('Action approval is not authorized')
+                expires = min(expires, approval['expires_at'])
+            expires -= timedelta(milliseconds=100)
             if expires<=now: raise ActionDenied('Action authority is too close to expiry')
             step=steps[0]
             return dict(version='action-v1',tenant_code=tenant,run_id=str(run_id),source_event_id=str(source_event_id),
@@ -432,6 +444,9 @@ class RuntimeStore:
             row = connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR UPDATE', (tenant,UUID(str(run_id)))).fetchone()
             if not row or row['state'] in TERMINAL:
                 return row
+            if row['result_ref'].get('outcome') == 'waiting-approval':
+                connection.execute("""UPDATE agent_approval SET status='CANCELLED',closed_by='system:run-cancel',closed_at=clock_timestamp()
+                    WHERE tenant_code=%s AND run_id=%s AND status IN ('PENDING','APPROVED')""", (tenant, row['run_id']))
             connection.execute('UPDATE agent_run SET cancel_requested=true WHERE tenant_code=%s AND run_id=%s', (tenant,row['run_id']))
             self._unknown(connection,row)
             unknown = self._unknown_write(connection,row)
