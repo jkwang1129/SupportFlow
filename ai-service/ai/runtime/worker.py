@@ -131,7 +131,8 @@ class RuntimeWorker:
     require bounded external I/O; Python cannot forcibly cancel a blocked thread.
     The FastAPI app does not auto-start this worker before business integration.
     """
-    def __init__(self, store: RuntimeStore, handlers: Mapping[str, Callable], owner, *, lease_seconds=30, tenant=None):
+    def __init__(self, store: RuntimeStore, handlers: Mapping[str, Callable], owner, *, lease_seconds=30,
+                 tenant=None, include_approval_runs=True):
         self.store = store
         self.owner = identifier(owner)
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 60:
@@ -143,6 +144,9 @@ class RuntimeWorker:
         self.handlers = MappingProxyType(dict(handlers))
         self.lease_seconds = lease_seconds
         self.tenant = tenant_code(tenant) if tenant is not None else None
+        if type(include_approval_runs) is not bool:
+            raise ValueError('Approval routing must be explicit')
+        self.include_approval_runs = include_approval_runs
         self._slot = Lock()
         self._last_tenant = None
 
@@ -156,7 +160,8 @@ class RuntimeWorker:
         try:
             from .approvals import TicketApprovals
             TicketApprovals(self.store).expire_due(tenant)
-            run = self.store.claim_next(tenant, self.owner, lease_seconds=self.lease_seconds)
+            run = self.store.claim_next(tenant, self.owner, lease_seconds=self.lease_seconds,
+                                        include_approval_runs=self.include_approval_runs)
             if run is None:
                 return None
             lease = Lease.from_run(run)

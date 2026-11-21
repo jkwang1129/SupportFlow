@@ -215,24 +215,34 @@ class RuntimeStore:
             raise LostLease('Execution lease is no longer valid')
         return row
 
-    def claim_next(self, tenant, owner, *, lease_seconds=30):
+    def claim_next(self, tenant, owner, *, lease_seconds=30, include_approval_runs=True):
         identifier(owner)
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 60:
             raise ValueError('Invalid lease duration')
+        if type(include_approval_runs) is not bool:
+            raise ValueError('Approval routing must be explicit')
+        approval_filter = sql.SQL('') if include_approval_runs else sql.SQL(
+            'AND NOT EXISTS(SELECT 1 FROM agent_approval a WHERE a.tenant_code=r.tenant_code AND a.run_id=r.run_id)')
         with self._scope(tenant) as connection:
-            candidates = connection.execute("""SELECT r.run_id FROM agent_run r WHERE r.tenant_code=%s AND
+            candidates = connection.execute(sql.SQL("""SELECT r.run_id FROM agent_run r WHERE r.tenant_code=%s AND
                 ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())
                   OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))
+                {approval_filter}
                 AND NOT EXISTS(SELECT 1 FROM agent_run earlier WHERE earlier.tenant_code=r.tenant_code AND earlier.session_no=r.session_no
                     AND earlier.run_id<>r.run_id AND (earlier.state='RUNNING' OR
                        (earlier.event_seq<r.event_seq AND (earlier.state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR earlier.error_code='SIDE_EFFECT_UNKNOWN'))))
-                ORDER BY r.created_at,r.event_seq,r.run_id LIMIT 32""", (tenant,)).fetchall()
+                ORDER BY r.created_at,r.event_seq,r.run_id LIMIT 32""").format(approval_filter=approval_filter), (tenant,)).fetchall()
             for candidate in candidates:
-                row = connection.execute("""SELECT *,deadline_at<=clock_timestamp() AS timed_out FROM agent_run
-                    WHERE tenant_code=%s AND run_id=%s AND ((state IN ('PENDING','RETRY_WAIT') AND ready_at<=clock_timestamp())
-                        OR (state='RUNNING' AND (lease_until<=clock_timestamp() OR deadline_at<=clock_timestamp()))) FOR UPDATE SKIP LOCKED""",
-                    (tenant,candidate['run_id'])).fetchone()
+                row = connection.execute("""SELECT r.*,r.deadline_at<=clock_timestamp() AS timed_out FROM agent_run r
+                    WHERE r.tenant_code=%s AND r.run_id=%s AND ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())
+                        OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))
+                    FOR UPDATE SKIP LOCKED""", (tenant,candidate['run_id'])).fetchone()
                 if not row:
+                    continue
+                # Re-read the approval after locking the Run. A concurrent pause
+                # and decision may have returned it to PENDING after discovery.
+                if not include_approval_runs and connection.execute("""SELECT 1 FROM agent_approval WHERE tenant_code=%s AND run_id=%s""",
+                                                                   (tenant,row['run_id'])).fetchone():
                     continue
                 session_lock = int.from_bytes(bytes.fromhex(fingerprint(['session',tenant,row['session_no']]))[:8], 'big', signed=True)
                 if not connection.execute('SELECT pg_try_advisory_xact_lock(%s) AS locked', (session_lock,)).fetchone()['locked']:

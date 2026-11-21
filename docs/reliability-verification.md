@@ -1182,3 +1182,11 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - 从仓库根启动 `node frontend/scripts/approval-workspace-fixture.mjs`，另一个终端执行 `./scripts/test-approval-workspace.ps1`。实际 Chromium 加载工作台，局部替身供应会话及审批 HTTP 流程。5 组浏览器断言通过，验证读取保留换行与标签文本、批准和撤销、空提案、过期冲突移除旧动作、拒绝，以及普通坐席不显示入口。替身记录提交携带的审批 ID、参数摘要和固定决定字段均匹配。后端真实数据库与真实服务证据见上一批。
 
 前端和客服、AI 审批开关均需启用。关闭前端开关即可撤下交互入口，数据库和既有决定继续保留。
+
+## B3 隔离只读 Worker 与审批任务（2026-11-22）
+
+只读工单 Worker 领取时排除已有审批记录的 Run，并在锁住任务后再次核对。这保护批准待执行及等待接管的任务，防止只读处理器覆盖原提案检查点。同会话后续任务仍按原顺序等待，其他会话可继续处理。审批过期和可信执行端的既有行为保留。回滚前先停只读 Worker，保留任务、审批和预算。
+
+- `PYTEST_ADDOPTS='-k "approval_expiry or runtime_worker or runtime_store"' python scripts/test-agent-runtime.py` 的 53 项真实 PostgreSQL 测试通过。新增两项覆盖批准后的同会话排序与异会话领取，以及已过期执行租约的接管资格。日志 `b3-approval-worker-exclusion-pg.log`。
+- `python scripts/test-versioned-migrations.py` 17 项通过。通用领取模式可继续在历史结构上运行。日志 `b3-approval-worker-exclusion-migrations.log`。
+- 普通 AI 测试 959 项通过、388 项条件跳过、1 项既有预期失败。日志、XML 与 RAG 契约证据在 `.local/implementation/b3-approval-worker-exclusion-*`。

@@ -39,7 +39,7 @@ def build_worker(settings, tenant, provider, *, owner):
     access = ToolExecutor(ToolRegistry([current_message_tool(SourceClient(base, secret))]), frozenset({'session:read'}))
     tools = ToolExecutor(ToolRegistry([ticket_status_tool(TicketClient(base, secret))]), frozenset({'ticket:read'}))
     loop = TicketReadLoop(access, tools, RuntimeChatClient(profile))
-    return RuntimeWorker(RuntimeStore(), {'runtime-v1': loop}, owner, tenant=tenant)
+    return RuntimeWorker(RuntimeStore(), {'runtime-v1': loop}, owner, tenant=tenant, include_approval_runs=False)
 
 
 def main(argv=None):

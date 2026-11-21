@@ -4,9 +4,10 @@ import os
 import pytest
 
 from ai.runtime.approvals import TicketApprovals
+from ai.runtime.types import Lease
 from ai.runtime.worker import RuntimeWorker
 from test_approval_lifecycle_postgres import decide, elapsed, wait
-from test_runtime_store_postgres import admin, request, store
+from test_runtime_store_postgres import admin, expire, request, store
 
 pytestmark = pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'), reason='requires disposable runtime PostgreSQL')
 
@@ -61,3 +62,33 @@ def test_expiry_is_tenant_scoped_and_does_not_recover_uncertain_writes(store):
     assert approvals.expire_due(source.tenant) == 0 and store.due_tenants() == []
     assert approvals.get(source.tenant, row['run_id'])['status'] == 'PENDING'
     assert store.get(source.tenant, row['run_id'])['state'] == 'WAITING_APPROVAL'
+
+
+def test_read_only_worker_skips_approved_run_without_blocking_other_sessions(store):
+    source, _, approvals, row = wait(store)
+    decide(approvals, source, row)
+    approved = store.get(source.tenant, row['run_id'])
+    later = store.enqueue(request(seq=2))
+    independent = store.enqueue(request(session='INDEPENDENT'))
+    seen = []
+    worker = RuntimeWorker(store, {'runtime-v1': lambda ctx: seen.append(ctx.lease.run_id) or {'outcome': 'read'}},
+                           'read-only', tenant=source.tenant, include_approval_runs=False)
+    assert worker.tick()['run_id'] == independent['run_id']
+    assert worker.tick() is None and seen == [independent['run_id']]
+    assert store.get(source.tenant, row['run_id']) == approved
+    assert store.get(source.tenant, later['run_id']) == later
+    assert store.claim_next(source.tenant, 'trusted-approval-host')['run_id'] == row['run_id']
+
+
+def test_read_only_worker_cannot_take_over_an_expired_approval_execution_lease(store):
+    source, _, approvals, row = wait(store)
+    decide(approvals, source, row)
+    lease = Lease.from_run(store.claim_next(source.tenant, 'trusted-old-owner'))
+    expire(lease)
+    before = store.get(source.tenant, row['run_id'])
+    readonly = RuntimeWorker(store, {'runtime-v1': lambda _: pytest.fail('Approval reached the read-only worker')},
+                             'read-only', tenant=source.tenant, include_approval_runs=False)
+    assert readonly.tick() is None
+    assert store.get(source.tenant, row['run_id']) == before
+    recovered = store.claim_next(source.tenant, 'trusted-next-owner')
+    assert recovered['run_id'] == row['run_id'] and recovered['fence'] > lease.fence

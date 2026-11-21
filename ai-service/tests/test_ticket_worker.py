@@ -24,6 +24,7 @@ def test_operator_config_is_bound_to_one_tenant_and_read_capabilities():
     worker = ticket_worker.build_worker(settings(), 'TENANT_A', 'qwen', owner='fixture-worker')
     loop = worker.handlers['runtime-v1']
     assert worker.tenant == loop.model.profile.tenant == 'TENANT_A'
+    assert not worker.include_approval_runs
     assert loop.model.profile.model == 'fixture-chat'
     assert 'synthetic-test-qwen-key' not in repr(loop.model.profile)
     assert {v['name'] for v in loop.source_access.registry.catalog()} == {'get_current_message'}
