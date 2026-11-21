@@ -946,3 +946,24 @@ Java AgentActionPermit.Request增加封闭Operation，原七参数构造器仍�
 - `python scripts/test-security-flow.py`退出0，`b2-ticket-business-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整实际服务全部通过；原知识检索/访客WS→brain→BOT回复/工单/计费/附件权限及六库历史、readiness故障恢复保持。验收单独运行，未并行Maven或其他服务验收。
 
 边界/回滚：尚无Agent建单API/SDK/模型工具、HITL、自动触发或工单未知写核销；可选标签沿用旧best-effort，不承诺所有标签刷新必成。客户UPDATE锁避免本路径先SHARE再升级，但不声称与所有旧业务混用无死锁；锁等待2秒有界。8路样本仅验证幂等，不代表吞吐、P95或生产规模。回滚停用新窄方法入口，保留原渠道共用业务、Customer009及已提交工单/回执/预算/历史；不删表或恢复盲重试。无语义准确率/付费Token成本/生产客户或收益成果。本批无AI/SQL改动，本地不重复刚通过610ad79精确CI的784项AI/257项Runtime/38项存储迁移专项，远端精确提交CI继续全跑。
+
+2e5cd53对应的[CI 44880321165](https://github.com/jkwang1129/SupportFlow/actions/runs/44880321165)两个job全部成功；原子建单业务子批次本地/远端退出条件完成。
+
+## B2 受控建单API子批次（2026-11-21）
+
+基线2e5cd53。新增RuntimeTicketCreateController/RuntimeTicketCreateCommand及权限/实际PG测试，扩展现有RuntimeSourceAccessFilter与application.yml，ADR-0025记录编码前决策。独立ticket-create路由避免占用tickets/{ticketNo}中的合法编号。POST独立建单开关默认false，GET复用read-tools且不需要建单开关/AI授权客户端；签名先于开关/正文/readiness，字段闭合且摘要绑定，固定操作/策略，不允许客户/租户/优先级/指派等输入。
+
+先5秒短事务查匹配回执，未命中才在无业务连接/行锁阶段请求TICKET_CREATE许可，再进独立5秒原子建单事务；重复前检竞争由业务内advisory锁/回执复查处理。授权HTTP仅8个引用/摘要字段，不发送标题/正文/JWT。GET只返回9个固定引用字段，ticket_id显式十进制字符串；查询事实不授新执行权，404不证明在途POST未提交。数据库/上游错误不回传SQL或原文。尚无Python建单SDK、模型WRITE工具/审批/自动调度或建单UNKNOWN核销。
+
+本地JDK25/Python3.11.5/隔离PG17，仅合成数据/凭据/授权服务，不读.env/不调用付费模型：
+
+- 定向RuntimeTicketCreateAccessFilterTest及原source/reply/ticket/knowledge权限测试34项全部通过，新7项，`b2-ticket-api-unit-first.log`。最大标题/正文、固定操作/摘要、禁写先于正文、读写独立、越权/坏字段/Hash/版本/类型/重复/超限/跨路径签名全部拒绝；create/result/ticket-create合法工单编号GET保持，POST不能借旧路由建单。
+- `python scripts/test-customer-rls.py --with-ai`首轮139项中130通过/9失败，`b2-ticket-api-pg-first.log`。授权HTTP测试夹具把真实version字段误写为schema_version导致返回前NPE；按实际协议修正，未放松客户端/业务校验。最终139项Java PG（新10）+19项Python KB全部通过，`b2-ticket-api-pg-final.log`。
+- 新10项实际TicketService/受限PG/真实授权HTTP含RPC时连接数0与会话FOR UPDATE NOWAIT可取得；只建一次/终态确认无需再授权/改参数冲突、禁写且无AI客户端时GET仍可读、跨租户/错event/匿名不可见、授权401/404/409/503固定映射不泄露原文、有效MAC但reply操作拒绝、RPC期间接管拒绝、回执INSERT失败整笔回滚及4路已签名并发仅一业务结果。并发是幂等样本，不是性能基准。
+- `mvn -B -f backend/pom.xml verify`全模块BUILD SUCCESS，`b2-ticket-api-backend-final.log`；条件PG跳过不计通过，实际PG如上。
+
+实际新建单联调使用显式宿主手工签名/独立摘要公式，不依赖下一批SDK。`ticket_creation_api_fixture.py`复用已启用来源/只读工具的真实客服JAR，只在该隔离进程显式开启建单；来源专用JAR保持默认禁写/禁读回执，并追加实际签名POST/GET均503、匿名401检查。新3例全部通过，机器报告`.local/verification/runtime-ticket-creation-api.json`：正常创建及终态再次POST只确认1张工单/1事件/1回执、客户数3→4；丢弃已接收的POST确认、取消后GET仍确认同一工单，但Run/Step保留FAILED/SIDE_EFFECT_UNKNOWN，不伪造核销；来源接管时0工单/0事件/0回执、客户计数仍3。每例1Step/1Tool/0Model/0Retry，原访客消息仍1，无新增会话回复。票据ID实际超过2^53且返回字符串，中文/emoji与换行/尾空格原文保持。HTTP确认丢弃是显式宿主故障注入，不冒称已实现网络重投策略或SDK恢复。
+
+`python scripts/test-agent-runtime.py --with-java-delivery`最终退出0，`b2-ticket-api-runtime-first.log`：257项Runtime专项全部通过，旧来源/工单/知识SDK、9例Loop/真实进程恢复、7例知识工具、5例发布/核销、操作许可和2例实际回复联调全部保持，新3例建单如上。本批未改SQL/旧Workflow，且2e5cd53精确CI刚完成三套完整默认服务；本地不重复那三套，实际新/默认客服JAR和已有全部Runtime组合已重新验证，当前精确提交CI仍全跑三套完整服务。无并行Maven或完整服务验收。
+
+回滚关闭SUPPORTFLOW_BOT_RUNTIME_TICKET_CREATE_ENABLED，保留只读回执和已提交工单/Customer009/Run历史与预算，不删除回执或放宽来源权限。AI端建单许可仍有独立默认false开关。没有大规模功能重构、语义质量/Token费用/性能/生产收益成果。无SQL改动，本地不重复刚全绿2e5cd53的迁移/38项存储专项，精确提交CI继续全跑。

@@ -28,6 +28,16 @@ public final class AgentActionPermitFixtures {
             return AgentActionPermit.verify(json,request,secret,expires.minusSeconds(4));
         }catch(Exception invalid){throw new IllegalStateException("Synthetic ticket permit failed",invalid);}
     }
+    public static String grant(AgentTicketArguments args,String owner,long fence,Instant expires,String secret,AgentActionPermit.Operation operation)throws Exception{
+        var json=new ObjectMapper().createObjectNode().put("version","action-v1").put("tenant_code",args.tenant())
+            .put("run_id",args.runId().toString()).put("source_event_id",args.eventId().toString()).put("owner",owner)
+            .put("fence",fence).put("step_key","ticket-1").put("step_no",1).put("operation",operation.wire())
+            .put("snapshot_id",args.snapshotId().toString()).put("arguments_sha256",args.argumentsSha256()).put("expires_at_ms",expires.toEpochMilli());
+        var wire=new StringBuilder("supportflow-agent-action:v1");
+        for(String field:new String[]{"version","tenant_code","run_id","source_event_id","owner","fence","step_key","step_no","operation","snapshot_id","arguments_sha256","expires_at_ms"})wire.append('\n').append(json.get(field).asText());
+        var mac=Mac.getInstance("HmacSHA256");mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8),"HmacSHA256"));
+        json.put("signature",HexFormat.of().formatHex(mac.doFinal(wire.toString().getBytes(StandardCharsets.UTF_8))));return json.toString();
+    }
     public static AgentActionPermit permit(AgentReplyArguments reply, Instant expires) {
         return permit(reply,expires,AgentActionPermit.Operation.SESSION_REPLY);
     }

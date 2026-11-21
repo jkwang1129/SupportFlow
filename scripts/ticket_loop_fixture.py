@@ -85,6 +85,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
     with (logs/'customer-service.log').open('wb') as log:
         process=subprocess.Popen([str(java),'-Xms32m','-Xmx384m','-jar',str(jar),f'--server.port={port}',
             '--supportflow.bot.runtime-source-enabled=true','--supportflow.bot.runtime-read-tools-enabled=true',
+            '--supportflow.bot.runtime-ticket-create-enabled=true',
             *[f'--supportflow.ai.{name}-base-url={ai_base}' for name in ('bot','qa','kb','vision','speech')]],
             cwd=ROOT,env=child,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         try:
@@ -181,6 +182,8 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             print('Actual model-protocol TCP -> durable TicketReadLoop -> signed SDK/customer JAR/restricted PG: 9 cases passed; current facts/owner checks, invalid actions, model503 retry, turn budgets and real Worker process death/takeover verified; reports only, no business publication or ticket creation; synthetic model decisions/usage',flush=True)
             from knowledge_tool_fixture import verify_knowledge_tools
             verify_knowledge_tools(connect,base,secret,store)
+            from ticket_creation_api_fixture import verify_ticket_creation_api
+            verify_ticket_creation_api(connect,base,secret,store)
         except BaseException:
             failed=True;raise
         finally:
