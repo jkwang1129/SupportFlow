@@ -967,3 +967,26 @@ Java AgentActionPermit.Request增加封闭Operation，原七参数构造器仍�
 `python scripts/test-agent-runtime.py --with-java-delivery`最终退出0，`b2-ticket-api-runtime-first.log`：257项Runtime专项全部通过，旧来源/工单/知识SDK、9例Loop/真实进程恢复、7例知识工具、5例发布/核销、操作许可和2例实际回复联调全部保持，新3例建单如上。本批未改SQL/旧Workflow，且2e5cd53精确CI刚完成三套完整默认服务；本地不重复那三套，实际新/默认客服JAR和已有全部Runtime组合已重新验证，当前精确提交CI仍全跑三套完整服务。无并行Maven或完整服务验收。
 
 回滚关闭SUPPORTFLOW_BOT_RUNTIME_TICKET_CREATE_ENABLED，保留只读回执和已提交工单/Customer009/Run历史与预算，不删除回执或放宽来源权限。AI端建单许可仍有独立默认false开关。没有大规模功能重构、语义质量/Token费用/性能/生产收益成果。无SQL改动，本地不重复刚全绿2e5cd53的迁移/38项存储专项，精确提交CI继续全跑。
+
+6799b6c对应的[CI 44881610275](https://github.com/jkwang1129/SupportFlow/actions/runs/44881610275)两个job全部成功；受控建单API子批次本地/远端退出条件完成。
+
+## B2 建单签名SDK与严格回执验证（2026-11-21）
+
+基线6799b6c。新增`ai/runtime/ticket_creation.py`、`tests/test_runtime_ticket_creation.py`和ADR-0026；共用CustomerTransport只加固定ticket-create POST/空正文GET及固定TICKET_CREATE前缀，只有该操作的请求上限增加至65536字节，返回8192字节。旧source/ticket/reply/knowledge方法/限制/凭据不变。Java仅参数测试补共享摘要字面向量与Java空白语义；无Java生产代码/SQL/默认路由/依赖改动。
+
+TicketCreationClient.create在I/O前核可信RunInput/Lease/tenant/owner/fence/UUID和标题正文，按ticket-create-v1原文及固定策略生成SHA，闭合7字段签名POST；不接受客户/租户/优先级/指派等自由参数。receipt仅GET，允许成对提供预期快照/摘要；冻结TicketCreationReceipt只含tenant/Run/来源/快照/SHA/工单引用，持久化前receipt_reference再次核类型/绑定/int64/编号，输出引用而非正文。外层ApiResponse字段/元数据、UTF-8/重复/NaN/尾随JSON、内层精确9字段/操作/版本/来源/参数/规范UUID及十进制int64都校验；timestamp兼容Java规范long字符串。只有40406+null是查询缺失，泛404/来源拒绝不能伪装未建单。
+
+请求总期限/有限正文/不使用环境代理/重定向/隐式重试沿用原transport。任何POST错误不证明无业务副作用，SDK不重发POST、不自动清UNKNOWN/退还预算、不读当前工单状态。SDK本身不是Scope/Runtime预算工具，尚未注册模型WRITE/审批或自动业务路由。
+
+本地Python3.11.5/JDK25/隔离PG17，均为合成文本/凭据/引用，无.env/供应商调用：
+
+- `cd ai-service; python -m pytest -q tests/test_runtime_ticket_creation.py tests/test_runtime_source.py tests/test_runtime_tickets.py tests/test_runtime_result.py tests/test_runtime_knowledge.py`首轮298过/11失败，`b2-ticket-sdk-unit-first.log`；新MockTransport夹具用已消费content而非原始ByteStream，导致StreamConsumed。修正夹具，不放松SDK/transport，309项全部通过，`b2-ticket-sdk-unit-final.log/xml`（新90、原219）。
+- 追加最大原文跨8192字节传输、allowlist四类负例及int64两端7项，最终316项全部通过＝新97+原219，`b2-ticket-sdk-unit-final-v2.log/xml`。新97包含3例真实TCP正常/302拒绝/慢正文1秒总期限（服务故意等2秒），禁环境代理；每例只有1POST，异常不复制URL/私有原因。另覆盖字段/来源/快照/参数替换、类型/Hash/超限/坏编码/非法Unicode、固定业务错误、只读查询与伪造类型回执拒绝。该慢响应是故障注入，不是性能数据。
+- Java `mvn -B -f backend/pom.xml -pl supportflow-customer-service -am test -Dtest=AgentTicketArgumentsTest -Dsurefire.failIfNoSpecifiedTests=false`4项通过，`b2-ticket-sdk-java-golden.log`；共享字面摘要97638edb...047dc86、CRLF/尾空格保持及Java/Python空白语义一致，未改变业务参数规则。
+- AI全量首轮874 passed/262 skipped/1 xfailed（新90），`b2-ticket-sdk-ai-final.log/xml`；追加7项后881 passed/262 skipped/1 xfailed，`b2-ticket-sdk-ai-final-v2.log/xml`。PG条件skip不计通过，原引用正文xfail保留。`python scripts/report-rag-contract.py --junit .local/implementation/b2-ticket-sdk-ai-final-v2.xml --output .local/verification/rag-contract.json`：24项全部执行通过、gate_passed=true。
+
+回滚停用新SDK/后续工具注册，保留Java来源/写许可/原子业务、Customer009、已提交工单/回执与Run预算/历史，不删除成功Step重发写。无模型WRITE Loop/HITL、工单UNKNOWN终态核销或生产/语义质量/Token费用/性能成果；候选下一批ADR-0027仅为设计，不算已完成能力。
+
+`python scripts/test-agent-runtime.py --with-java-delivery`最终退出0，`b2-ticket-sdk-runtime-final.log`：257项Runtime全部通过，原全部实际Java/来源/工单/知识/9例Loop与真实进程恢复/7例知识工具/5例发布/核销/操作许可/回复组合保持。更新后的3例建单组合通过，机器报告`runtime-ticket-creation-api.json` v2：首个未提交请求由产品TicketCreationClient真实POST→Java→受保护AI许可/受限PG，独立手工摘要/回执GET核对；共享摘要、全局long字符串元数据、冻结回执及receipt_reference写入实际AI Step/Run结果。取消后SDK只GET确认过去工单，Run保持FAILED/SIDE_EFFECT_UNKNOWN；来源接管时SDK拒绝且0业务写。原工单/事件/回执各1、客户3→4与原消息1保持，所有case仅预留1Tool/1Step/0Model/0Retry；独立协议负例是显式宿主请求，SDK本身尚非预算执行器。报告sdk=VERIFIED_EXPLICIT_WRITE_AND_RECEIPT_CLIENT，model_write_tool=NOT_IMPLEMENTED；没有把丢弃确认描述为完整恢复/核销。
+
+本批无Java生产/SQL/默认业务变更，不在本地重跑刚全绿6799b6c的139客服PG/19KB、六库迁移及三套完整服务；新Java参数向量、AI全量/共享transport单元、当前JAR全部组合已实跑。当前精确提交CI仍全跑这些专项与三套服务。无并行Maven或完整服务验收。

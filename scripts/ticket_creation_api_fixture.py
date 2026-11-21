@@ -15,7 +15,9 @@ ROOT=Path(__file__).resolve().parents[1]
 
 def verify_ticket_creation_api(connect,base,secret,store):
     from ai.runtime.source import SourceClient,credential,HEADER
+    from ai.runtime.ticket_creation import TicketCreationClient,receipt_reference
     from ai.runtime.types import RunInput,Lease
+    from ai.runtime.worker import PermanentFailure
 
     def send(method,path,tenant,body=b'',key=secret):
         with httpx.Client(trust_env=False,follow_redirects=False,timeout=8) as http:
@@ -49,10 +51,18 @@ def verify_ticket_creation_api(connect,base,secret,store):
         assert send('GET',path,tenant).status_code==404
         if mode=='current_source_revoked':
             with connect('customer_db') as db:db.execute('UPDATE session SET agent_id=99 WHERE id=%s',(session_id,))
+        api=TicketCreationClient(base,secret)
+        if mode=='normal_terminal_receipt':
+            typed=asyncio.run(api.create(source,lease,snapshot.snapshot_id,title,content))
+            assert typed.arguments_sha256==digest
         result=send('POST',path,tenant,body)
         if mode=='current_source_revoked':
             assert result.status_code==404,result.status_code
             assert send('GET',path,tenant).status_code==404
+            try:asyncio.run(api.create(source,lease,snapshot.snapshot_id,title,content))
+            except PermanentFailure as failure:assert failure.code=='TICKET_CREATE_SOURCE_REVOKED'
+            else:raise AssertionError('SDK accepted a revoked source')
+            assert asyncio.run(api.receipt(source,run,expected_snapshot_id=snapshot.snapshot_id,expected_hash=digest)) is None
             store.cancel(tenant,run);receipt=None
         else:
             assert result.status_code==200,result.status_code
@@ -63,8 +73,9 @@ def verify_ticket_creation_api(connect,base,secret,store):
             assert isinstance(receipt['ticket_id'],str) and int(receipt['ticket_id'])>2**53
             assert title not in result.text and content not in result.text and 'PRIVATE TICKET CUSTOMER' not in result.text
             if mode=='normal_terminal_receipt':
-                store.complete_step(lease,'ticket-1','SUCCEEDED',{'business_ref':'ticket:'+receipt['ticket_id']})
-                store.finish(lease,{'business_ref':'ticket:'+receipt['ticket_id']})
+                reference=receipt_reference(typed,source,run,snapshot.snapshot_id,digest)
+                store.complete_step(lease,'ticket-1','SUCCEEDED',reference)
+                store.finish(lease,reference)
                 assert send('POST',path,tenant,body).json()['data']==receipt
                 changed={**value,'title':'changed title'}
                 changed['arguments_sha256']=sha('\n'.join(('supportflow-ticket-create:v1',tenant,str(run),str(source.source_event_id),str(snapshot.snapshot_id),sha(changed['title']),sha(content),'5','2','1')))
@@ -76,6 +87,9 @@ def verify_ticket_creation_api(connect,base,secret,store):
                 store.cancel(tenant,run)
             with connect('customer_db') as db:db.execute('UPDATE session SET agent_id=99,status=4 WHERE id=%s',(session_id,))
             assert send('GET',path,tenant).json()['data']==receipt
+            typed_result=asyncio.run(api.receipt(source,run,expected_snapshot_id=snapshot.snapshot_id,expected_hash=digest))
+            assert typed_result.ticket_id==int(receipt['ticket_id']) and typed_result.ticket_no==receipt['ticket_no']
+            assert receipt_reference(typed_result,source,run,snapshot.snapshot_id,digest)['business_ref']=='ticket:'+receipt['ticket_id']
             assert send('GET',path,'TC_FOREIGN').status_code==404
             assert send('GET',path,tenant,key='synthetic-wrong-pair-'+'0'*40).status_code==401
         with connect('customer_db') as db:
@@ -99,6 +113,6 @@ def verify_ticket_creation_api(connect,base,secret,store):
             steps=actual['step_count'],tools=actual['tool_calls'],models=actual['model_calls'],retries=actual['retry_count'],
             automatic_runtime_reconciliation=False))
     report=ROOT/'.local/verification/runtime-ticket-creation-api.json';report.parent.mkdir(parents=True,exist_ok=True)
-    report.write_text(json.dumps(dict(schema_version='ticket-create-api-qualification-v1',mode='SYNTHETIC_HOST_REAL_CUSTOMER_AI_PG',cases=observations,
-        sdk='NOT_IMPLEMENTED',model_write_tool='NOT_IMPLEMENTED',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
-    print('Actual signed ticket creation API -> customer JAR -> AI authority/restricted PG: 3 cases passed; real TicketService, one business commit, terminal receipt, discarded ACK confirmed by GET, revoked source denied; UNKNOWN not auto-reconciled',flush=True)
+    report.write_text(json.dumps(dict(schema_version='ticket-create-api-qualification-v2',mode='SYNTHETIC_HOST_REAL_CUSTOMER_AI_PG',cases=observations,
+        sdk='VERIFIED_EXPLICIT_WRITE_AND_RECEIPT_CLIENT',model_write_tool='NOT_IMPLEMENTED',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
+    print('Actual ticket SDK + independent signed API -> customer JAR -> AI authority/restricted PG: 3 cases passed; fresh SDK create, immutable result binding, terminal receipt, discarded ACK confirmed by GET, revoked source denied; UNKNOWN not auto-reconciled',flush=True)

@@ -64,9 +64,10 @@ class _CustomerTransport:
         ticket = (isinstance(resource,str) and re.fullmatch(r'tickets/[A-Za-z0-9][A-Za-z0-9_-]{0,63}',resource)
                   and prefix=='TICKET' and method=='GET' and body==b'')
         knowledge = resource=='knowledge/search' and prefix=='KNOWLEDGE' and method=='POST'
-        if not (legacy or ticket or knowledge):
+        ticket_create = resource=='ticket-create' and prefix=='TICKET_CREATE' and (method=='POST' or method=='GET' and body==b'')
+        if not (legacy or ticket or knowledge or ticket_create):
             raise ValueError('Unsupported customer runtime operation')
-        if not isinstance(body,bytes) or len(body)>(65536 if resource in ('reply','knowledge/search') else 8192):
+        if not isinstance(body,bytes) or len(body)>(65536 if resource in ('reply','knowledge/search','ticket-create') else 8192):
             raise ValueError('Customer runtime request too large')
         run_id = UUID(str(run_id))
         target = self.base_url+f'/api/customer/internal/runtime/events/{source.source_event_id}/runs/{run_id}/{resource}'
