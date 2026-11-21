@@ -57,6 +57,7 @@ class LostStepAck:
 
 
 def verify_ticket_write_tool(connect,base,secret,store):
+    from ai.runtime.reconciliation import TicketReconciler
     from ai.runtime.source import SourceClient
     from ai.runtime.ticket_creation import TicketCreationClient
     from ai.runtime.ticket_write_tool import ticket_create_tool
@@ -122,11 +123,32 @@ def verify_ticket_write_tool(connect,base,secret,store):
             else:assert writes==[]
             assert 'PRIVATE' not in json.dumps(steps,default=str)+json.dumps(result,default=str)
             with connect('ai_db') as db:assert db.execute('SELECT count(*) FROM agent_payload WHERE tenant_code=%s AND run_id=%s',(tenant,run)).fetchone()[0]==0
+            confirmation = None
+            if result['error_code'] == 'SIDE_EFFECT_UNKNOWN':
+                # A new trusted host observes the terminal task, then only uses the receipt GET.
+                posts_before = io['posts']
+                gets_before = io['gets']
+                reconciler = TicketReconciler(store, TicketCreationClient(proxy, secret), 'qualification:ticket-audit')
+                audit = reconciler.reconcile(tenant, run)
+                after = store.get(tenant, run)
+                assert io['posts'] == posts_before and io['gets'] == gets_before + 1
+                if committed:
+                    assert audit['ticket_id'] > 2**53 and audit['original_step_result'] == writes[0]['result_ref']
+                    assert after == result | dict(error_code='SIDE_EFFECT_CONFIRMED', fence=result['fence'] + 1,
+                                                  result_ref=after['result_ref'], updated_at=after['updated_at'])
+                    assert reconciler.reconcile(tenant, run) == audit and io['gets'] == gets_before + 1
+                    assert store.claim_next(tenant, 'after-ticket-confirmation')['run_id'] == later['run_id']
+                    with connect('customer_db') as db:
+                        assert db.execute('SELECT ticket_id,ticket_no FROM agent_ticket_receipt WHERE tenant_code=%s AND run_id=%s',
+                                          (tenant,run)).fetchone() == (audit['ticket_id'], audit['ticket_no'])
+                else:
+                    assert audit is None and after == result and store.claim_next(tenant, 'still-held') is None
+                confirmation = dict(audit_persisted=audit is not None, state=after['state'], error_code=after['error_code'], receipt_requests=1)
             observations.append(dict(case=mode,run_id=str(run),state=result['state'],error_code=result['error_code'],steps=result['step_count'],tools=result['tool_calls'],
-                models=result['model_calls'],retries=result['retry_count'],source_requests=io['sources'],ticket_posts=io['posts'],receipt_gets=io['gets'],
+                models=result['model_calls'],retries=result['retry_count'],source_requests=io['sources'],ticket_posts=io['posts'],receipt_gets=expected[-1],
                 tickets=tickets,receipts=receipts,ticket_events=events,customer_ticket_count=count,source_messages=messages,
-                write_state=writes[0]['state'] if writes else None))
+                write_state=writes[0]['state'] if writes else None, terminal_confirmation=confirmation))
     report=ROOT/'.local/verification/runtime-ticket-write-tool.json';report.parent.mkdir(parents=True,exist_ok=True)
-    report.write_text(json.dumps(dict(schema_version='ticket-write-tool-qualification-v1',mode='SYNTHETIC_HOST_TOOL_REAL_JAVA_AI_PG_TCP_FAULTS',cases=observations,
+    report.write_text(json.dumps(dict(schema_version='ticket-write-tool-qualification-v2',mode='SYNTHETIC_HOST_TOOL_REAL_JAVA_AI_PG_TCP_FAULTS',cases=observations,
         model_write_loop='NOT_IMPLEMENTED',automatic_source_enrollment=False,performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
-    print('Actual Worker/WriteTool -> signed SDK/customer JAR -> AI authority/restricted PG: 10 cases passed; one ticket commit, budgeted TCP lost-ACK confirmation, no-receipt/budget/cancel UNKNOWN holds, scope/parameter/source guards, successful write restart uses GET only; no model WRITE Loop or terminal reconciliation',flush=True)
+    print('Actual Worker/WriteTool -> signed SDK/customer JAR -> AI authority/restricted PG: 10 cases passed; explicit terminal recovery confirmed 2 existing tickets with GET only; absent receipt kept the hold',flush=True)

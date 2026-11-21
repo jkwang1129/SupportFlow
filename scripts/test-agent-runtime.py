@@ -75,6 +75,7 @@ def main():
                         'tests/test_ticket_loop_postgres.py',
                         'tests/test_publication_postgres.py',
                         'tests/test_reconciliation_postgres.py',
+                        'tests/test_ticket_reconciliation_postgres.py',
                         'tests/test_ticket_reconciliation_storage_postgres.py',
                         f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)

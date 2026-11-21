@@ -1025,3 +1025,14 @@ b703d4f 的 [CI 44883937143](https://github.com/jkwang1129/SupportFlow/actions/r
 - `python scripts/test-security-flow.py` 退出 0。FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT 三套完整业务流程通过，均核实 AI005 历史和账本权限。`b3-ticket-ledger-services.log`。
 
 业务提交证明仍来自客服服务签名回执。数据库约束只能保证本地审计结构，不能证明跨库工单已提交。回滚时停用核销调用并保留账本、业务回执及版本历史。测试使用隔离合成数据，未测量性能或生产数据。设计见 [ADR-0028](decisions/0028-ticket-reconciliation-ledger.md)。
+
+## B3 工单未知写终态核销（2026-11-21）
+
+基于 8ffc3cd。`TicketReconciler` 复用回复核销的观察和短事务确认流程。入口接收可信宿主提供的租户和任务 ID。候选必须是只有一个 UNKNOWN 写步骤的失败任务，操作、版本、租户、来源、快照、参数摘要和步骤令牌须匹配。回执 GET 在事务外调用，确认时锁定 Run/Step 并重验。确认后追加 AI005 审计，更新原步骤与任务错误码，保留 FAILED、取消标记、完成时间及原预算。同一事实重复确认直接返回已保存审计。查无回执或核对失败时，同会话后续来源保持等待。
+
+- 设置 `PYTEST_ADDOPTS='-k reconciliation'` 后运行 `python scripts/test-agent-runtime.py --with-java-delivery`。隔离 PostgreSQL 17 的数据库部分 65 项通过，包含 19 项新的工单核销、21 项回复核销和 25 项账本用例，255 项未纳入本次定向运行。验证原预算和时间逐字段保持、六路并发只留一条记录、回执读取期间令牌变化、错误回执和跨租户拒绝、事务最后一步故障回滚、回复与工单候选类型隔离及确认应答丢失后的重复查询。原始日志 `b3-ticket-confirm-runtime-first.log`。
+- AI 普通测试 923 项通过、325 项条件跳过、1 项原有预期失败。24 项 RAG 契约通过。日志 `b3-ticket-confirm-ai.log` 和对应 XML。
+- `python scripts/test-versioned-migrations.py` 17 项通过。已确认的原回复及其审计记录可跨 AI004 → AI005 保持逐字段相等。`b3-ticket-confirm-upgrade.log`。
+- `runtime-ticket-write-tool.json` v2 的 10 例实际 Worker → Java → AI → 受限 PostgreSQL 组合通过。写后取消与工具预算耗尽各确认一张已有工单，每案只增加一次 GET，原账本和客户侧工单、事件与业务回执各 1 条，后续同会话任务恢复领取。缺失回执一案继续阻断，未追加审计。三例均保留原预算和任务失败历史，所有场景使用合成数据。
+
+回滚时停用可信宿主工单核销调用，保留 AI005、工单回执、原步骤和审计历史。确认能力目前限单写任务，后续接限时审批、恢复后执行业务及操作界面。设计见 [ADR-0029](decisions/0029-terminal-ticket-reconciliation.md)。
