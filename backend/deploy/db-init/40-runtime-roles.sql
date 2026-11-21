@@ -118,6 +118,9 @@ DO $$ BEGIN
  IF to_regclass('public.agent_reply_reconciliation') IS NOT NULL THEN
    REVOKE UPDATE,DELETE,TRUNCATE ON public.agent_reply_reconciliation FROM supportflow_ai,supportflow_agent_runtime;
  END IF;
+ IF to_regclass('public.agent_ticket_reconciliation') IS NOT NULL THEN
+   REVOKE UPDATE,DELETE,TRUNCATE ON public.agent_ticket_reconciliation FROM supportflow_ai,supportflow_agent_runtime;
+ END IF;
 END $$;
 GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO supportflow_ai;
 \connect customer_db

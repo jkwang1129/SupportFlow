@@ -714,6 +714,173 @@
             }
           }
         },
+        "agent_ticket_reconciliation": {
+          "columns": {
+            "arguments_sha256": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "confirmed_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "intent_hash": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "observed_fence": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "operation": {
+              "default": "'ticket.create'::character varying",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(32)"
+            },
+            "operator_ref": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            },
+            "original_error_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            },
+            "original_step_result": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "jsonb"
+            },
+            "run_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "schema_version": {
+              "default": "'ticket-create-v1'::character varying",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "snapshot_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "source_event_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "step_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "ticket_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "ticket_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            }
+          },
+          "constraints": {
+            "agent_ticket_reconciliation_arguments_sha256_check": "CHECK ((arguments_sha256 ~ '^[0-9a-f]{64}$'::text))",
+            "agent_ticket_reconciliation_intent_hash_check": "CHECK ((intent_hash ~ '^[0-9a-f]{64}$'::text))",
+            "agent_ticket_reconciliation_observed_fence_check": "CHECK ((observed_fence > 0))",
+            "agent_ticket_reconciliation_operation_check": "CHECK (((operation)::text = 'ticket.create'::text))",
+            "agent_ticket_reconciliation_operator_ref_check": "CHECK (((operator_ref)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$'::text))",
+            "agent_ticket_reconciliation_original_error_code_check": "CHECK (((original_error_code)::text = 'SIDE_EFFECT_UNKNOWN'::text))",
+            "agent_ticket_reconciliation_original_step_result_check": "CHECK (((jsonb_typeof(original_step_result) = 'object'::text) AND (octet_length((original_step_result)::text) <= 4096)))",
+            "agent_ticket_reconciliation_pkey": "PRIMARY KEY (tenant_code, run_id)",
+            "agent_ticket_reconciliation_schema_version_check": "CHECK (((schema_version)::text = 'ticket-create-v1'::text))",
+            "agent_ticket_reconciliation_step_no_check": "CHECK (((step_no >= 1) AND (step_no <= 100)))",
+            "agent_ticket_reconciliation_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
+            "agent_ticket_reconciliation_tenant_code_run_id_step_no_fkey": "FOREIGN KEY (tenant_code, run_id, step_no) REFERENCES agent_step(tenant_code, run_id, step_no)",
+            "agent_ticket_reconciliation_tenant_code_ticket_id_key": "UNIQUE (tenant_code, ticket_id)",
+            "agent_ticket_reconciliation_ticket_id_check": "CHECK ((ticket_id > 0))",
+            "agent_ticket_reconciliation_ticket_no_check": "CHECK (((ticket_no)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'::text))"
+          },
+          "indexes": {
+            "agent_ticket_reconciliation_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_ticket_reconciliation_pkey ON public.agent_ticket_reconciliation USING btree (tenant_code, run_id)",
+              "valid": true
+            },
+            "agent_ticket_reconciliation_tenant_code_ticket_id_key": {
+              "definition": "CREATE UNIQUE INDEX agent_ticket_reconciliation_tenant_code_ticket_id_key ON public.agent_ticket_reconciliation USING btree (tenant_code, ticket_id)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_ticket_reconciliation_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_ticket_reconciliation_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "ai_usage_record": {
           "columns": {
             "cost_amount": {
@@ -13413,6 +13580,10 @@
       {
         "checksum": "3c324630703c85c70454bcdbf9315a80408dc8006f96e838f83190face282b64",
         "version": "004"
+      },
+      {
+        "checksum": "37d6da9e61da0525523763c14d8c9b9cd840124a0479f700519e643dbfd7aa85",
+        "version": "005"
       }
     ],
     "billing_db": [

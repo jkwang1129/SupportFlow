@@ -1011,3 +1011,17 @@ TicketCreationClient.create在I/O前核可信RunInput/Lease/tenant/owner/fence/U
 定向Runtime命令最终退出0，旧所有实际组合/3例建单SDK/5例报告发布/核销/操作许可/回复保持。新增`ticket_write_tool_fixture.py`复用实际JAR并记录TCP代理观察，`.local/verification/runtime-ticket-write-tool.json`10案全部通过：正常3Steps/2Tools，1来源HTTP/1POST/0GET；真实上游事务提交但代理扣留正文直到SDK总期限，Runtime单独计READ查询确认，总4Steps/3Tools，1POST/1GET；代理未转发POST时404回执保持UNKNOWN；预算2在GET前阻断且业务已提交不冒称失败无副作用；预算0/无Scope/坏参数在HTTP前拒绝；来源接管只有1次来源核权、0POST；成功WRITE Step提交丢ACK，新Worker在人工接管/关闭后仅GET确认，总4Steps/3Tools/1Retry，无重新来源/POST；取消发生在真实业务提交后不能写迟到成功，UNKNOWN保持。所有已提交案恰1工单/1事件/1回执、客户计数3→4、原消息仍1；未提交案0工单/事件/回执、客户计数3，均0模型调用/无正文payload。三种UNKNOWN案再次入队同会话来源仍PENDING。代理故意等5秒/SDK1秒是故障注入，不是P95。模型ToolCall为显式合成宿主选择，非模型自主建单质量评测。
 
 本批无Java生产/SQL/默认Workflow变更；刚全绿8f65bf2已包含139项客服PG/19KB/六库迁移/三套完整服务，本地不重复，保留当前原全部实际Runtime组合与新10例；精确提交CI继续全跑上述专项及276项Runtime（不带PYTEST_ADDOPTS筛选）。无并行Maven或完整服务验收。
+
+b703d4f 的 [CI 44883937143](https://github.com/jkwang1129/SupportFlow/actions/runs/44883937143) 前后端任务全部通过，包含 276 项 Runtime 与 10 例真实建单工具联调。
+
+## B3 工单核销审计账本（2026-11-21）
+
+基于 b703d4f 新增 AI005、初始化后的结构契约、账号权限及只读 Readiness。`agent_ticket_reconciliation` 将确认事实绑定同租户 Run/Step，保存业务回执引用、原参数摘要、观察令牌、确认者和原步骤结果。同租户每个 Run 与工单仅一条记录，运行账号只可查和追加。原 AI004 的回复表和记录保留。此次交付的范围是存储和部署检查，核销入口随下一批实现。
+
+- 隔离 PostgreSQL 17、Python 3.11.5。设置 `PYTEST_ADDOPTS='-k ticket_reconciliation_storage'` 后运行 `python scripts/test-agent-runtime.py`，25 项全部通过，原 276 项未在此次定向命令运行。覆盖外租户、空租户、PLATFORM、宽策略叠加、错误操作与版本、同租户外键、重复与八路并发插入、权限和事务回滚。重复执行角色配置后保留 1 条审计行，AI 账号只具备 SELECT/INSERT，Customer 与 KB 账号无 SELECT。原始日志 `b3-ticket-ledger-storage-first.log`。
+- `python scripts/test-versioned-migrations.py` 通过 17 项迁移测试。AI 004 → 005 前后已有租约、Run/Step、预算、正文、原回复核销记录逐字段一致。`b3-ticket-ledger-upgrade.log`。
+- `python scripts/test-schema-drift.py` 通过 96 表、1 视图和 5 个函数的核对。14 项 SQL 漂移及 3 项元数据漂移被拒绝。审查候选快照后确认唯一新增项为 AI005 迁移和新账本。`b3-ticket-ledger-drift.log`。
+- `python scripts/test-database-init.py` 通过六库 CLI 初始化、重复初始化拒绝、数据保留和故障回滚。`b3-ticket-ledger-init.log`。
+- `python scripts/test-security-flow.py` 退出 0。FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT 三套完整业务流程通过，均核实 AI005 历史和账本权限。`b3-ticket-ledger-services.log`。
+
+业务提交证明仍来自客服服务签名回执。数据库约束只能保证本地审计结构，不能证明跨库工单已提交。回滚时停用核销调用并保留账本、业务回执及版本历史。测试使用隔离合成数据，未测量性能或生产数据。设计见 [ADR-0028](decisions/0028-ticket-reconciliation-ledger.md)。

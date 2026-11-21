@@ -27,7 +27,7 @@ python scripts/db-migrate.py verify --database customer_db
 
 ## 尚未覆盖
 
-当前六库均有版本计划：客服九条增量、计费一条增量；AI一条基线及002～004增量；User/Tenant/Ops各一条基线采纳。AI 与五个 Java 数据服务已有只读 Readiness。统一 init/migrate/verify 已具备本地验收；备份恢复、生产部署与运维仍需阶段 E 实测，不能据此宣布生产验收完成。
+当前六库均有版本计划。客服九条增量，计费一条增量，AI 一条基线及 002～005 增量，User/Tenant/Ops 各一条基线采纳。AI 与五个 Java 数据服务具备只读 Readiness。统一 init/migrate/verify 已通过本地验收，备份恢复、生产部署与运维实测归阶段 E。
 
 ## 四库基线采纳
 
@@ -41,7 +41,7 @@ AI/User/Tenant/Ops 的 `001` 为 baseline 操作，不执行建表 SQL。JSON �
 
 ## 当前实际结构漂移
 
-`python scripts/db-migrate.py verify` 同时核对六库历史和 current-schema.json 中登记的 **95 张应用表、1 个视图、5 个 supportflow_ 函数**。检查列集合、类型/默认值/非空/identity/generated、索引定义及有效状态、约束、RLS ENABLE/FORCE、策略集合/主体/操作/谓词，以及视图和受控函数定义。额外的未登记表/列/索引/约束/策略/视图/受控函数也会拒绝；不会自动把数据库当前状态登记为正确状态。迁移 manifest 的版本/checksum 必须与 desired-state 契约一致，避免新 SQL 配旧快照。
+`python scripts/db-migrate.py verify` 同时核对六库历史和 current-schema.json 中登记的 **96 张应用表、1 个视图、5 个 supportflow_ 函数**。检查列集合、类型/默认值/非空/identity/generated、索引定义及有效状态、约束、RLS ENABLE/FORCE、策略集合/主体/操作/谓词，以及视图和受控函数定义。额外的未登记表/列/索引/约束/策略/视图/受控函数也会拒绝。迁移 manifest 的版本和 checksum 必须与结构契约一致。
 
 公开 schema 中的迁移历史表由独立历史/权限检查负责，pgvector 扩展函数不属于 supportflow_ 函数范围。此核验不覆盖所有授权、owner、触发器、扩展版本、业务数据、外部对象或备份；数据库身份/租户权限仍须运行独立安全测试。应用 Readiness 不会逐请求执行本完整检查；部署必须在启动业务前执行 verify，未知策略等漂移会停止发布。
 
@@ -59,7 +59,7 @@ AI/User/Tenant/Ops 的 `001` 为 baseline 操作，不执行建表 SQL。JSON �
 
 init 只承担结构和版本，不配置运行密码，结果明确标记 NOT_PROVISIONED_BY_INIT。运行角色/密码 provisioning 仍使用唯一的 40-runtime-roles.sql，不进入迁移历史。默认本地 Compose 已自动创建六库，应继续使用本地 Compose 专用 upgrade-runtime-security.py 完成版本登记/角色配置/验证，不要在已有 Compose 上再次 init。独立空 PostgreSQL 使用 init 后，管理员通过 psql 在同一目标服务器执行该角色脚本，再 verify 后启动应用；不能把本地 Compose 专用升级助手用于其他远端服务器。应用进程仍只获得各自受限凭据。
 
-`python scripts/test-database-init.py` 验证真实 CLI 空库初始化、95 张表核验、重复初始化拒绝、无关数据与种子保留、锁竞争、无 CREATEDB 运行身份拒绝及中途 SQL 失败回滚。`python scripts/test-security-flow.py` 另验证默认新库、历史库升级、空服务器经 CLI init 三套真实 Java/Python 服务与受限账号业务闭环，所有数据均为隔离合成验收。
+`python scripts/test-database-init.py` 验证真实 CLI 空库初始化、96 张表核验、重复初始化拒绝、无关数据与种子保留、锁竞争、无 CREATEDB 运行身份拒绝及中途 SQL 失败回滚。`python scripts/test-security-flow.py` 另验证默认新库、历史库升级、空服务器经 CLI init 三套真实 Java/Python 服务与受限账号业务闭环，所有数据均为隔离合成验收。
 
 ## AI 002：Runtime 存储底座
 
@@ -100,3 +100,9 @@ ReplyReconciler为显式可信宿主控制面，无公开路由/自动轮询/模
 遵循migrate→provision→verify；必须增加009，不改旧007或历史checksum。`python scripts/test-ticket-receipts.py`用隔离PG17/实际运行身份核约束、跨租户与其他角色拒绝、事务回滚、八路重复元数据插入单一回执、宽松permissive策略不绕过restrictive guard、八类不安全能力组及重复provision保留数据/权限。`test-versioned-migrations.py`保留008→009前后已有工单、来源、消息和知识全部字段；结构契约增至95表。
 
 本子批次只有存储层，没有新Agent建单业务方法、端点或模型WRITE工具。FK/Hash不能代替主体/会话/客户关联、来源TTL、参数正文或AI写许可核验。后续必须复用TicketService在同一事务创建业务行/事件并写回执，再接API和未知结果查询；当前不能宣称Agent端到端幂等建单已经完成。回滚停用后续新调用，保留已提交工单/回执和009历史，不清数据或恢复无回执重试。见ADR-0022与reliability-verification。
+
+## AI 005 工单写入核销账本
+
+`agent_ticket_reconciliation` 按租户和任务记录确认工单已提交的审计事实，以复合外键绑定同租户执行步骤。每个工单在租户内最多核销一次。记录固定操作和版本、原参数摘要、工单引用、确认主体及原步骤结果。`confirmed_at` 表示确认时间，工单业务提交以客服服务的持久化回执为准。
+
+按 migrate → provision → verify 升级。启用 Runtime 后，Readiness 检查表、列、强制行级隔离和不可变权限。运行账号只允许 SELECT 和 INSERT。004 → 005 的测试逐项比对已有租约、步骤、正文和已确认的回复核销记录。回滚时停用核销调用并保留 005 和现有审计记录。设计见 [ADR-0028](../../../docs/decisions/0028-ticket-reconciliation-ledger.md)。
