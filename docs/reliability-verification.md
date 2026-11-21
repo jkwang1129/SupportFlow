@@ -1228,3 +1228,12 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - `PYTEST_ADDOPTS='-k runtime_trace' python scripts/test-agent-runtime.py` 在真实 PostgreSQL 17 通过 2 项。通过独立 CLI 进程验证投影、顺序、跨租户缺失及读前读后状态一致，并验证不完整轨迹拒绝。首轮夹具为工具步骤误用了工作状态 Schema，改用原工具结果 Schema 后通过。原日志 `d1-runtime-trace-pg.log`、`d1-runtime-trace-pg-final.log`。
 
 这批提供受限运营导出。离线故障轨迹检查、网页查询和业务执行重演分批验收。
+
+## D2 离线轨迹回放与基线校验（2026-11-22）
+
+从 AI 服务目录执行 `python -m ai.runtime.trace_replay --trace trace.json --expect expected.json`。使用 D1 的轨迹 JSON，按持久化步序合计未知写入、确认写入及 Run 计数，并检查终态。预期文件可以声明稳定的状态、错误码、调用次数或写次数。结果分为基线通过、内容差异或无效输入三个退出码。回放只读输入文件，不访问业务服务、数据库或模型。回滚删除命令入口即可，导出格式仍可使用。
+
+- `python -m pytest -q tests/test_runtime_trace_replay.py` 11 项通过。覆盖健康状态、顺序错误、不同 Schema、超限文件、基线差异、未知写冒充成功或取消、已确认回执缺失。
+- `PYTEST_ADDOPTS='-k runtime_trace' python scripts/test-agent-runtime.py` 的 3 项真实 PostgreSQL 测试通过。新增夹具在 WRITE 步骤预留后模拟丢确认，实际数据库任务为 `FAILED/SIDE_EFFECT_UNKNOWN`。回放观察到 1 个未知写。改写副本中的终态为成功后门禁失败，数据库记录未改变。原始输出 `runtime-trace-replay.json`、日志 `d2-runtime-replay-pg-final.log`。
+
+当前回放用于轨迹契约和故障回归。模型与工具行为的真实重演、长期质量数据集和评测面板待后续交付。

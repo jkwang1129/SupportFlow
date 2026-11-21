@@ -8,7 +8,9 @@ import sys
 import pytest
 
 from ai.runtime.types import RuntimeConflict
-from ai.runtime.worker import RuntimeWorker
+from ai.runtime.trace_export import _metadata
+from ai.runtime.trace_replay import replay
+from ai.runtime.worker import RuntimeWorker, TransientFailure
 from test_runtime_store_postgres import admin, request, store
 
 pytestmark = pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'), reason='requires disposable runtime PostgreSQL')
@@ -52,3 +54,30 @@ def test_incomplete_trace_is_rejected_without_correcting_the_database(store):
     with pytest.raises(RuntimeConflict, match='inconsistent'):
         store.trace_snapshot(source.tenant, run)
     assert store.get(source.tenant, run)['step_count'] == 1 and store.steps(source.tenant, run) == []
+
+
+def test_replay_real_unknown_write_trace_and_detect_a_changed_outcome(store):
+    source = request()
+    run = store.enqueue(source)['run_id']
+
+    def lost_confirmation():
+        raise TransientFailure('FIXTURE_WRITE_ACK_LOST')
+
+    def handler(context):
+        return context.step('write-without-confirmation', 'TOOL', 'WRITE', {'operation': 'fixture.write'},
+                            lost_confirmation)
+
+    terminal = RuntimeWorker(store, {'runtime-v1': handler}, 'fixture-worker').run_once(source.tenant)
+    assert terminal['state'] == 'FAILED' and terminal['error_code'] == 'SIDE_EFFECT_UNKNOWN'
+    trace = store.trace_snapshot(source.tenant, run)
+    result = replay(trace)
+    assert result['issues'] == [] and result['unknown_writes'] == 1 and result['successful_writes'] == 0
+    altered = trace | {'run': trace['run'] | {'state': 'SUCCEEDED', 'error_code': None}}
+    changed = replay(altered)
+    assert changed['issues'] == ['UNKNOWN_WRITE_WITHOUT_HOLD']
+    assert store.get(source.tenant, run) == terminal
+    output = Path(__file__).resolve().parents[2] / '.local/verification/runtime-trace-replay.json'
+    output.parent.mkdir(parents=True, exist_ok=True)
+    report = {'schema_version': 1, 'mode': 'SYNTHETIC_FAULT_REAL_POSTGRES',
+              'trace': trace, 'replay': result, 'altered_outcome_replay': changed}
+    output.write_text(json.dumps(report, default=_metadata, indent=2)+'\n', encoding='utf-8')
