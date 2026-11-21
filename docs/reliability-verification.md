@@ -803,3 +803,21 @@ c224389对应的[CI 44852709345](https://github.com/jkwang1129/SupportFlow/actio
 边界/回滚：这是SQL查询时点的访客发布可见性，不是文档用户级ACL/版本快照/并发撤权后的最终输出重验，也不能撤回已经发给模型的内容。未引入RAG结果缓存；新查询重新核条件。Embedding仍旧实现，可先于查询发生，不能声称无发布文档时整轮零模型费用；Runtime知识工具的来源核权与显式Embedding预算仍下一步。停止访客知识答复/转人工即可回退，不重新开放草稿、不撤销历史008/清数据；后台编写功能保留。无语义正确率/性能/Token费用或生产收益结论。
 
 最终实际`python scripts/test-security-flow.py`退出0，`b2-published-policy-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整真实服务路径均通过，含显式发布索引文档后的Java检索/访客WS→实际brain→BOT回复、后台默认预览链路、权限/计费/工单、六库历史Customer008和各readiness故障恢复。无并行Maven/服务验收。原Run/Step/预算无改动，本地未重复214项Runtime；精确提交CI全跑。
+
+3d644cb对应的[CI 44854145977](https://github.com/jkwang1129/SupportFlow/actions/runs/44854145977)两个job全部成功，含595项AI普通/访客发布策略、103项客服PG+19项KB、Customer008升级/只读权限与214项Runtime/三套完整服务。该批本地/远端退出条件已完成。
+
+## B2/M08 Runtime单次查询Embedding适配子批次（2026-11-21）
+
+基线3d644cb。新增`ai/runtime/embeddings.py`、`test_runtime_embeddings.py`、`test_runtime_embeddings_postgres.py`、ADR-0018；现有core/chat_transport提取同一有界JSON发送函数，固定chat/completions、embeddings两种操作，原chat包装保持。扩旧TCP测试服务器可返回指定合成响应，Runtime专项加入新PG。无SQL/Java/依赖/自动入口修改，未将旧RAG同步Embedding包装成已具Run预算的调用，也未建第二模型服务。
+
+EmbeddingProfile由宿主显式绑定租户/配置/1024维/查询策略/端点Hash/≤30秒，隐藏凭据repr且不入策略Hash（仅同逻辑策略密钥轮换可复用）。单查询非空UTF-8≤4096字节，不截断，不让配置凭据原样进入文本；固定float/单元素input数组/dimensions1024。先预留MODEL/NONE，一次受限HTTP（无环境代理/重定向/隐藏重试/本地hash），未知/错误操作在HTTP前拒绝。严格模型名/单index0/object、1024有限分量/绝对值≤1e6、既有PG七位小数后仍非零、usage整数和等值总Token。缺usage为未知而非零。向量/供应商reported usage随原model-output-v1成功同事务；恢复重验策略/输入/正文/usage，结果tuple不可变且repr不显示向量。没有第二计费账本或硬金额结算。
+
+协议参考ADR-0018链接的OpenAI/百炼官方接口（2026-11-21核对），这是项目固定兼容子集，不声称所有Embedding模型/批处理均支持；实际验收模型数据为合成，未调用真实供应商或读取开发者.env。
+
+- `cd ai-service; python -m pytest -q tests/test_runtime_embeddings.py tests/test_chat_transport.py tests/test_runtime_models.py`：首轮159项通过＝新47+原55传输+57Chat适配，`b2-runtime-embedding-unit-first.log`；追加Embedding真实TCP正常/重定向/慢正文三例后最终162项通过＝新50+原112，`b2-runtime-embedding-unit-final.log`。请求路由/单次MODEL意图、输入/配置/租户错误在I/O前拒绝、17类坏向量/索引/模型/usage、未知usage、401/429/503/302分类且无第二请求、缓存重验、Key轮换/策略变化、任意操作拒绝及环境代理禁用/总正文超时均核实。
+- AI普通全量645 passed、233 skipped、1 xfailed，`b2-runtime-embedding-ai-final.log/xml`；新增14项PG另在专项实测，原引用正文xfail保留。最终JUnit的RAG24项门禁全部执行通过，`b2-runtime-embedding-gate-final.log`。
+- `python scripts/test-agent-runtime.py --with-java-delivery`的PG部分228项全部通过，`b2-runtime-embedding-runtime-first.log`。新增14项：同步骤重复访问仅1 HTTP/1MODEL/1原子向量；Embedding与Chat共享预算1时先于Chat HTTP拒绝、预算2时各一次；新Worker+Key轮换复用向量/原计数；503按真实ready_at等待重试，预算1阻第二Embedding HTTP、预算2请求2次成功；执行中取消保留预留且不存迟到向量；向量提交丢DB确认后恢复仍仅1HTTP；有效Hash但向量/usage/策略损坏3例拒绝且不再请求；缺usage持久化unknown；真实TCP Embedding+受限PG Worker两例，成功1次/共享预算拒第二Chat，HTTP均仅1且禁环境代理。
+
+Token8、向量值0.25等均合成协议值，不是项目实际Token成本/检索质量；MODEL次数为预留而非付款次数。输入字节边界不是实际Tokenizer预算。取消/超时不能撤销供应商费用，失败和丢输出费用仍可能未知；硬Token/金额预留/结算后续M11。当前只算单查询表示，不读知识事实或授予文档权限；知识工具仍需当前来源/文档/版本授权。旧RAG Embedding仍原实现，尚无自动Worker/业务切换。回滚不注册新适配/保留原chat包装，保留MODEL/payload/usage/预算，不删除成功步骤重请求，不换策略套旧缓存。无生产/付费模型资格、性能、成本或业务收益结论。
+
+最终`python scripts/test-agent-runtime.py --with-java-delivery`退出0，`b2-runtime-embedding-runtime-first.log`：228项PG/Python专项+6次能力组负面，原全部Java交付/来源/工单/九例只读Loop（含真实进程退出接管）/五例报告发布/两例核销/写许可和丢回执回复全部通过。新14项首轮通过，3例Embedding TCP/14项PG及原Chat TCP正负例保持。公共传输层改动在实际模型协议/客户JAR组合链路核实；无SQL/Java/默认流程变更，本地不额外重复上批已完整通过的三套默认服务/103客服PG/六库迁移，精确提交CI仍全跑。

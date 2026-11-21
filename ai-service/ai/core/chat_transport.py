@@ -1,4 +1,4 @@
-"""Private bounded HTTP transport used by the existing call_chat entry point."""
+"""Private bounded model transport shared by Chat and query Embedding."""
 import asyncio
 import json
 import math
@@ -65,6 +65,16 @@ def _configuration(chosen,timeout):
 
 
 async def _send_chat_json(chosen,payload,timeout,*,transport=None):
+    return await _send_model_json(chosen,payload,timeout,endpoint='chat/completions',transport=transport)
+
+
+async def _send_embedding_json(chosen,payload,timeout,*,transport=None):
+    return await _send_model_json(chosen,payload,timeout,endpoint='embeddings',transport=transport)
+
+
+async def _send_model_json(chosen,payload,timeout,*,endpoint,transport=None):
+    if endpoint not in ('chat/completions','embeddings') or type(endpoint) is not str:
+        raise ModelCallFailure('MODEL_OPERATION_INVALID',attempted=False)
     base,key,model=_configuration(chosen,timeout)
     try:
         if type(payload) is not dict or payload.get('model')!=model:raise ValueError()
@@ -76,7 +86,7 @@ async def _send_chat_json(chosen,payload,timeout,*,transport=None):
         async with asyncio.timeout(timeout):
             async with httpx.AsyncClient(transport=transport,trust_env=False,follow_redirects=False,
                                          timeout=httpx.Timeout(min(30,timeout),connect=min(5,timeout))) as client:
-                async with client.stream('POST',base.rstrip('/')+'/chat/completions',
+                async with client.stream('POST',base.rstrip('/')+'/'+endpoint,
                         headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','Accept-Encoding':'identity'},content=body) as response:
                     status=response.status_code
                     if status==429:raise ModelCallFailure('MODEL_RATE_LIMITED',retryable=True,status_code=status)

@@ -37,7 +37,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M05 RAG Engineering | 部分实现，本轮补齐低分拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号、租户过滤；两引擎拒答/文档范围/空选集和访客发布就绪过滤回归 | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
 | M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime214项、原客服PG103项、实际只读Loop/进程恢复/五例发布/两例受控核销有机器证据 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
 | M07 Trace/Observability | 部分实现 | Java `TraceContext`；Python `core/trace.py`、图 steps、`llm_usage.py`；运营 `ObservabilityService#trace/evaluate`、告警规则与调用记录查询；本轮 RAG steps 增加 traceId/sequence/schemaVersion 与拒答原因 | 已有模型调用 Trace 查询与告警应复用；已有持久化Run/Step与trace_id；缺工具详情、异步业务链路/审批事件、统一查询、脱敏治理和安全replay。A/B/D |
-| M08 Model Gateway/Prompt | 部分实现：共用有界Chat与Runtime适配 | core.llm_chat单次HTTP/稳定错误/正文边界；显式租户ChatProfile、Prompt/请求Hash、MODEL原子正文/usage及预算恢复；实际协议TCP故障/进程验收；llm_gateway.py仍旧Mock占位 | 视觉/Embedding、租户选择/Prompt发布/供应商权限和usage/Token金额结算治理仍缺；不造第二入口。E |
+| M08 Model Gateway/Prompt | 部分实现：共用有界Chat/查询Embedding与Runtime适配 | core.llm_chat单次HTTP/稳定错误/正文边界；显式租户ChatProfile、Prompt/请求Hash、MODEL原子正文/usage及预算恢复；实际协议TCP故障/进程验收；llm_gateway.py仍旧Mock占位 | 视觉/旧RAG同步Embedding、租户选择/Prompt发布/供应商权限和usage/Token金额结算治理仍缺；不造第二入口。E |
 | M09 Streaming/交互 | 部分实现 | `supportflow-realtime-service` WebSocket、消息 seq/ACK/补拉、机器人 typing | 缺持久化 Run 事件、审批/取消/恢复展示；优先复用 WebSocket。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
 | M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、`llm_usage.py` 实际 usage 与价格估算、计费日聚合；运营 `TenantCostBudget`、`ObservabilityService#costGuard/evaluate` 和客服 `CostGuardClient` 已有月预算告警/降级/暂停 | 复用既有预算配置；当前闸门缓存 60 秒且读取失败放行，不能当硬额度。已有跨Worker租约/fencing、Run调用/步骤/重试计数预算和租户积压上限；仍缺Token/费用并发预留结算和跨进程租户配额/公平性；计费去重 A4，运行预算随 M01，完整隔离压测 E。费用估算不是账单。B/E |
@@ -74,12 +74,12 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-21，B2 访客知识发布边界）
+## 当前执行位置（2026-11-21，B2 Runtime查询Embedding）
 
-阶段A退出条件已完成；B1/B2/B3仍部分实现，默认旧Workflow保留、开发分支未合并main。持久化Run/Step/Worker/预算/租约fence、Outbox/签名API、正文Checkpoint/真实进程接管、显式模型Profile、来源/工单工具、有界模型Loop/报告发布与单一reply未知写受控核销已验收；无回执仍阻断，HITL/其他写未完成。
+阶段A已完成退出条件，B1/B2/B3仍部分实现，默认Workflow保留，开发分支未合并main。已有Run/Step/Worker/预算/租约fence、Outbox/签名API、正文Checkpoint/真实进程恢复、来源/工单工具、有界Loop/固定报告发布及单一reply未知写核销。无回执仍阻断，HITL/创建工单/可信自动触发未完成。
 
-c224389的[CI 44852709345](https://github.com/jkwang1129/SupportFlow/actions/runs/44852709345)两个job全部成功，含569项AI普通/18项应用诊断内容排除、103项客服PG+11项KB、214项Runtime和三套完整服务。更早的文档范围/空选集/两引擎兜底一致性已完成本地/远端验收。
+3d644cb的[CI 44854145977](https://github.com/jkwang1129/SupportFlow/actions/runs/44854145977)两个job全部成功。文档范围/空选集、诊断内容排除和访客发布/索引就绪策略已完成本地/远端验收；当前Customer008/AI004、94表/1视图/5函数，新增KB列读取不授正文/文档修改。
 
-本批访客brain/旧chat由可信宿主固定published_only=True，两图改写与两引擎所有向量/关键词路径仅查询status=3且index_status=3，与文档ID范围/RLS/删除过滤求交。后台默认预览保持。26项新增单元（旧版全失败后修复）、AI普通595项、103项客服PG+19项KB（新8项发布状态/状态变化/兜底负面）通过。真实受限账号发现缺少index_status读取，新增Customer008只授该列SELECT，旧SQL/正文/文档修改权限不放宽；升级17项、94表drift/init及新旧29/30安全断言/每套4项readiness均通过。当前仍94表/1视图/5函数。设计/实际失败和回滚见ADR-0017与reliability-verification。
+本批新增显式租户EmbeddingProfile/RuntimeEmbeddingClient，复用同一受限模型HTTP，固定单查询1024维/≤4096字节；先预留MODEL，向量/usage原子Checkpoint，恢复与密钥轮换不重请求或退预算。未把旧RAG同步Embedding移入Run账本。新50项单元含真实TCP三例/原Chat112项共162通过，AI普通645项、新14项真PG随228项专项、原全部实际Java/Loop/发布/核销联调通过，原24项拒答门禁保持。新/旧策略、取消、丢提交确认、损坏Checkpoint和共享Chat预算均有负例；usage缺失保持未知，Token8/向量0.25均合成，不是付费质量/成本数据。证据/设计/回滚见reliability-verification和ADR-0018。
 
-下一步先补Runtime中单次Embedding的显式MODEL预算、受限共享传输和原子Checkpoint，再接当前知识资源授权/版本绑定与工具；原RAG Embedding仍旧实现，发布过滤不等于完整ACL或在途撤权后的输出重验。之后幂等创建工单、可信自动登记/路由、Profile Resolver及HITL；上下文/Eval/Trace/Token金额治理/运维按C～E。所有数据为合成本地工程验收，无生产流量/客户/收益、LLM质量或付费Token费用结论。
+下一批先在既有customer服务建立受控知识查询API（当前来源权限、发布状态/兼容向量、有限结果在业务事务内核验），再接Python签名SDK/Registry，与已完成Embedding预算组合；不让模型直接访问业务SQL。知识用户级ACL/版本与在途输出最终核验仍未全部完成。随后创建工单/可信登记路由/Profile Resolver/HITL；上下文/Eval/Trace/Token金额/运维按C～E。无生产规模、付费模型质量/Token成本或业务收益成果。
