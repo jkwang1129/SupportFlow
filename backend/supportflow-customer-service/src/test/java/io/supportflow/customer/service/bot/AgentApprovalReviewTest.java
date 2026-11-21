@@ -123,4 +123,32 @@ class AgentApprovalReviewTest {
             }
         }
     }
+
+    @Test void activeLookupSignsOneReferenceAndRejectsAnExpandedResult() throws Exception {
+        String tenant = "TENANT_A", session = "SESSION_A";
+        UUID event = UUID.randomUUID(), run = UUID.randomUUID();
+        Instant expiry = Instant.now().plusSeconds(60);
+        var data = Map.of("source_event_id", event.toString(), "run_id", run.toString(), "status", "PENDING", "expires_at", expiry.toString());
+        try (var receiver = new RuntimeReceiverStub(request -> {
+            assertEquals("POST", request.method());
+            assertEquals("/api/ai/v1/runtime/runs/ticket-approval-active", request.rawPath());
+            assertEquals(JSON.valueToTree(Map.of("session_no", session)), JSON.readTree(request.body()));
+            String signed = request.headers().get("X-SupportFlow-AI-Auth").getFirst();
+            assertEquals(signed, AgentRuntimeProtocol.credential(KEY, Long.parseLong(signed.split(":")[2]),
+                    request.method(), request.rawPath(), tenant, request.body()));
+            return new RuntimeReceiverStub.Reply(200, JSON.writeValueAsString(data));
+        }); var client = new AgentRuntimeClient(receiver.endpoint(), KEY)) {
+            assertEquals(new AgentRuntimeClient.ApprovalReference(event, run, "PENDING", expiry), client.activeTicketApproval(tenant, session));
+            assertThrows(IllegalArgumentException.class, () -> client.activeTicketApproval(tenant, "bad session"));
+            assertEquals(1, receiver.calls.get());
+            assertNull(receiver.failure.get());
+        }
+        var expanded = new java.util.HashMap<>(data);
+        expanded.put("content", "private");
+        try (var receiver = new RuntimeReceiverStub(request -> new RuntimeReceiverStub.Reply(200, JSON.writeValueAsString(expanded)));
+             var client = new AgentRuntimeClient(receiver.endpoint(), KEY)) {
+            var failure = assertThrows(AgentRuntimeClient.DeliveryFailure.class, () -> client.activeTicketApproval(tenant, session));
+            assertEquals("INVALID_APPROVAL_QUEUE_RESULT", failure.code());
+        }
+    }
 }

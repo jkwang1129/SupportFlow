@@ -1163,3 +1163,13 @@ AI 新增签名客服查询。一条请求只接受一个会话编号。受限�
 - `PYTEST_ADDOPTS='-k runtime_approval_review' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 下 13 项通过。新增两项覆盖同租户和同会话的待审引用、批准后状态、撤销后消失、其他租户／会话不可见，以及 Worker 尚未执行前已经过期的记录。原日志 `b3-approval-active-pg.log`。
 
 客服受权会话入口和坐席 UI 分批接入。动作继续按原提案摘要及当前状态核验。
+
+## B3 客服会话的审批发现入口（2026-11-22）
+
+客服通过 `GET /api/customer/agent-approvals/sessions/{sessionNo}/active` 查找当前会话的待审或已批准待执行任务。用既有审查权限检查当前坐席角色、租户及会话资格，再请求签名 AI 接口。返回前核对响应的来源事件属于同一会话并重验原快照。响应只保留四个引用字段，未找到有效提案时返回空数据。回滚关闭客服审查开关，保留审批和任务记录。
+
+- `python scripts/test-customer-rls.py --with-ai` 在隔离 PostgreSQL 17 通过 156 项客服测试和 19 项知识库测试。新三项覆盖引用投影、普通坐席和外租户拒绝、接管前置拦截及拒绝与当前会话不符的上游引用。原日志 `b3-customer-active-pg.log`。
+- JDK 25 的 `mvn -B -f backend/pom.xml verify` 通过。审批客户端 6 项测试全部通过，新增 TCP 用例验证精确请求签名与附带正文的上游响应拒绝。原日志 `b3-customer-active-build.log`。
+- `PYTEST_ADDOPTS='-k runtime_approval_review' python scripts/test-agent-runtime.py --with-java-delivery` 真实数据库定向 13 项和完整服务组合通过。使用合成角色验证三条由会话查找、读取原提案和提交决定的路径。批准执行产生一张工单及一条回执。批准后接管及过期两案均无工单写入。原日志 `b3-customer-active-runtime.log` 和报告 `runtime-ticket-approval.json` v5。
+
+AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/jkwang1129/SupportFlow/actions/runs/44896041748) 和 [CI 44895871470](https://github.com/jkwang1129/SupportFlow/actions/runs/44895871470)。坐席工作台分批接入。

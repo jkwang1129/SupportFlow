@@ -34,7 +34,7 @@ import java.util.UUID;
 
 /** Reviews a known proposal using authenticated staff identity and current customer permissions. */
 @RestController
-@RequestMapping("/api/customer/agent-approvals/events/{eventId}/runs/{runId}")
+@RequestMapping("/api/customer/agent-approvals")
 public class AgentTicketApprovalController {
     private static final int BODY_LIMIT = 2048;
     private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
@@ -63,7 +63,7 @@ public class AgentTicketApprovalController {
         transaction.setTimeout(5);
     }
 
-    @PostMapping(path = "/decisions", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(path = "/events/{eventId}/runs/{runId}/decisions", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ApiResponse<Map<String, String>> decide(@PathVariable UUID eventId, @PathVariable UUID runId, HttpServletRequest request) {
         var user = requireReviewer();
         String tenant = user.tenantCode();
@@ -75,7 +75,7 @@ public class AgentTicketApprovalController {
         });
     }
 
-    @GetMapping("/proposal")
+    @GetMapping("/events/{eventId}/runs/{runId}/proposal")
     public ApiResponse<Map<String, String>> proposal(@PathVariable UUID eventId, @PathVariable UUID runId, HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-store");
         String tenant = requireReviewer().tenantCode();
@@ -84,6 +84,32 @@ public class AgentTicketApprovalController {
             var proposal = runtime.previewTicketApproval(source);
             transaction.executeWithoutResult(status -> snapshots.read(tenant, eventId, runId));
             return ApiResponse.ok(proposal.response());
+        });
+    }
+
+    @GetMapping("/sessions/{sessionNo}/active")
+    public ApiResponse<Map<String, String>> active(@PathVariable String sessionNo, HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store");
+        String tenant = requireReviewer().tenantCode();
+        if (!sessionNo.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")) throw new BizException(42207, "会话编号无效");
+        return TenantContext.bind(tenant, () -> {
+            Boolean eligible = transaction.execute(status -> jdbc.queryForObject("""
+                    SELECT EXISTS(SELECT 1 FROM session WHERE tenant_code=? AND session_no=?
+                        AND is_deleted=false AND agent_id IS NULL AND status IN (1,2))
+                    """, Boolean.class, tenant, sessionNo));
+            if (!Boolean.TRUE.equals(eligible)) throw new BizException(40407, "可用的审批会话不存在");
+            var reference = runtime.activeTicketApproval(tenant, sessionNo);
+            if (reference == null) return ApiResponse.ok();
+            transaction.executeWithoutResult(status -> {
+                Boolean delivered = jdbc.queryForObject("""
+                        SELECT EXISTS(SELECT 1 FROM agent_event_outbox WHERE tenant_code=? AND session_no=?
+                            AND event_id=? AND run_id=? AND state='DELIVERED')
+                        """, Boolean.class, tenant, sessionNo, reference.eventId(), reference.runId());
+                if (!Boolean.TRUE.equals(delivered)) throw new BizException(40407, "审批来源不可用");
+                snapshots.read(tenant, reference.eventId(), reference.runId());
+            });
+            return ApiResponse.ok(Map.of("source_event_id", reference.eventId().toString(), "run_id", reference.runId().toString(),
+                    "status", reference.status(), "expires_at", reference.expiresAt().toString()));
         });
     }
 
@@ -152,7 +178,7 @@ public class AgentTicketApprovalController {
     @ExceptionHandler(AgentRuntimeClient.DeliveryFailure.class)
     public ResponseEntity<ApiResponse<Void>> reviewFailure(AgentRuntimeClient.DeliveryFailure failure) {
         return switch (failure.code()) {
-            case "APPROVAL_REVIEW_HTTP_409", "APPROVAL_PREVIEW_HTTP_409" ->
+            case "APPROVAL_REVIEW_HTTP_409", "APPROVAL_PREVIEW_HTTP_409", "APPROVAL_QUEUE_HTTP_409" ->
                     ResponseEntity.status(409).body(ApiResponse.fail(40907, "审批请求已变化或过期"));
             case "APPROVAL_PREVIEW_HTTP_404" -> ResponseEntity.status(404).body(ApiResponse.fail(40407, "审批提案不可用"));
             default -> unavailable();

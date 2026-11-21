@@ -28,6 +28,7 @@ import java.util.concurrent.TimeoutException;
 /** A bounded, reference-only delivery operation, with no implicit retry. */
 public final class AgentRuntimeClient implements AutoCloseable {
     public record Receipt(UUID eventId, UUID runId) { }
+    public record ApprovalReference(UUID eventId, UUID runId, String status, Instant expiresAt) { }
     public static final class DeliveryFailure extends RuntimeException {
         private final boolean retryable;
         DeliveryFailure(boolean retryable, String code) { super(code); this.retryable = retryable; }
@@ -81,10 +82,7 @@ public final class AgentRuntimeClient implements AutoCloseable {
             if (root == null || !root.isObject() || !event.tenant().equals(text(root, "tenant_code"))
                     || !event.eventId().toString().equals(text(root, "source_event_id")) || !STATES.contains(text(root, "state")))
                 throw new IllegalArgumentException();
-            String run = text(root, "run_id");
-            UUID runId = UUID.fromString(run);
-            if (!runId.toString().equals(run)) throw new IllegalArgumentException();
-            return new Receipt(event.eventId(), runId);
+            return new Receipt(event.eventId(), uuid(root, "run_id"));
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_RECEIPT"); }
     }
 
@@ -136,14 +134,36 @@ public final class AgentRuntimeClient implements AutoCloseable {
         try {
             JsonNode json = mapper.readTree(response.body());
             if (json == null || !json.isObject() || json.size() != 6) throw new IllegalArgumentException();
-            String rawId = text(json, "approval_id");
-            UUID approval = UUID.fromString(rawId);
-            if (!approval.toString().equals(rawId)) throw new IllegalArgumentException();
-            var proposal = new AgentApprovalProposal(approval, text(json, "status"), Instant.parse(text(json, "expires_at")),
+            var proposal = new AgentApprovalProposal(uuid(json, "approval_id"), text(json, "status"), Instant.parse(text(json, "expires_at")),
                     text(json, "arguments_sha256"), text(json, "title"), text(json, "content"));
             if (!proposal.matches(source)) throw new IllegalArgumentException();
             return proposal;
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_PROPOSAL"); }
+    }
+
+    public ApprovalReference activeTicketApproval(String tenant, String sessionNo) {
+        if (sessionNo == null || !sessionNo.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}"))
+            throw new IllegalArgumentException("Valid session reference required");
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Approval lookup must run outside the business transaction");
+        final byte[] body;
+        try { body = mapper.writeValueAsBytes(Map.of("session_no", sessionNo)); }
+        catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_QUEUE_REFERENCE"); }
+        URI uri = URI.create(endpoint + "/ticket-approval-active");
+        var response = exchange(AgentRuntimeProtocol.request(uri, "POST", tenant, body, secret), "APPROVAL_QUEUE");
+        int code = response.statusCode();
+        if (code == 404) return null;
+        if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, "APPROVAL_QUEUE_HTTP_" + code);
+        if (!hasPlainJsonBody(response)) throw new DeliveryFailure(false, "INVALID_APPROVAL_QUEUE_RESULT");
+        try {
+            JsonNode json = mapper.readTree(response.body());
+            if (json == null || !json.isObject() || json.size() != 4) throw new IllegalArgumentException();
+            String phase = text(json, "status");
+            Instant expiry = Instant.parse(text(json, "expires_at"));
+            if (!("PENDING".equals(phase) || "APPROVED".equals(phase)) || !expiry.isAfter(Instant.now()))
+                throw new IllegalArgumentException();
+            return new ApprovalReference(uuid(json, "source_event_id"), uuid(json, "run_id"), phase, expiry);
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_QUEUE_RESULT"); }
     }
 
     private AgentActionPermit authorize(AgentActionPermit.Request action,AgentActionPermit.Operation expectedOperation) {
@@ -203,6 +223,13 @@ public final class AgentRuntimeClient implements AutoCloseable {
         JsonNode value = node.get(key);
         if (value == null || !value.isTextual()) throw new IllegalArgumentException();
         return value.textValue();
+    }
+
+    private static UUID uuid(JsonNode node, String key) {
+        String raw = text(node, key);
+        UUID parsed = UUID.fromString(raw);
+        if (!parsed.toString().equals(raw)) throw new IllegalArgumentException();
+        return parsed;
     }
 
     @Override public void close() { client.shutdownNow(); }

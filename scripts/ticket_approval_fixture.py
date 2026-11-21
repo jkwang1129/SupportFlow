@@ -82,9 +82,17 @@ def _review_path(base, source, run):
 
 
 def _staff_review(client, base, key, source, run, row, title, content):
-    path = _review_path(base, source, run)
     auth = {'Authorization': _fixture_token(key, source.tenant, 123)}
     agent = {'Authorization': _fixture_token(key, source.tenant, 124)}
+    active = base + f'/api/customer/agent-approvals/sessions/{source.session_no}/active'
+    assert client.get(active).status_code == 401
+    assert client.get(active, headers=agent).status_code == 403
+    found = client.get(active, headers=auth)
+    assert found.status_code == 200 and found.headers['cache-control'] == 'no-store'
+    reference = found.json()['data']
+    assert reference['source_event_id'] == str(source.source_event_id) and reference['run_id'] == str(run)
+    assert reference['status'] == 'PENDING' and set(reference) == {'source_event_id', 'run_id', 'status', 'expires_at'}
+    path = base + f"/api/customer/agent-approvals/events/{reference['source_event_id']}/runs/{reference['run_id']}"
     assert client.get(path+'/proposal').status_code == 401
     assert client.get(path+'/proposal', headers=agent).status_code == 403
     response = client.get(path+'/proposal', headers=auth)
@@ -181,7 +189,7 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store):
             approval_status=audit['status'], steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=int(receipt is not None), events=events))
     artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v4', mode='SYNTHETIC_ROLE_SOURCE_REAL_JAVA_AI_PG',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v5', mode='SYNTHETIC_ROLE_SOURCE_REAL_JAVA_AI_PG',
         cases=observations), indent=2)+'\n', encoding='utf-8')
-    print('Authenticated customer-JAR proposal preview and review: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
+    print('Authenticated customer-JAR approval discovery, preview and review: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
           'duplicate approval preserved, one approved ticket/receipt, zero writes after takeover or expiry', flush=True)
