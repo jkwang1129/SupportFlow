@@ -1,4 +1,6 @@
-"""Actual customer JAR knowledge route; explicit fixture, no model or SDK tool yet."""
+"""Actual customer JAR knowledge route and SDK; explicit fixture, no model tool yet."""
+import asyncio
+from dataclasses import replace
 import hashlib
 import hmac
 import json
@@ -11,6 +13,8 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 def verify_knowledge_api(connect,base,secret,source,run):
+    from ai.runtime.knowledge import KnowledgeClient
+    from ai.runtime.worker import PermanentFailure
     path=f'/api/customer/internal/runtime/events/{source.source_event_id}/runs/{run}/knowledge/search'
     vector=[.25]+[0.0]*1023
     with connect('customer_db') as db:
@@ -43,6 +47,22 @@ def verify_knowledge_api(connect,base,secret,source,run):
         parts=['supportflow-knowledge-search:v1','visitor-published-v1',source.tenant,str(source.source_event_id),str(run),str(snapshot),source_hash,digest,'a'*64,'fixture:fixture-embedding','1',
                hit['doc_id'],hit['chunk_id'],sha(hit['title']),sha(hit['snippet']),str(hit['score_ppm']),hit['embedding_model']]
         assert data['resource_version']==sha('\n'.join(parts))
+        # Use the product SDK as well as the independent raw-wire assertion.
+        # These explicit reads have no Worker/Embedding budget claim.
+        query=dict(snapshot_id=snapshot,source_hash=source_hash,query_sha256='a'*64,
+                   embedding_model='fixture:fixture-embedding',vector=vector,top_k=5,doc_ids=None)
+        sdk=KnowledgeClient(base,secret)
+        value=asyncio.run(sdk.search(source,run,**query))
+        assert len(value.hits)==1 and value.hits[0].snippet==hit['snippet'] and value.resource_version==data['resource_version']
+        assert 'tenant_code' not in value.result() and 'vector' not in value.result()
+        assert not asyncio.run(sdk.search(source,run,**(query | {'doc_ids':[]}))).hits
+        assert not asyncio.run(sdk.search(source,run,**(query | {'doc_ids':[17_900_002,17_900_003]}))).hits
+        assert len(asyncio.run(sdk.search(source,run,**(query | {'doc_ids':[17_900_001]}))).hits)==1
+        for identity,key,expected in [(replace(source,tenant='KNOW_FOREIGN'),secret,'KNOWLEDGE_SOURCE_REVOKED'),
+                                      (source,'wrong-knowledge-pair-'+'0'*40,'KNOWLEDGE_AUTHORIZATION_DENIED')]:
+            try:asyncio.run(KnowledgeClient(base,key).search(identity,run,**query))
+            except PermanentFailure as error:assert error.code==expected
+            else:raise AssertionError('Unauthorized knowledge SDK read passed')
         result,_=call(client,body | {'doc_ids':[]});assert result.status_code==200 and result.json()['data']['hits']==[]
         result,_=call(client,body | {'doc_ids':[17_900_002,17_900_003]});assert result.status_code==200 and result.json()['data']['hits']==[]
         result,_=call(client,tenant='KNOW_FOREIGN');assert result.status_code==404 and result.json()['code']==40402
@@ -50,6 +70,9 @@ def verify_knowledge_api(connect,base,secret,source,run):
         with connect('customer_db') as db:db.execute('UPDATE session SET agent_id=12345 WHERE session_no=%s AND tenant_code=%s',(source.session_no,source.tenant))
         try:
             result,_=call(client);assert result.status_code==404 and result.json()['code']==40402 and result.json()['data'] is None
+            try:asyncio.run(sdk.search(source,run,**query))
+            except PermanentFailure as error:assert error.code=='KNOWLEDGE_SOURCE_REVOKED'
+            else:raise AssertionError('Knowledge SDK accepted source takeover')
         finally:
             with connect('customer_db') as db:db.execute('UPDATE session SET agent_id=NULL WHERE session_no=%s AND tenant_code=%s',(source.session_no,source.tenant))
     with connect('customer_db') as db:
@@ -57,8 +80,9 @@ def verify_knowledge_api(connect,base,secret,source,run):
                           (source.tenant,source.source_event_id)).fetchone()==(1,)
         assert db.execute('SELECT count(*) FROM agent_result_receipt WHERE tenant_code=%s AND run_id=%s',(source.tenant,run)).fetchone()==(0,)
     report=ROOT/'.local/verification/runtime-knowledge-api.json';report.parent.mkdir(parents=True,exist_ok=True)
-    report.write_text(json.dumps(dict(schema_version='knowledge-api-qualification-v1',mode='REAL_CUSTOMER_JAR_RESTRICTED_PG',
+    report.write_text(json.dumps(dict(schema_version='knowledge-api-qualification-v2',mode='REAL_CUSTOMER_JAR_RESTRICTED_PG',
         authorized_hits=1,empty_scope_hits=0,excluded_scope_hits=0,foreign_tenant_denied=True,wrong_key_denied=True,takeover_denied=True,
         request_and_projection_hash_verified=True,new_messages=0,result_receipts=0,model_calls=0,
-        source_mode='EXISTING_DELIVERED_SOURCE_EXPLICIT_FIXTURE',agent_sdk_and_loop='NEXT_BATCH',performance='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
-    print('Actual signed knowledge POST -> customer JAR/restricted PG: published compatible facts only; scope/tenant/credential/takeover denials; request/projection hashes matched; no model or business writes; SDK/Registry next batch',flush=True)
+        source_mode='EXISTING_DELIVERED_SOURCE_EXPLICIT_FIXTURE',agent_sdk='VERIFIED_EXPLICIT_READ_CLIENT',
+        agent_registry_and_loop='NEXT_BATCH',performance='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
+    print('Actual signed knowledge POST + KnowledgeClient -> customer JAR/restricted PG: published compatible facts only; scope/tenant/credential/takeover denials; request/projection hashes matched; no model or business writes; Registry/Loop next batch',flush=True)

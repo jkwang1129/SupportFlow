@@ -841,3 +841,26 @@ ad66e75对应的[CI 44856556934](https://github.com/jkwang1129/SupportFlow/actio
 `python scripts/test-agent-runtime.py --with-java-delivery`退出0，`b2-knowledge-api-runtime.log`：228项Runtime专项全部通过，原实际Java交付/来源/工单/9例Loop及真实进程接管/5例发布/受控核销/写许可/丢回执回复保持。新增实际customer JAR+受限角色PG知识HTTP夹具验证原始请求签名、Java/Python独立投影SHA一致、发布兼容命中1、空范围0/被排除范围0、跨租户404/错密钥401/人工接管404，无新增消息/回执/模型调用；机器报告`.local/verification/runtime-knowledge-api.json`。该夹具复用已DELIVERED来源，用固定合成向量手动签名，不是知识SDK/Registry、自动调度、向量语义质量或性能成果。
 
 `python scripts/test-security-flow.py`退出0，`b2-knowledge-api-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整实际服务全部通过，含访客WS→现有brain→BOT回复、知识索引/检索、权限/工单/计费、六库历史及readiness负面恢复。验收期间未并行Maven/其他完整服务任务；下一批SDK未改当前运行代码。无SQL变更，未重复未改动迁移/结构专项，精确提交CI继续全跑。
+
+914767a对应的[CI 44859565743](https://github.com/jkwang1129/SupportFlow/actions/runs/44859565743)两个job全部成功，含112项客服PG、228项Runtime、新知识实际HTTP及三套完整服务；知识Java API子批次本地/远端退出条件完成。
+
+## B2 知识查询签名SDK子批次（2026-11-21）
+
+基线914767a。新增`ai/runtime/knowledge.py`、`tests/test_runtime_knowledge.py`、ADR-0020，CustomerTransport仅增固定POST knowledge/search及该操作64KiB请求体上限；旧source/ticket/reply路径/限制不变。实际知识HTTP夹具同时用独立手动签名和产品KnowledgeClient。无SQL/Java/依赖/默认入口修改，SDK本身不预留预算/注册模型工具，下一批才与RuntimeEmbedding/Registry组合。
+
+可信宿主提供来源/Run/快照/来源Hash、查询SHA、兼容索引标签与1024维向量。I/O前严格校验、保留null/空范围/限定列表；对实际序列化字节签名。响应严格核来源/快照/请求/查询/模型/策略绑定，最多top_k项、十进制字符串int64 ID、有限整数评分及顺序、标题200码点/片段1024码点4096字节、重复/范围和跨语言投影SHA。复用总正文超时/无代理/重定向/隐藏重试边界和稳定错误；不回显原错误。返回冻结对象/新投影副本，repr隐藏片段/标题，模型投影不含租户、向量、客户信息。结果Hash不是授权或知识版本，资料正文仍是不可信内容，不代表事实支持已完成。
+
+本地Python3.11.5/JDK25/隔离PG17，仅合成凭据/向量/模型，不读.env：
+
+- 编码前`b2-knowledge-sdk-baseline.log`因新模块尚不存在收集失败；这是缺能力基线，不声称已复现运行时越权漏洞。
+- 首轮`b2-knowledge-sdk-unit-first.log`：194通过/2失败；空范围坏响应夹具先索引空列表、TCP 0.3秒期限可能在初始化就超时导致未收到请求。修正夹具并把慢正文期限调1秒（服务器等2秒）；随后`b2-knowledge-sdk-unit-final.log`233过/1失败为坏片段修改了脱离响应的对象。修正夹具为真正改响应内容，未放松SDK检验。
+- `cd ai-service; python -m pytest -q tests/test_runtime_knowledge.py tests/test_runtime_source.py tests/test_runtime_tickets.py tests/test_runtime_reply.py tests/test_runtime_result.py`：最终234项通过，新SDK90项+既有144项，`b2-knowledge-sdk-unit-final-v2.log`。新90含真实TCP正常/302不跟随/慢正文总超时三例，并禁环境代理；错误分型仅1请求、坏参数先于HTTP拒绝、原始字节签名、当前来源/请求SHA/投影篡改及非法/重复/越界结果均拒绝。
+- AI普通全量735 passed、233 skipped、1 xfailed，`b2-knowledge-sdk-ai-final.log/xml`；PG skip不计通过，既有引用正文xfail保留。`python scripts/report-rag-contract.py --junit .local/implementation/b2-knowledge-sdk-ai-final.xml --output .local/verification/rag-contract.json`：24项全部执行通过，gate_passed=true。
+
+首轮实际`b2-knowledge-sdk-runtime.log`中228项PG及旧交付/来源工具已通过，新SDK在真实JAR失败为KNOWLEDGE_PAYLOAD_INVALID。核源码发现`LongToStringJacksonConfig`将ApiResponse.timestamp的Java long输出为字符串，单元/独立MVC整数夹具未体现。SDK外层元数据改为接受规范十进制int64字符串或整数（仍不进入模型投影、不放宽业务字段），追加字符串时间戳用例。最终AI全量736 passed、233 skipped、1 xfailed（新SDK91项），`b2-knowledge-sdk-ai-final-v2.log/xml`；对应RAG门禁24项通过。保留首轮失败，不把Standalone通过代替实际服务兼容验收。
+
+回滚停用KnowledgeClient，保留Java来源/发布/模型过滤和Runtime历史/预算；不改成任意URL、关闭摘要核验或使用无授权的结果缓存。SDK直接调用不是自动业务触发或完整Agent闭环；暂无Token费用/模型语义质量/延迟或生产业务成果。
+
+修复后`python scripts/test-agent-runtime.py --with-java-delivery`最终退出0，`b2-knowledge-sdk-runtime-final.log`：228项专项及原全部实际交付/来源/工单/9例Loop/真实进程接管/5例发布/核销/写许可/回复联调保持。新增产品KnowledgeClient→实际customer JAR→受限PG通过，Java全局long字符串格式、签名/投影Hash、null/空/有限文档范围、其他租户/错误密钥/当前接管全部验证；机器报告`runtime-knowledge-api.json` v2的agent_sdk=VERIFIED_EXPLICIT_READ_CLIENT。请求SHA由手工字节独立计算，结果SHA由独立公式与SDK/Java交叉核对，无新增消息/回执/模型请求。未把SDK称为已接入Registry/模型决策Loop。
+
+本批无Java/SQL/默认流程变更，本地不重复914767a已全绿CI的三套默认服务/112项客服PG/六库迁移，远端精确提交CI仍全跑。下一批工具文件独立未纳入本次提交及验收。
