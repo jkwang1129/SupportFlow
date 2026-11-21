@@ -7,7 +7,7 @@ from uuid import UUID
 import psycopg
 
 from .store import RuntimeStore
-from .types import Lease, LostLease, BudgetExceeded, RuntimeConflict, identifier, fingerprint, reference
+from .types import ActionDenied, Lease, LostLease, BudgetExceeded, RuntimeConflict, identifier, fingerprint, reference
 from .payloads import SCHEMAS,encode as encode_payload
 
 
@@ -191,6 +191,8 @@ class RuntimeWorker:
                 return self._transition(context, 'retry', failure.code, delay_seconds=failure.delay_seconds)
             except PermanentFailure as failure:
                 return self._transition(context, 'fail', failure.code)
+            except ActionDenied:
+                return self._transition(context, 'fail', 'ACTION_DENIED')
             except Exception:
                 # Unexpected programming/validation errors are permanent, not an
                 # unbounded automatic retry. Never persist exception text.

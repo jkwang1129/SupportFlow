@@ -1,63 +1,87 @@
-"""Approval pause/resume against the real Runtime and customer service."""
+"""Approved ticket execution against real Runtime, customer and AI authority services."""
 import asyncio
 import json
 from pathlib import Path
-from threading import Event
 from uuid import uuid4
+
+
+def _seed_source(connect, source, run, session_id):
+    with connect('customer_db') as db:
+        db.execute("""INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
+            VALUES(%s,%s,%s,1,2,1,CURRENT_TIMESTAMP)""", (session_id, source.tenant, source.session_no))
+        db.execute("""INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,visible_to,content,send_time)
+            VALUES(%s,%s,%s,%s,1,1,1,1,'synthetic approval source',CURRENT_TIMESTAMP)""",
+            (source.message_id, source.tenant, session_id, 'APPROVAL_MESSAGE_'+source.tenant))
+        db.execute("""INSERT INTO agent_event_outbox(tenant_code,event_id,run_id,message_id,session_id,session_no,event_seq,
+            principal_ref,trace_id,runtime_version,state,attempts,fence,delivered_at)
+            VALUES(%s,%s,%s,%s,%s,%s,1,%s,%s,'runtime-v1','DELIVERED',1,1,clock_timestamp())""",
+            (source.tenant, source.source_event_id, run, source.message_id, session_id, source.session_no, source.principal_ref, source.trace_id))
 
 
 def verify_ticket_approval(connect, base, secret, store):
     from ai.runtime.approvals import TicketApprovals
     from ai.runtime.source import SourceClient
     from ai.runtime.ticket_creation import TicketCreationClient
+    from ai.runtime.ticket_write_tool import ticket_create_tool
+    from ai.runtime.tools import ToolExecutor, ToolRegistry
     from ai.runtime.types import RunInput
-    from ai.runtime.worker import ExecutionContext, PermanentFailure, RuntimeWorker
+    from ai.runtime.worker import RuntimeWorker
 
-    tenant = 'TC_APPROVAL'
-    session_id, message_id = 20500001, 20500002
-    source = RunInput(tenant, uuid4(), 'TICKET_APPROVAL_JAR', 1, message_id, 'visitor-session:'+str(session_id), 'approval-jar')
-    run = store.enqueue(source)['run_id']
-    with connect('customer_db') as db:
-        db.execute("""INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
-            VALUES(%s,%s,%s,1,2,1,CURRENT_TIMESTAMP)""", (session_id, tenant, source.session_no))
-        db.execute("""INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,visible_to,content,send_time)
-            VALUES(%s,%s,%s,'TC_APPROVAL_SOURCE',1,1,1,1,'synthetic approval source',CURRENT_TIMESTAMP)""", (message_id, tenant, session_id))
-        db.execute("""INSERT INTO agent_event_outbox(tenant_code,event_id,run_id,message_id,session_id,session_no,event_seq,
-            principal_ref,trace_id,runtime_version,state,attempts,fence,delivered_at)
-            VALUES(%s,%s,%s,%s,%s,%s,1,%s,%s,'runtime-v1','DELIVERED',1,1,clock_timestamp())""",
-            (tenant, source.source_event_id, run, message_id, session_id, source.session_no, source.principal_ref, source.trace_id))
-    snapshot = asyncio.run(SourceClient(base, secret).capture(source, run))
-    approvals = TicketApprovals(store)
-    title, content = '审批工单🙂', 'synthetic approved body\n原始内容 '
-    worker = RuntimeWorker(store, {'runtime-v1': lambda context: approvals.pause(context, snapshot.snapshot_id, title, content)}, 'approval-fixture-first')
-    waiting = worker.run_once(tenant)
-    row = approvals.get(tenant, run)
-    assert waiting['state'] == 'WAITING_APPROVAL' and row['snapshot_id'] == snapshot.snapshot_id
-    assert store.claim_next(tenant, 'must-wait') is None
-    assert approvals.decide(tenant, run, row['approval_id'], 'fixture:reviewer', approve=True)['status'] == 'APPROVED'
-    resumed = store.claim_next(tenant, 'approval-fixture-second')
-    context = ExecutionContext(store, resumed, Event(), 30)
-    args = TicketApprovals(store).approved_arguments(context)
-    assert args['title'] == title and args['content'] == content and args['arguments_sha256'] == row['arguments_sha256']
-    # An explicit negative test of the real permit endpoint: an old style
-    # reserved write cannot use approved but unconsumed authority.
-    store.reserve_step(context.lease, 'fixture-unconsumed-write', 'TOOL', 'WRITE', dict(operation='ticket.create', version='ticket-create-v1',
-        resource_ref=source.principal_ref, input_ref=str(args['snapshot_id']), arguments_sha256=args['arguments_sha256']))
-    tickets = TicketCreationClient(base, secret)
-    try:
-        asyncio.run(tickets.create(source, context.lease, args['snapshot_id'], title, content))
-    except PermanentFailure as failure:
-        assert failure.code == 'TICKET_CREATE_AUTHORITY_DENIED', failure.code
-    else:
-        raise AssertionError('Unconsumed approval authorized a write')
-    assert asyncio.run(tickets.receipt(source, run, expected_snapshot_id=args['snapshot_id'], expected_hash=args['arguments_sha256'])) is None
-    with connect('customer_db') as db:
-        assert db.execute('SELECT count(*) FROM ticket WHERE tenant_code=%s', (tenant,)).fetchone()[0] == 0
-        assert db.execute('SELECT count(*) FROM agent_ticket_receipt WHERE tenant_code=%s', (tenant,)).fetchone()[0] == 0
-    result = store.cancel(tenant, run)
-    assert approvals.get(tenant, run)['status'] == 'CANCELLED' and result['error_code'] == 'SIDE_EFFECT_UNKNOWN'
+    source_client, tickets = SourceClient(base, secret), TicketCreationClient(base, secret)
+    executor = ToolExecutor(ToolRegistry([ticket_create_tool(source_client, tickets)]), frozenset({'ticket:create'}))
+    approved_title, approved_body = '审批工单🙂', 'synthetic approved body\n原始内容 '
+    observations = []
+    for index, mode in enumerate(('accepted', 'taken_over_after_approval', 'expired_before_resume')):
+        tenant = 'TC_APPROVAL_'+str(index)
+        session_id = 20500001 + index * 10
+        source = RunInput(tenant, uuid4(), 'TICKET_APPROVAL_'+str(index), 1, session_id+1,
+                          'visitor-session:'+str(session_id), 'approval-jar-'+str(index))
+        run = store.enqueue(source)['run_id']
+        _seed_source(connect, source, run, session_id)
+        snapshot = asyncio.run(source_client.capture(source, run))
+        approvals = TicketApprovals(store)
+        worker = RuntimeWorker(store, {'runtime-v1': lambda context: approvals.pause(
+            context, snapshot.snapshot_id, approved_title, approved_body)}, 'approval-first')
+        waiting = worker.run_once(tenant)
+        row = approvals.get(tenant, run)
+        assert waiting['state'] == 'WAITING_APPROVAL' and row['snapshot_id'] == snapshot.snapshot_id
+        assert waiting['step_count'] == 1 and store.claim_next(tenant, 'must-wait') is None
+        assert approvals.decide(tenant, run, row['approval_id'], 'fixture:reviewer', approve=True)['status'] == 'APPROVED'
+
+        if mode == 'taken_over_after_approval':
+            with connect('customer_db') as db:
+                db.execute('UPDATE session SET agent_id=99 WHERE id=%s', (session_id,))
+        if mode == 'expired_before_resume':
+            with connect('ai_db') as db:
+                db.execute("""UPDATE agent_approval SET requested_at=clock_timestamp()-interval '3 minutes',
+                    decided_at=clock_timestamp()-interval '150 seconds',expires_at=clock_timestamp()-interval '2 minutes'
+                    WHERE tenant_code=%s AND run_id=%s""", (tenant, run))
+            expired = approvals.expire(tenant, run, row['approval_id'])
+            assert expired['status'] == 'EXPIRED'
+
+        resumed = RuntimeWorker(store, {'runtime-v1': lambda ctx: TicketApprovals(store).execute(ctx, executor)}, 'approval-second')
+        result = resumed.run_once(tenant) if mode != 'expired_before_resume' else store.get(tenant, run)
+        assert resumed.run_once(tenant) is None
+        audit = approvals.get(tenant, run)
+        writes = [step for step in store.steps(tenant, run) if step['effect'] == 'WRITE']
+        receipt = asyncio.run(tickets.receipt(source, run, expected_snapshot_id=snapshot.snapshot_id, expected_hash=row['arguments_sha256']))
+        with connect('customer_db') as db:
+            facts = db.execute('SELECT id,ticket_no,title,"desc",source_session_id FROM ticket WHERE tenant_code=%s', (tenant,)).fetchall()
+            events = db.execute('SELECT count(*) FROM ticket_event WHERE tenant_code=%s', (tenant,)).fetchone()[0]
+        if mode == 'accepted':
+            assert result['state'] == 'SUCCEEDED' and audit['status'] == 'CONSUMED'
+            assert len(writes) == 1 and writes[0]['state'] == 'SUCCEEDED' and audit['consumed_step_no'] == writes[0]['step_no']
+            assert facts == [(receipt.ticket_id, receipt.ticket_no, approved_title, approved_body, session_id)] and events == 1
+            assert (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count']) == (4, 2, 0, 0)
+        else:
+            expected_error = 'SOURCE_REVOKED' if mode == 'taken_over_after_approval' else 'APPROVAL_EXPIRED'
+            assert result['state'] == 'FAILED' and result['error_code'] == expected_error
+            assert writes == [] and receipt is None and facts == [] and events == 0
+            assert audit['consumed_step_no'] is None
+        observations.append(dict(case=mode, waiting_state=waiting['state'], final_state=result['state'], error_code=result['error_code'],
+            approval_status=audit['status'], steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
+            tickets=len(facts), receipts=int(receipt is not None), events=events))
     artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v1', waiting_state=waiting['state'], resumed_fence=resumed['fence'],
-        task_budget_preserved=resumed['step_count'] == waiting['step_count'], new_tickets=0, receipts=0, models=0,
-        unconsumed_permit_denied=True, mode='SYNTHETIC_SOURCE_REAL_JAVA_AI_PG'), indent=2)+'\n', encoding='utf-8')
-    print('Actual ticket approval: durable wait, trusted positive decision and exact checkpoint restored; real Java/AI write permit refused unconsumed approval; zero tickets and receipts', flush=True)
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v2', mode='SYNTHETIC_SOURCE_REAL_JAVA_AI_PG',
+        cases=observations), indent=2)+'\n', encoding='utf-8')
+    print('Actual ticket approval: 3 cases passed; one approved ticket/receipt, zero writes after source takeover or expiry', flush=True)

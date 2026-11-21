@@ -79,6 +79,7 @@ def main():
                         'tests/test_ticket_reconciliation_storage_postgres.py',
                         'tests/test_approval_storage_postgres.py',
                         'tests/test_approval_lifecycle_postgres.py',
+                        'tests/test_approval_consumption_postgres.py',
                         f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)
         with connect('ai_db') as connection:

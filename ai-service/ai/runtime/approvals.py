@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 
 from .ticket_creation import arguments_hash
-from .tools import ToolIdentity
+from .tools import ToolCall, ToolExecutor, ToolIdentity, WriteTool
 from .types import RuntimeConflict, fingerprint, identifier
 from .worker import ApprovalPending
 
@@ -28,6 +28,9 @@ class TicketApprovals:
         identity = ToolIdentity.from_context(context)
         lease = context.lease
         digest = arguments_hash(identity.source, identity.run_id, snapshot_id, title, content)
+        # Reject proposals that fit the business API but exceed the tool's
+        # serialized argument budget before asking a human to approve them.
+        ToolCall(_TOOL, _VERSION, dict(title=title, content=content))
         intent = dict(operation=_OPERATION, version=_VERSION, resource_ref=identity.source.principal_ref,
                       input_ref=str(snapshot_id), arguments_sha256=digest)
         expected = dict(title=title, content=content, snapshot_id=str(snapshot_id), arguments_sha256=digest)
@@ -109,8 +112,17 @@ class TicketApprovals:
         with self.store._scope(lease.tenant) as connection:
             run = self.store._owned(connection, lease)
             row = self._approval(connection, lease.tenant, lease.run_id)
-            if (row is None or row['status'] != 'APPROVED' or row['principal_ref'] != run['principal_ref']
-                    or row['expires_at'] <= self._clock(connection)):
+            if row is None or row['principal_ref'] != run['principal_ref']:
+                raise RuntimeConflict('Live approval is unavailable')
+            if row['status'] == 'CONSUMED':
+                step = connection.execute("""SELECT kind,effect,state,intent_ref FROM agent_step
+                    WHERE tenant_code=%s AND run_id=%s AND step_no=%s FOR SHARE""",
+                    (lease.tenant, lease.run_id, row['consumed_step_no'])).fetchone()
+                expected = dict(operation=_OPERATION, version=_VERSION, resource_ref=run['principal_ref'],
+                                input_ref=str(row['snapshot_id']), arguments_sha256=row['arguments_sha256'])
+                if step != dict(kind='TOOL', effect='WRITE', state='SUCCEEDED', intent_ref=expected):
+                    raise RuntimeConflict('Consumed approval has no verified successful write')
+            elif row['status'] != 'APPROVED' or row['expires_at'] <= self._clock(connection):
                 raise RuntimeConflict('Live approval is unavailable')
             refs = run['result_ref']
             if (refs.get('outcome') != 'waiting-approval' or refs.get('resource_ref') != str(row['approval_id'])
@@ -138,6 +150,17 @@ class TicketApprovals:
             raise RuntimeConflict('Approval checkpoint arguments changed') from None
         context.check_active()
         return dict(snapshot_id=row['snapshot_id'], title=value['title'], content=value['content'], arguments_sha256=digest)
+
+    def execute(self, context, executor):
+        """Resume via the same registered ticket adapter and its current source check."""
+        if not isinstance(executor, ToolExecutor):
+            raise ValueError('Configured tool executor required')
+        args = self.approved_arguments(context)
+        call = ToolCall(_TOOL, _VERSION, dict(title=args['title'], content=args['content']))
+        tool = executor.registry.resolve(call)
+        if not isinstance(tool, WriteTool) or tool.operation != _OPERATION:
+            raise RuntimeConflict('Approved write tool does not match')
+        return executor.execute(context, 'approved-ticket-create', call)
 
     def revoke(self, tenant, run_id, approval_id, reviewer):
         identifier(reviewer)

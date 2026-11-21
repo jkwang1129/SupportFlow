@@ -331,6 +331,19 @@ class RuntimeStore:
                 if existing['intent_hash'] != digest:
                     raise RuntimeConflict('Step intent changed')
                 return existing,False
+            approval = None
+            if kind == 'TOOL' and effect == 'WRITE' and intent_ref.get('operation') == 'ticket.create':
+                approval = connection.execute("""SELECT * FROM agent_approval
+                    WHERE tenant_code=%s AND run_id=%s FOR UPDATE""", (lease.tenant, lease.run_id)).fetchone()
+                if approval is not None:
+                    expected_approval = dict(operation=approval['operation'], version=approval['schema_version'],
+                        resource_ref=approval['principal_ref'], input_ref=str(approval['snapshot_id']),
+                        arguments_sha256=approval['arguments_sha256'])
+                    now = connection.execute('SELECT clock_timestamp() AS now').fetchone()['now']
+                    if (approval['status'] != 'APPROVED' or intent_ref != expected_approval
+                            or approval['principal_ref'] != run['principal_ref']
+                            or now >= min(approval['expires_at'], run['lease_until'], run['deadline_at'])):
+                        raise ActionDenied('Approval is unavailable for this write')
             if (run['step_count'] >= run['max_steps'] or
                 (kind=='MODEL' and run['model_calls'] >= run['max_model_calls']) or
                 (kind=='TOOL' and run['tool_calls'] >= run['max_tool_calls'])):
@@ -345,6 +358,12 @@ class RuntimeStore:
                 step = connection.execute("""INSERT INTO agent_step(tenant_code,run_id,step_no,step_key,kind,effect,intent_hash,intent_ref,fence)
                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                     (lease.tenant,lease.run_id,updated['step_count'],step_key,kind,effect,digest,Jsonb(intent_ref),lease.fence)).fetchone()
+                if approval is not None:
+                    outcome = connection.execute("""UPDATE agent_approval SET status='CONSUMED',consumed_step_no=%s,
+                        consumed_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s AND expires_at>clock_timestamp()""",
+                        (step['step_no'], lease.tenant, lease.run_id))
+                    if outcome.rowcount != 1:
+                        raise ActionDenied('Approval expired before step reservation')
         # Raise after the terminal transition commits, not inside a rolled-back transaction.
         if exhausted:
             raise BudgetExceeded('Runtime call/step budget exhausted')

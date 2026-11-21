@@ -1061,3 +1061,15 @@ b703d4f 的 [CI 44883937143](https://github.com/jkwang1129/SupportFlow/actions/r
 - 真实 Java／AI／受限 PostgreSQL 验证通过。源服务实际创建签名快照，Worker 持久化等待和通过决定，新 Worker 取得原快照及原文。真实写许可拒绝已有写步骤但尚未消费的审批。工单、回执均为 0。`runtime-ticket-approval.json` 记录等待状态、新令牌和预算保留情况，续跑原建单与回复组合见同一 Runtime 日志。
 
 审批 ID 由可信宿主处理，当前过期入口按已知任务显式调用。后续加入一次性消费、真实工单执行、自动过期发现和 reviewer 入口。回滚时先处理仍在等待的请求，再停用宿主暂停入口，保留检查点和审批记录。设计见 [ADR-0030](decisions/0030-durable-approval-boundary.md)。
+
+cdda89c 的 [CI 44890433299](https://github.com/jkwang1129/SupportFlow/actions/runs/44890433299) 前后端任务均通过。
+
+## B3 一次性消费审批并执行工单（2026-11-21）
+
+基于 2d64038。批准后的宿主用相同工具从原检查点执行，先重验当前来源。Run 行锁内匹配操作、版本、主体、快照、参数摘要及数据库期限，将预算、写步骤与审批消费同事务提交。许可签发独立核对消费步骤和有效期。已成功写步骤的恢复仍走原有回执核对逻辑。
+
+- 定向 `PYTEST_ADDOPTS='-k "approval or ticket_authority"' python scripts/test-agent-runtime.py --with-java-delivery` 的隔离真实 PostgreSQL 部分 58 项通过。新增 8 项覆盖发放许可、绑定篡改、撤销或过期、权限失败回滚、六路预留只消费一次。追加两例后 `PYTEST_ADDOPTS='-k approval_consumption' python scripts/test-agent-runtime.py` 10 项通过，涵盖已消费成功步骤恢复、超长提案在生成审批前拒绝。原始日志 `b3-approval-consumption-first.log`、`b3-approval-consumption-targeted-final.log`。
+- 真实 Java／AI／PostgreSQL 三案通过。正常审批创建 1 张工单、1 条工单事件和 1 条回执，4 Steps、2 Tools、0 Model、0 Retry，原中文、emoji、换行和尾空格均保持。批准后会话接管只进行来源核验，工单、事件和回执均为 0。审批过期后同样为 0。机器报告 `runtime-ticket-approval.json` v2。
+- AI 普通测试 923 项通过、367 项条件跳过、1 项既有预期失败，为追加两例前的全量结果。24 项 RAG 契约全部通过。首次从仓库根直接调用 pytest 导致 AI 模块导入失败，切换到 `ai-service` 工作目录通过。保留 `b3-approval-consumption-ai.log`、`b3-approval-consumption-ai-final.log` 和 XML。
+
+批准后的会话接管会使任务失败，已记录的审批决定仍可审计。审批消费失败不会增加写次数。此阶段的决定入口面向可信宿主。自动过期调度与坐席身份接入另行验收。回滚停用审批执行入口并保留原检查点、审计、预算和业务回执。见 [ADR-0031](decisions/0031-approval-consumption-and-expiry.md)。

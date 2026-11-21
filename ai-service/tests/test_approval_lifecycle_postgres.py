@@ -211,12 +211,15 @@ def test_resumed_checkpoint_fails_closed_if_binding_or_content_changed(store, fa
         approvals.approved_arguments(ExecutionContext(store, active, Event(), 30))
 
 
-def test_pending_approval_holds_existing_ticket_permit_even_for_a_reserved_write(store):
+def test_missing_consumption_marker_blocks_permit_even_for_a_reserved_write(store):
     source, _, approvals, row = wait(store)
     decide(approvals, source, row)
     lease = Lease.from_run(store.claim_next(source.tenant, 'unexpected-writer'))
     store.reserve_step(lease, 'unconsumed-write', 'TOOL', 'WRITE', dict(operation='ticket.create', version='ticket-create-v1',
         resource_ref=source.principal_ref, input_ref=str(row['snapshot_id']), arguments_sha256=row['arguments_sha256']))
+    # Fault the durable metadata to verify the permit independently checks it.
+    with admin() as connection:
+        connection.execute("UPDATE agent_approval SET status='APPROVED',consumed_step_no=NULL,consumed_at=NULL WHERE run_id=%s", (row['run_id'],))
     with pytest.raises(ActionDenied):
         store.authorize_ticket_create(source.tenant, row['run_id'], source.source_event_id, lease.owner, lease.fence,
                                       row['snapshot_id'], row['arguments_sha256'])
