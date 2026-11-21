@@ -1134,3 +1134,12 @@ AI 内部预览承接客服签名的 Run 和来源，沿用审批开关。预览
 - `PYTEST_ADDOPTS='-k "runtime_worker or ticket_loop"' python scripts/test-agent-runtime.py --with-java-delivery` 的真实 PostgreSQL 定向测试 44 项通过。原九项实际只读路径与新增真实进程路径共十项通过。真实独立 Worker 使用合成模型 TCP 和受限数据库、客服 JAR，消费指定租户且另一租户的待处理任务逐字段一致。开关关闭先退出 1 并保留任务，开启后成功产生 1 份报告，2 次模型请求、5 次工具预留、10 个步骤、0 次重试、0 条新增回复或回执。原始日志 `b1-ticket-worker-runtime.log`、`ticket-worker-process.log` 和报告 `runtime-ticket-loop.json`。
 
 前序坐席决定及内部预览分别通过 [CI 44893909323](https://github.com/jkwang1129/SupportFlow/actions/runs/44893909323) 和 [CI 44893967231](https://github.com/jkwang1129/SupportFlow/actions/runs/44893967231)。本阶段运营入口消费已有可信任务。客服侧自动调度、访客消息登记和生产流量仍待验证。
+
+## B1 已登记事件的单租户投递调度（2026-11-21）
+
+客服服务新增默认关闭的 `SUPPORTFLOW_BOT_RUNTIME_DISPATCH_ENABLED`，开启时要求 RLS、明确的 `SUPPORTFLOW_BOT_RUNTIME_DISPATCH_TENANT` 和现有客服签名凭据。独立单线程每轮最多领取一项任务，每轮结束后等待一秒。复用原 Dispatcher 的领取、签名、回执、退避及租约恢复。关闭时停止新轮次并取消本地 HTTP，未确认的事件保留租约供后续恢复。回滚关闭调度开关，保留业务消息及 Outbox。
+
+- JDK 25 的 `mvn -B -f backend/pom.xml verify` 通过。新增 2 项 Spring 配置测试，覆盖默认无调度实例、显式关闭、平台租户、关闭 RLS、缺失凭据。首版测试引入仓库未使用的测试框架导致编译失败，改为项目已有的 Spring 基础容器及 JUnit 后通过。初次错误记录在 `b1-ticket-worker-runtime.log` 末尾，修正验证见 `b1-dispatch-schedule-build.log`。
+- `PYTEST_ADDOPTS='-k runtime_api' python scripts/test-agent-runtime.py --with-java-delivery` 中的两项真实 Java/AI/受限 PostgreSQL 联调通过。正式调度组件投递指定租户事件并保持另一租户事件不变。对已持久化但丢失响应的一项任务，重发相同事件只获得原 Run。日志 `b1-dispatch-schedule-runtime.log`。
+
+当前调度消费既有事件，访客入口自动登记另行验收。逐租户显式配置，尚无跨租户或跨进程公平配额。

@@ -8,7 +8,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.UUID;
 import java.util.function.Supplier;
 
-/** Explicit one-slot dispatch, not scheduled or wired into visitor messages yet. */
+/** One-slot delivery of persisted events, with both transactions outside the HTTP call. */
 public final class AgentEventDispatcher {
     public enum Result { IDLE, BUSY, DELIVERED, RETRY, HELD, STALE, INTERRUPTED }
     private final AgentEventOutbox outbox;

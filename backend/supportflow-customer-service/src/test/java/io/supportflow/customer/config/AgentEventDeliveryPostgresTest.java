@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import io.supportflow.common.context.TenantContext;
+import io.supportflow.customer.service.bot.AgentDispatchSchedule;
 import io.supportflow.customer.service.bot.AgentEventDispatcher;
 import io.supportflow.customer.service.bot.AgentEventOutbox;
 import io.supportflow.customer.service.bot.AgentRuntimeClient;
@@ -65,13 +66,33 @@ class AgentEventDeliveryPostgresTest {
         });
     }
     private <T> T tx(Supplier<T> action) { return TenantContext.bind("TENANT_A", () -> transaction.execute(status -> action.get())); }
+    private <T> T tx(String tenant, Supplier<T> action) { return TenantContext.bind(tenant, () -> transaction.execute(status -> action.get())); }
     private AgentEventOutbox.Event stored() { return tx(() -> outbox.getByMessage("TENANT_A", event.messageId())); }
     private AgentEventDispatcher dispatcher(AgentRuntimeClient client) { return new AgentEventDispatcher(outbox, transaction.getTransactionManager(), client); }
     @AfterEach void close() { if (pool != null) pool.close(); } // Only script removes disposable cluster, no destructive app grants.
 
     @Test void realSignedAdmissionReturnsTheSamePendingRunAndHidesItFromAnotherTenant() throws Exception {
         try (var client = new AgentRuntimeClient(endpoint, secret); var http = HttpClient.newHttpClient()) {
-            assertEquals(AgentEventDispatcher.Result.DELIVERED, dispatcher(client).dispatchOne("TENANT_A"));
+            long session = IDS.incrementAndGet(), message = IDS.incrementAndGet();
+            var foreign = tx("TENANT_B", () -> {
+                jdbc.update("INSERT INTO session(id,tenant_code,session_no,channel_id,status,start_time,last_msg_seq) VALUES(?,'TENANT_B',?,1,2,CURRENT_TIMESTAMP,1)",
+                        session, "OTHER_DISPATCH_" + session);
+                jdbc.update("INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,content,send_time) VALUES(?,'TENANT_B',?,?,1,1,1,'synthetic foreign source',CURRENT_TIMESTAMP)",
+                        message, session, "OTHER_DISPATCH_MSG_" + message);
+                return outbox.enqueue("TENANT_B", message, "runtime-v1", 500);
+            });
+            var schedule = new AgentDispatchSchedule(outbox, transaction.getTransactionManager(), "TENANT_A", true,
+                    endpoint.getScheme() + "://" + endpoint.getRawAuthority(), secret);
+            try {
+                schedule.start();
+                long deadline = System.nanoTime() + Duration.ofSeconds(10).toNanos();
+                while (!"DELIVERED".equals(stored().state()) && System.nanoTime() < deadline) {
+                    Thread.sleep(40);
+                }
+            } finally {
+                schedule.stop();
+            }
+            assertEquals(foreign, tx("TENANT_B", () -> outbox.getByMessage("TENANT_B", message)));
             var delivered = stored(); assertEquals("DELIVERED", delivered.state()); assertNotNull(delivered.runId());
             assertEquals(delivered.runId(), client.enqueue(event).runId());
             URI status = URI.create(endpoint + "/" + delivered.runId());

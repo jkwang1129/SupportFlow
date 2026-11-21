@@ -98,6 +98,8 @@ supportflow:
     runtime-read-tools-enabled: ${SUPPORTFLOW_BOT_RUNTIME_READ_TOOLS_ENABLED:false}
     runtime-ticket-create-enabled: ${SUPPORTFLOW_BOT_RUNTIME_TICKET_CREATE_ENABLED:false}
     runtime-approval-review-enabled: ${SUPPORTFLOW_BOT_RUNTIME_APPROVAL_REVIEW_ENABLED:false}
+    runtime-dispatch-enabled: ${SUPPORTFLOW_BOT_RUNTIME_DISPATCH_ENABLED:false}
+    runtime-dispatch-tenant: ${SUPPORTFLOW_BOT_RUNTIME_DISPATCH_TENANT:}
     # 机器人总开关：关掉就退回老流程（访客进线直接进人工队列）
     enabled: ${SUPPORTFLOW_BOT_ENABLED:true}
     # 是否由机器人首轮接待（关闭=进线直接排队等人工，但客户主动问时仍可用知识助手）
