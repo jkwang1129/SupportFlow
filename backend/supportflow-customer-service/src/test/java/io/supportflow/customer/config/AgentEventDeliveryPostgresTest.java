@@ -34,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Actual Python receiver and actual restricted roles; script owns the whole disposable cluster. */
 @EnabledIfEnvironmentVariable(named="SUPPORTFLOW_RUNTIME_DELIVERY_URL", matches=".+")
 class AgentEventDeliveryPostgresTest {
+    private static final String DELIVERY_TENANT = "JDELIVERY_A";
     private static final AtomicLong IDS = new AtomicLong(9_900_000);
     private static final ObjectMapper JSON = new ObjectMapper();
     private HikariDataSource pool;
@@ -60,14 +61,14 @@ class AgentEventDeliveryPostgresTest {
         long session = IDS.incrementAndGet(), message = IDS.incrementAndGet();
         event = tx(() -> {
             String sessionNo = "JDEL_" + UUID.randomUUID().toString().replace("-", "");
-            jdbc.update("INSERT INTO session(id,tenant_code,session_no,channel_id,status,start_time,last_msg_seq) VALUES(?,'TENANT_A',?,1,2,CURRENT_TIMESTAMP,1)", session, sessionNo);
-            jdbc.update("INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,content,send_time) VALUES(?,'TENANT_A',?,?,1,1,1,'synthetic-private-source',CURRENT_TIMESTAMP)", message, session, "JDEL_MSG_" + message);
-            return outbox.enqueue("TENANT_A", message, "runtime-v1", 500);
+            jdbc.update("INSERT INTO session(id,tenant_code,session_no,channel_id,status,start_time,last_msg_seq) VALUES(?,?,?,1,2,CURRENT_TIMESTAMP,1)", session, DELIVERY_TENANT, sessionNo);
+            jdbc.update("INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,content,send_time) VALUES(?,?,?,?,1,1,1,'synthetic-private-source',CURRENT_TIMESTAMP)", message, DELIVERY_TENANT, session, "JDEL_MSG_" + message);
+            return outbox.enqueue(DELIVERY_TENANT, message, "runtime-v1", 500);
         });
     }
-    private <T> T tx(Supplier<T> action) { return TenantContext.bind("TENANT_A", () -> transaction.execute(status -> action.get())); }
+    private <T> T tx(Supplier<T> action) { return tx(DELIVERY_TENANT, action); }
     private <T> T tx(String tenant, Supplier<T> action) { return TenantContext.bind(tenant, () -> transaction.execute(status -> action.get())); }
-    private AgentEventOutbox.Event stored() { return tx(() -> outbox.getByMessage("TENANT_A", event.messageId())); }
+    private AgentEventOutbox.Event stored() { return tx(() -> outbox.getByMessage(DELIVERY_TENANT, event.messageId())); }
     private AgentEventDispatcher dispatcher(AgentRuntimeClient client) { return new AgentEventDispatcher(outbox, transaction.getTransactionManager(), client); }
     @AfterEach void close() { if (pool != null) pool.close(); } // Only script removes disposable cluster, no destructive app grants.
 
@@ -81,7 +82,7 @@ class AgentEventDeliveryPostgresTest {
                         message, session, "OTHER_DISPATCH_MSG_" + message);
                 return outbox.enqueue("TENANT_B", message, "runtime-v1", 500);
             });
-            var schedule = new AgentDispatchSchedule(outbox, transaction.getTransactionManager(), "TENANT_A", true,
+            var schedule = new AgentDispatchSchedule(outbox, transaction.getTransactionManager(), DELIVERY_TENANT, true,
                     endpoint.getScheme() + "://" + endpoint.getRawAuthority(), secret);
             try {
                 schedule.start();
@@ -96,7 +97,7 @@ class AgentEventDeliveryPostgresTest {
             var delivered = stored(); assertEquals("DELIVERED", delivered.state()); assertNotNull(delivered.runId());
             assertEquals(delivered.runId(), client.enqueue(event).runId());
             URI status = URI.create(endpoint + "/" + delivered.runId());
-            var own = http.send(AgentRuntimeProtocol.request(status, "GET", "TENANT_A", new byte[0], secret), HttpResponse.BodyHandlers.ofString());
+            var own = http.send(AgentRuntimeProtocol.request(status, "GET", DELIVERY_TENANT, new byte[0], secret), HttpResponse.BodyHandlers.ofString());
             assertEquals(200, own.statusCode());
             var row = JSON.readTree(own.body()); assertEquals("PENDING", row.get("state").textValue());
             assertEquals(event.eventId().toString(), row.get("source_event_id").textValue());
@@ -121,13 +122,13 @@ class AgentEventDeliveryPostgresTest {
             UUID previous = acceptedRun.getAndSet(run); if (previous != null) assertEquals(previous, run);
             return new RuntimeReceiverStub.Reply(202, real.body(), "application/json", calls.incrementAndGet() == 1 ? 4000 : 0, null);
         }); var client = new AgentRuntimeClient(proxy.endpoint(), secret, Duration.ofSeconds(1))) {
-            assertEquals(AgentEventDispatcher.Result.RETRY, dispatcher(client).dispatchOne("TENANT_A"));
+            assertEquals(AgentEventDispatcher.Result.RETRY, dispatcher(client).dispatchOne(DELIVERY_TENANT));
             assertEquals("DELIVERY_TIMEOUT", tx(() -> jdbc.queryForObject("SELECT error_code FROM agent_event_outbox WHERE event_id=?", String.class, event.eventId())),
                     () -> "upstreamStatus=" + upstreamStatus.get() + ", proxyFailure=" + (proxy.failure.get() == null ? "none"
                             : proxy.failure.get().getClass().getSimpleName() + ":" + java.util.Arrays.stream(proxy.failure.get().getStackTrace())
                             .filter(frame -> frame.getClassName().contains("AgentEventDeliveryPostgresTest")).findFirst().orElse(null)));
             tx(() -> { jdbc.update("UPDATE agent_event_outbox SET ready_at=clock_timestamp()-interval '1 second' WHERE event_id=?", event.eventId()); return null; });
-            var result = dispatcher(client).dispatchOne("TENANT_A");
+            var result = dispatcher(client).dispatchOne(DELIVERY_TENANT);
             assertEquals(AgentEventDispatcher.Result.DELIVERED, result, () ->
                     "receipt result=" + result + ", error=" + tx(() -> jdbc.queryForObject("SELECT error_code FROM agent_event_outbox WHERE event_id=?", String.class, event.eventId()))
                             + ", forwarded=" + calls.get() + ", proxyFailure=" + (proxy.failure.get() == null ? "none" : proxy.failure.get().getClass().getSimpleName()));

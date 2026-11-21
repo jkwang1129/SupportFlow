@@ -17,7 +17,7 @@ class AgentDispatchScheduleTest {
     private AnnotationConfigApplicationContext app(Map<String, Object> properties) {
         var context = new AnnotationConfigApplicationContext();
         context.getEnvironment().getPropertySources().addFirst(new MapPropertySource("fixture", properties));
-        context.register(PropertySourcesPlaceholderConfigurer.class, AgentDispatchSchedule.class);
+        context.register(PropertySourcesPlaceholderConfigurer.class, AgentDispatchSchedule.class, AgentShadowAdmission.class);
         context.registerBean(AgentEventOutbox.class, () -> mock(AgentEventOutbox.class));
         context.registerBean(PlatformTransactionManager.class, () -> mock(PlatformTransactionManager.class));
         return context;
@@ -29,6 +29,7 @@ class AgentDispatchScheduleTest {
             try (var context = app(fixture)) {
                 context.refresh();
                 assertTrue(context.getBeansOfType(AgentDispatchSchedule.class).isEmpty());
+                assertTrue(context.getBeansOfType(AgentShadowAdmission.class).isEmpty());
             }
         }
     }
@@ -43,6 +44,12 @@ class AgentDispatchScheduleTest {
             try (var context = app(fixture)) {
                 assertThrows(BeanCreationException.class, context::refresh);
             }
+        }
+    }
+
+    @Test void shadowEnrollmentRequiresTheExplicitDispatcher() {
+        try (var context = app(Map.of("supportflow.bot.runtime-shadow-admission-enabled", "true"))) {
+            assertThrows(BeanCreationException.class, context::refresh);
         }
     }
 }

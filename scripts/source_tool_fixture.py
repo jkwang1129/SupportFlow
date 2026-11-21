@@ -37,7 +37,9 @@ def verify_source_tools(connect, runtime_dsn, base, secret, specs):
     for index, run_id in enumerate(ordered):
         source = known[run_id]
         first = runner.run_once(source.tenant)
-        assert first['run_id'] == run_id and first['state'] == 'RETRY_WAIT' and first['tool_calls'] == 2
+        assert first is not None, 'Expected a ready source run'
+        assert first['run_id'] == run_id and first['state'] == 'RETRY_WAIT' and first['tool_calls'] == 2, (
+            first['run_id'] == run_id, first['state'], first['error_code'], first['tool_calls'])
         if index == 1:
             with connect('customer_db') as db:
                 db.execute('UPDATE session SET agent_id=12345 WHERE tenant_code=%s AND session_no=%s',

@@ -12,9 +12,7 @@ import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.UUID;
 
-/** Durable source-event primitives. Caller binds tenant BEFORE a short transaction.
- * Not automatically wired into SessionService; explicit delivery commits before network I/O.
- */
+/** Durable source-event storage. Tenant context precedes the transaction; delivery runs after commit. */
 @Component
 public class AgentEventOutbox {
     public static final class DeliveryLeaseLost extends IllegalStateException {
@@ -36,6 +34,14 @@ public class AgentEventOutbox {
     public AgentEventOutbox(JdbcTemplate jdbc) { this.jdbc = jdbc; }
 
     public Event enqueue(String tenant, long messageId, String runtimeVersion, int backlogLimit) {
+        return enqueue(tenant, messageId, runtimeVersion, backlogLimit, false);
+    }
+
+    Event enqueueVisitorText(String tenant, long messageId, int backlogLimit) {
+        return enqueue(tenant, messageId, "runtime-v1", backlogLimit, true);
+    }
+
+    private Event enqueue(String tenant, long messageId, String runtimeVersion, int backlogLimit, boolean requireActiveText) {
         requireScope(tenant);
         requireId(runtimeVersion, 32);
         if (messageId <= 0 || backlogLimit < 1 || backlogLimit > 10000) throw new IllegalArgumentException("Invalid event admission");
@@ -56,8 +62,10 @@ public class AgentEventOutbox {
                 FROM session_message m JOIN session s ON s.id=m.session_id AND s.tenant_code=m.tenant_code
                 WHERE m.tenant_code=? AND m.id=? AND m.sender_type=1 AND m.visible_to=1
                   AND m.is_deleted=false AND s.is_deleted=false
+                  AND (NOT ? OR (m.msg_type=1 AND octet_length(m.content) BETWEEN 1 AND 8192
+                       AND s.agent_id IS NULL AND s.status IN (1,2)))
                 RETURNING *
-                """, ROW, UUID.randomUUID().toString(), trace, runtimeVersion, tenant, messageId);
+                """, ROW, UUID.randomUUID().toString(), trace, runtimeVersion, tenant, messageId, requireActiveText);
         if (rows.size() != 1) throw new BizException(40401, "可用的访客消息不存在");
         return rows.getFirst();
     }

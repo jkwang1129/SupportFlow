@@ -1,9 +1,10 @@
 """Real model-protocol TCP -> durable read Loop -> actual customer JAR/PG.
 
-Provider decisions/usage and seeded customer data are synthetic. No paid model,
-automatic source enrollment, business reply, ticket creation or UI is inferred.
+Provider decisions/usage and setup data are synthetic. The scoped Worker case
+submits a signed visitor message and uses actual source enrollment and delivery.
 """
 from contextlib import contextmanager
+import hmac
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import json
 import os
@@ -25,6 +26,7 @@ from local_env import runtime_environment
 from ticket_approval_fixture import approval_role_server, verify_ticket_approval
 
 ROOT=Path(__file__).resolve().parents[1]
+SHADOW_TENANT = 'LP_J'
 
 
 @contextmanager
@@ -63,6 +65,39 @@ def planner_server(scenarios,connect):
     finally:server.shutdown();server.server_close();thread.join(timeout=2)
 
 
+def _send_shadow_message(connect, base, secret, store, session_no, text):
+    from ai.runtime.types import RunInput
+
+    path = f'/api/customer/internal/sessions/{session_no}/messages'
+    payload = dict(tenantCode=SHADOW_TENANT, senderType=1, msgType=1, visibleTo=1,
+                   content=text, clientMsgNo='fixture-shadow-idempotency')
+    expires = str(int(time.time()) + 20)
+    canonical = '\n'.join(('supportflow-customer:v1', 'REALTIME', expires, 'POST', path, '', SHADOW_TENANT))
+    signature = hmac.digest(secret.encode(), canonical.encode(), 'sha256').hex()
+    headers = {'X-Tenant-Code': SHADOW_TENANT, 'X-SupportFlow-Customer-Auth': f'{expires}:{signature}'}
+    with httpx.Client(trust_env=False, timeout=3, follow_redirects=False) as client:
+        assert client.post(base+path, json=payload).status_code == 401
+        original = client.post(base+path, json=payload, headers=headers)
+        assert original.status_code == 200 and original.json()['code'] == 0
+        message = original.json()['data']
+        duplicate = client.post(base+path, json=payload, headers=headers)
+        assert duplicate.status_code == 200 and duplicate.json()['data']['msgId'] == message['msgId']
+    deadline = time.monotonic() + 12
+    while time.monotonic() < deadline:
+        with connect('customer_db') as db:
+            rows = db.execute("""SELECT message_id,run_id,state,event_id FROM agent_event_outbox
+                WHERE tenant_code=%s AND session_no=%s""", (SHADOW_TENANT, session_no)).fetchall()
+        assert len(rows) == 1
+        message_id, run_id, state, event_id = rows[0]
+        if state == 'DELIVERED':
+            row = store.get(SHADOW_TENANT, run_id)
+            assert row['state'] == 'PENDING' and row['source_event_id'] == event_id
+            assert row['message_id'] == message_id == int(message['msgId']) and row['event_seq'] == 1
+            return RunInput.from_run(row), run_id
+        time.sleep(.05)
+    raise AssertionError('Shadow message did not reach the Runtime through the scheduled dispatcher')
+
+
 def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env):
     from ai.runtime.customer_tools import current_message_tool,ticket_status_tool
     from ai.runtime.models import ChatProfile,RuntimeChatClient
@@ -79,6 +114,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
     child.update(SUPPORTFLOW_DB_HOST='127.0.0.1',SUPPORTFLOW_DB_PORT=environment['SUPPORTFLOW_DB_PORT'],
                  SUPPORTFLOW_CUSTOMER_DB_PASSWORD=passwords['CUSTOMER'],SUPPORTFLOW_CUSTOMER_PLATFORM_DB_PASSWORD=passwords['CUSTOMER_PLATFORM'],
                  SUPPORTFLOW_AI_CUSTOMER_SECRET=secret,SUPPORTFLOW_JWT_SECRET=secrets.token_urlsafe(48),
+                 SUPPORTFLOW_CUSTOMER_REALTIME_SECRET=secrets.token_urlsafe(48),
                  SUPPORTFLOW_RUSTFS_SECRET_KEY=secrets.token_urlsafe(32),SUPPORTFLOW_BILLING_USAGE_REPORT_INITIAL_DELAY_MS='600000')
     child=runtime_environment('customer-service',child)
     java=Path(os.environ['JAVA_HOME'])/'bin'/('java.exe' if os.name=='nt' else 'java');jar,=(ROOT/'backend/supportflow-customer-service/target').glob('*.jar')
@@ -89,6 +125,8 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             '--supportflow.bot.runtime-source-enabled=true','--supportflow.bot.runtime-read-tools-enabled=true',
             '--supportflow.bot.runtime-ticket-create-enabled=true',
             '--supportflow.bot.runtime-approval-review-enabled=true', f'--supportflow.user.internal-base-url={role_base}',
+            '--supportflow.bot.enabled=false', '--supportflow.bot.runtime-dispatch-enabled=true',
+            f'--supportflow.bot.runtime-dispatch-tenant={SHADOW_TENANT}', '--supportflow.bot.runtime-shadow-admission-enabled=true',
             *[f'--supportflow.ai.{name}-base-url={ai_base}' for name in ('bot','qa','kb','vision','speech')]],
             cwd=ROOT,env=child,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         try:
@@ -108,17 +146,24 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                 for index,mode in enumerate(('normal','late_status','owner_revoked','foreign_parameter','phantom_reference','fake_write_claim','model503','turn_limit','process_restart','configured_worker')):
                     tenant='LP_'+chr(ord('A')+index);session_id=15_900_001+index*10;message_id=session_id+1;customer_id=session_id+2;ticket_id=session_id+3
                     ticket_no='LOOP_'+tenant;source=RunInput(tenant,uuid4(),'LOOP_JAR_'+str(index),1,message_id,'visitor-session:'+str(session_id),'loop-'+str(index))
-                    run=store.enqueue(source)['run_id']
+                    from_fixture = mode != 'configured_worker'
+                    run=store.enqueue(source)['run_id'] if from_fixture else None
+                    text = '请查询工单 '+ticket_no+' 的状态'
                     with connect('customer_db') as db:
                         db.execute("INSERT INTO customer(id,tenant_code,customer_no,name) VALUES(%s,%s,%s,'SYNTHETIC PRIVATE LOOP CUSTOMER')",(customer_id,tenant,'C_'+tenant))
-                        db.execute("INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,customer_id,start_time) VALUES(%s,%s,%s,1,2,1,%s,CURRENT_TIMESTAMP)",(session_id,tenant,source.session_no,customer_id))
-                        db.execute("INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,visible_to,content,send_time) VALUES(%s,%s,%s,%s,1,1,1,1,%s,CURRENT_TIMESTAMP)",
-                                   (message_id,tenant,session_id,'LOOP_SOURCE_'+str(index),'请查询工单 '+ticket_no+' 的状态'))
-                        db.execute("""INSERT INTO agent_event_outbox(tenant_code,event_id,run_id,message_id,session_id,session_no,event_seq,principal_ref,trace_id,runtime_version,state,attempts,fence,delivered_at)
-                            VALUES(%s,%s,%s,%s,%s,%s,1,%s,%s,'runtime-v1','DELIVERED',1,1,clock_timestamp())""",
-                                   (tenant,source.source_event_id,run,message_id,session_id,source.session_no,source.principal_ref,source.trace_id))
+                        db.execute("INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,customer_id,start_time) VALUES(%s,%s,%s,1,2,%s,%s,CURRENT_TIMESTAMP)",(session_id,tenant,source.session_no,int(from_fixture),customer_id))
+                        if from_fixture:
+                            db.execute("INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,visible_to,content,send_time) VALUES(%s,%s,%s,%s,1,1,1,1,%s,CURRENT_TIMESTAMP)",
+                                       (message_id,tenant,session_id,'LOOP_SOURCE_'+str(index),text))
+                            db.execute("""INSERT INTO agent_event_outbox(tenant_code,event_id,run_id,message_id,session_id,session_no,event_seq,principal_ref,trace_id,runtime_version,state,attempts,fence,delivered_at)
+                                VALUES(%s,%s,%s,%s,%s,%s,1,%s,%s,'runtime-v1','DELIVERED',1,1,clock_timestamp())""",
+                                       (tenant,source.source_event_id,run,message_id,session_id,source.session_no,source.principal_ref,source.trace_id))
                         db.execute("INSERT INTO ticket(id,tenant_code,ticket_no,title,\"desc\",customer_id,session_no,status,update_time) VALUES(%s,%s,%s,'PRIVATE LOOP TITLE','PRIVATE LOOP DESC',%s,'LOOP_HISTORY',2,TIMESTAMP '2026-11-20 12:34:00')",
                                    (ticket_id,tenant,ticket_no,customer_id))
+                    if not from_fixture:
+                        assert tenant == SHADOW_TENANT
+                        source, run = _send_shadow_message(connect, base, child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'],
+                                                           store, source.session_no, text)
                     model_key='fixture-loop-'+tenant+'-model-credential'
                     scenario=dict(mode=mode,ticket_no=ticket_no,customer_id=customer_id,ticket_id=ticket_id,model_http_calls=0,decisions=0)
                     scenarios['Bearer '+model_key]=scenario
@@ -207,9 +252,9 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         worker_process_restart=mode=='process_restart',configured_worker_process=mode=='configured_worker',
                         fixture_lease_seconds=3 if mode=='process_restart' else 30))
             report=ROOT/'.local/verification/runtime-ticket-loop.json';report.parent.mkdir(parents=True,exist_ok=True)
-            report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v1',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
-                source_enrollment='EXPLICIT_FIXTURE_SETUP',publication='NOT_IMPLEMENTED',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
-            print('Actual model-protocol TCP -> durable TicketReadLoop -> signed SDK/customer JAR/restricted PG: 10 cases passed; current facts/owner checks, invalid actions, model503 retry, bounded turns, process takeover and scoped worker CLI verified; reports only, synthetic model decisions/usage',flush=True)
+            report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v2',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
+                source_enrollment='SIGNED_VISITOR_APPEND_FOR_CONFIGURED_WORKER',publication='REPORT_ONLY',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
+            print('Actual signed visitor append -> shadow Outbox -> scheduled AI delivery -> scoped worker CLI passed; duplicate message reused; 10 read-loop cases passed with synthetic model TCP and restricted PG; reports only',flush=True)
             from knowledge_tool_fixture import verify_knowledge_tools
             verify_knowledge_tools(connect,base,secret,store)
             from ticket_creation_api_fixture import verify_ticket_creation_api

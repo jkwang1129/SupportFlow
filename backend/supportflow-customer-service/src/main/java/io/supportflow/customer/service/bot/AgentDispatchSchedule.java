@@ -55,6 +55,8 @@ public final class AgentDispatchSchedule {
         }
     }
 
+    String tenant() { return tenant; }
+
     @PreDestroy
     public void stop() {
         scheduler.shutdownNow();

@@ -558,7 +558,7 @@ public class SessionService {
         scheduleBotReply(tenantCode, session, message);
         // 原生渠道推送：公众号渠道订阅这个事件，把回复通过微信客服消息推给客户
         eventPublisher.publishEvent(new SessionMessageEvent(
-                tenantCode, sessionNo, senderType, msgType, content, visibleTo));
+                tenantCode, sessionNo, senderType, msgType, content, visibleTo, message.getId()));
         return toMessageVO(message);
     }
 

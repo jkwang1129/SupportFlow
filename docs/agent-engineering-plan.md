@@ -18,7 +18,7 @@
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
 | PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前97表/索引/RLS；customer009、AI007及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
-| PR-8 持久化 Run | 部分实现：持久化Loop/报告发布/进程恢复 | Run/Step/Worker、双向API/SDK；276项Runtime，139项客服PG；实际JAR→AI写许可→业务回复/丢回执及真实Worker退出接管；默认关闭 | 可信调度/自动登记、租户Profile Resolver仍缺。B1进行中 |
+| PR-8 持久化 Run | 部分实现：单租户可信登记、投递与只读 Loop 实际连通 | Run/Step/Worker、事务 Outbox、签名 API、固定运营 Profile、真实进程接管及受控回复回执；默认关闭的影子入口 | 待扩展租户策略管理、自动批准执行宿主及业务回复切换策略。B1 试点已验 |
 | PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。MCP尚未接入。B2 |
 | PR-10 Checkpoint/HITL | 部分实现：工单审批、恢复、预览与决定 API | 原子正文和原预算恢复、真实进程接管、限时审批绑定主体/快照/参数、一次性消费、到期/撤销、坐席角色与来源重验、回复及建单未知写核销 | 待接待审任务发现与坐席操作界面；其他写操作需各自回执。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
@@ -123,3 +123,5 @@ AI 内部签名预览已通过测试。它绑定租户、来源、Run、原检�
 运营侧可按指定租户和现有供应商配置启动只读工单 Worker。真实独立进程验证配置关闭时保留任务，开启后只消费指定租户并生成一份内部报告。已通过 82 项定向测试、44 项 Runtime 数据库用例和 10 条实际工单读取路径。下一批接客服端受控事件调度，随后核对访客消息登记的事务及故障边界。
 
 客服已验证显式单租户调度，默认关闭。只读 Worker 与客服调度分别限定同一运营侧租户。下一批从已可信的访客文本入口登记 Outbox，确保重发、回滚、已接管会话和队列不可用时行为符合原消息契约。
+
+显式试点已用真实签名消息 API 验证从访客发送、Outbox、自动投递到独立 Worker 报告。重复消息复用同一事件与任务，共 153 项客服数据库测试通过。原客服闭环继续运行，影子链路目前只生成内部报告。接回 B3 的坐席会话审批发现，并继续上下文、工具与评测工程。

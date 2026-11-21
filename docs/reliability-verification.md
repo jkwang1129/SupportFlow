@@ -1143,3 +1143,14 @@ AI 内部预览承接客服签名的 Run 和来源，沿用审批开关。预览
 - `PYTEST_ADDOPTS='-k runtime_api' python scripts/test-agent-runtime.py --with-java-delivery` 中的两项真实 Java/AI/受限 PostgreSQL 联调通过。正式调度组件投递指定租户事件并保持另一租户事件不变。对已持久化但丢失响应的一项任务，重发相同事件只获得原 Run。日志 `b1-dispatch-schedule-runtime.log`。
 
 当前调度消费既有事件，访客入口自动登记另行验收。逐租户显式配置，尚无跨租户或跨进程公平配额。
+
+## B1 真实访客入口到只读报告（2026-11-21）
+
+客服使用现有消息事务、服务认证与会话权限登记有界访客文本。选定租户中符合条件的消息通过保存点写入同事务 Outbox。原客服回复逻辑继续运行，影子任务只生成内部报告。访客登记默认关闭，开启时要求同一租户的受控投递。设计、降级与回滚见 [ADR-0034](decisions/0034-shadow-visitor-admission.md)。
+
+- `python scripts/test-customer-rls.py --with-ai` 通过 153 项客服 PostgreSQL 17 测试及 19 项知识库测试。新增五项覆盖相同客户端消息重放、事务整体回滚、内容与接管边界、锁超时后消息提交和跨租户／无事务拒绝。首轮一个负例的夹具以无返回值的 Lambda 调用有返回值接口，修复后通过。日志 `b1-shadow-admission-pg.log`、`b1-shadow-admission-pg-final.log`。
+- JDK 25 的 `mvn -B -f backend/pom.xml verify` 通过，包括未配置投递时拒绝启用登记的 Spring 用例。日志 `b1-shadow-admission-backend.log`。
+- `PYTEST_ADDOPTS='-k runtime_api' python scripts/test-agent-runtime.py --with-java-delivery` 的 20 项真实 Runtime API 数据库测试通过。专用联调租户修复了按 pytest 筛选时遗留任务被后续来源 Worker 误领的问题。原始失败见 `b1-dispatch-schedule-runtime-retry.log`，修复和验收见 `b1-shadow-admission-runtime.log`。
+- 实际消息 API 拒绝匿名，重发相同消息号保留 1 条消息和 1 条 Outbox，通过真实后台投递创建 1 个对应 Run。独立 Worker 对其生成 1 份工单报告，使用 2 次合成模型 HTTP 调用、5 次工具预留、10 个步骤、0 次重试。10 条实际工单读取用例均通过。原始机器报告 `runtime-ticket-loop.json` v2。
+
+单租户 Worker 的 [CI 44894872366](https://github.com/jkwang1129/SupportFlow/actions/runs/44894872366) 和客服提案预览的 [CI 44894414086](https://github.com/jkwang1129/SupportFlow/actions/runs/44894414086) 均通过。测试全程使用隔离合成数据，验证范围为显式启用的只读任务。生产流量、费用和语义质量未测。

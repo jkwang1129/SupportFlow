@@ -1,7 +1,5 @@
 package io.supportflow.customer.event;
 
-import io.supportflow.customer.service.session.SessionService;
-
 /**
  * 消息落库事件。
  *
@@ -15,7 +13,8 @@ import io.supportflow.customer.service.session.SessionService;
  * @param msgType    1-文本 2-图片
  * @param content    文本内容（图片为空）
  * @param visibleTo  1-双方可见 2-仅坐席可见（内部备注不能被推到客户微信里）
+ * @param messageId  后端已保存的消息主键
  */
 public record SessionMessageEvent(String tenantCode, String sessionNo, int senderType,
-                                  int msgType, String content, int visibleTo) {
+                                  int msgType, String content, int visibleTo, long messageId) {
 }

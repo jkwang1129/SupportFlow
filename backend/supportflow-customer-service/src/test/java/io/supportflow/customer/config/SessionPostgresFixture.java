@@ -29,6 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -51,6 +52,7 @@ abstract class SessionPostgresFixture {
     protected BillingUsageCollector billing;
     protected BotBrainService brain;
     protected AtomicInteger committedEvents;
+    protected Consumer<SessionMessageEvent> onMessage = event -> {};
     protected long sessionId;
     protected String sessionNo;
 
@@ -85,7 +87,8 @@ abstract class SessionPostgresFixture {
         when(brain.receptionEnabled()).thenReturn(true);
         committedEvents = new AtomicInteger();
         ApplicationEventPublisher publisher = event -> {
-            if (event instanceof SessionMessageEvent) {
+            if (event instanceof SessionMessageEvent persisted) {
+                onMessage.accept(persisted);
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override public void afterCommit() { committedEvents.incrementAndGet(); }
                 });
