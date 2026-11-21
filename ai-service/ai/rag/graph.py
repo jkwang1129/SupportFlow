@@ -107,8 +107,8 @@ def node_grade(state: RagState) -> dict:
     enough = bool(hits) and top >= threshold
     # 这一行是"为什么答不上来"的第一现场：命中几条、走的是向量还是关键词、
     # 最高分多少、阈值多少、判定够不够——一眼能看出是"没检索到"还是"检索到了但被判不够"
-    logger.info("召回判分 query=%s 命中=%d 模式=%s 最高分=%.4f 阈值=%.4f 判定=%s",
-                (state.get("query") or "")[:40], len(hits), state.get("mode"),
+    logger.info("召回判分 queryChars=%d 命中=%d 模式=%s 最高分=%.4f 阈值=%.4f 判定=%s",
+                len(state.get("query") or ""), len(hits), state.get("mode"),
                 top, threshold, "够用" if enough else "不够")
     return {
         "enough": enough,

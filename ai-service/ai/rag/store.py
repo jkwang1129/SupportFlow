@@ -275,5 +275,5 @@ def ping() -> bool:
             cur.execute("SELECT embedding FROM kb_chunk LIMIT 0")
             return True
     except Exception as exc:  # noqa: BLE001
-        logger.warning("知识库探活失败：%s", exc)
+        logger.warning("知识库探活失败 code=KB_STORE_UNAVAILABLE errorType=%s",type(exc).__name__)
         return False

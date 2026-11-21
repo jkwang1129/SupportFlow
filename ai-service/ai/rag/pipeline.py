@@ -111,8 +111,8 @@ def _builtin_index_document(
     saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source)
 
     logger.info(
-        "知识库索引完成 trace=%s tenant=%s docId=%s file=%s 字符=%d 切片=%d 向量来源=%s",
-        trace_id, tenant_code, doc_id, file_name, len(text), saved, source,
+        "知识库索引完成 trace=%s tenant=%s docId=%s 字符=%d 切片=%d 向量来源=%s",
+        trace_id, tenant_code, doc_id, len(text), saved, source,
     )
     return IndexResult(
         doc_id=doc_id,
@@ -215,8 +215,8 @@ def _builtin_search(tenant_code: str, query: str, top_k: int = 5,
         mode = "keyword"
 
     warn_if_degraded(mode, source, query)
-    logger.info("知识库检索 trace=%s tenant=%s query=%s 命中=%d 模式=%s 向量来源=%s",
-                get_trace_id() or "-", tenant_code, query[:40], len(results), mode, source)
+    logger.info("知识库检索 trace=%s tenant=%s queryChars=%d 命中=%d 模式=%s 向量来源=%s",
+                get_trace_id() or "-", tenant_code, len(query), len(results), mode, source)
     return {
         "query": query,
         "results": results,
@@ -236,10 +236,10 @@ def warn_if_degraded(mode: str, source: str, query: str) -> None:
     if not mode.startswith("keyword"):
         return
     logger.warning(
-        "检索已退化为关键词匹配 query=%s 向量来源=%s\n"
+        "检索已退化为关键词匹配 queryChars=%d 向量来源=%s\n"
         "  → 关键词匹配只看字面（相邻两字），容易捞回沾边但答不上问题的切片。\n"
         "  → 配好向量密钥后请到「知识库」把文档**重新索引**，再用 /api/ai/v1/rag/health 复查。",
-        query[:40], source)
+        len(query), source)
 
 
 def _chunk_to_dict(chunk: splitter_module.Chunk) -> dict:

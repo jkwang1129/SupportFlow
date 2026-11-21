@@ -41,8 +41,8 @@ class AskRequest(BaseModel):
 @router.post("/ask")
 async def ask(body: AskRequest, trace_id: str = Depends(require_trace_id)) -> dict:
     started = time.perf_counter()
-    logger.info("收到知识问答请求 trace=%s tenant=%s question=%s",
-                trace_id, body.tenant_code, body.question[:60])
+    logger.info("收到知识问答请求 trace=%s tenant=%s questionChars=%d",
+                trace_id, body.tenant_code, len(body.question))
     try:
         result = await graph.ask(
             question=body.question.strip(),
@@ -51,8 +51,8 @@ async def ask(body: AskRequest, trace_id: str = Depends(require_trace_id)) -> di
             doc_ids=body.doc_ids,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.exception("知识问答失败 trace=%s：%s", trace_id, exc)
-        raise HTTPException(status_code=500, detail=f"知识问答失败：{exc}") from exc
+        logger.error("知识问答失败 trace=%s code=RAG_ANSWER_FAILED errorType=%s",trace_id,type(exc).__name__)
+        raise HTTPException(status_code=500, detail="知识问答失败，请稍后重试。") from None
     logger.info("知识问答完成 trace=%s 编排=%s 引用=%d cost=%dms",
                 trace_id, result.get("engine"), len(result.get("citations") or []),
                 int((time.perf_counter() - started) * 1000))

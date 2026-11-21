@@ -59,9 +59,10 @@ def _fail(exc: Exception) -> HTTPException:
     from ..rag.parser import ParseError
 
     if isinstance(exc, ParseError):
-        return HTTPException(status_code=400, detail=str(exc))
-    logger.exception("知识库接口失败：%s", exc)
-    return HTTPException(status_code=500, detail=f"知识库处理失败：{exc}")
+        logger.warning("知识库解析失败 code=KB_PARSE_FAILED errorType=%s",type(exc).__name__)
+        return HTTPException(status_code=400, detail="文件解析失败，请检查文件格式和内容。")
+    logger.error("知识库接口失败 code=KB_OPERATION_FAILED errorType=%s",type(exc).__name__)
+    return HTTPException(status_code=500, detail="知识库处理失败，请稍后重试。")
 
 
 @router.post("/index")
@@ -77,8 +78,8 @@ async def index_file(
     """接收文件原始字节 → 解析 → 切块 → 向量化 → 落库。"""
     payload = await request.body()
     started = time.perf_counter()
-    logger.info("收到知识库索引请求 trace=%s tenant=%s docId=%s file=%s bytes=%d",
-                trace_id, tenant_code, doc_id, file_name, len(payload))
+    logger.info("收到知识库索引请求 trace=%s tenant=%s docId=%s bytes=%d",
+                trace_id, tenant_code, doc_id, len(payload))
     if not payload:
         # 请求体是空的：多半是调用方发文件时丢了 body（例如手写 Content-Type 丢了 boundary）
         raise HTTPException(
@@ -96,7 +97,7 @@ async def index_file(
             chunk_overlap=chunk_overlap,
         )
     except Exception as exc:  # noqa: BLE001
-        raise _fail(exc) from exc
+        raise _fail(exc) from None
     logger.info("知识库索引返回 trace=%s tenant=%s docId=%s 切片=%d cost=%dms",
                 trace_id, tenant_code, doc_id, result.chunk_count,
                 int((time.perf_counter() - started) * 1000))
@@ -121,7 +122,7 @@ async def index_text(
             chunk_overlap=body.chunk_overlap,
         )
     except Exception as exc:  # noqa: BLE001
-        raise _fail(exc) from exc
+        raise _fail(exc) from None
     return _result_payload(result)
 
 
@@ -136,7 +137,7 @@ async def search(body: SearchRequest, trace_id: str = Depends(require_trace_id))
             doc_ids=body.doc_ids,
         )
     except Exception as exc:  # noqa: BLE001
-        raise _fail(exc) from exc
+        raise _fail(exc) from None
 
 
 @router.get("/documents/{doc_id}/chunks")
@@ -221,8 +222,8 @@ def _vector_quality(tenant_code: str, *, include_document_ids: bool = False) -> 
                 """,
                 (tenant_code,),
             ).fetchall()
-    except Exception:  # noqa: BLE001
-        logger.warning("读取切片向量来源失败", exc_info=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取切片向量来源失败 code=KB_DIAGNOSTIC_FAILED errorType=%s",type(exc).__name__)
         return {"chunkVectorModels": [], "vectorQualityHint": "读取切片向量来源失败"}
     models = [{"model": row["model"], "chunks": int(row["chunks"])} for row in rows]
     degraded = [item for item in models if item["model"] in fallback]
@@ -244,7 +245,7 @@ def _vector_quality(tenant_code: str, *, include_document_ids: bool = False) -> 
                     ).fetchall()
                 ]
         except Exception as exc:  # noqa: BLE001
-            logger.warning("统计兜底向量文档失败：%s", exc)
+            logger.warning("统计兜底向量文档失败 code=KB_REPAIR_DIAGNOSTIC_FAILED errorType=%s",type(exc).__name__)
     if degraded:
         hint = (f"有 {sum(item['chunks'] for item in degraded)} 个切片用的是本地兜底向量"
                 "（没有语义，检索会退化成关键词匹配）。"

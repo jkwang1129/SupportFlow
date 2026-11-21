@@ -104,8 +104,8 @@ async def compose_answer(question: str, hits: list[dict[str, Any]],
         # 没配密钥：不编答案，把最相关的原文摆出来（同时记一次降级）
 
         top = hits[0]
-        logger.warning("知识问答未配置大模型密钥，返回检索原文 tenant=%s question=%s",
-                       tenant_code or "-", question[:40])
+        logger.warning("知识问答未配置大模型密钥，返回检索原文 tenant=%s questionChars=%d",
+                       tenant_code or "-", len(question))
         return (f"（当前未配置大模型密钥，先把检索到的原文给你）\n\n"
                 f"依据《{top.get('doc_title') or '未命名文档'}》第 {top.get('chunk_no')} 块：\n"
                 f"{top.get('content') or ''}",

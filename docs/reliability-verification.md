@@ -762,3 +762,22 @@ None=保持调用方当前租户范围；[]=空选集，图/检索/存储都短�
 知识引用事实支持、发布/下线/版本ACL、知识工具及Embedding预算尚待后续；None的全租户检索仍依赖可信调用方和租户隔离，不把文档选择等同授权。已知原RAG日志/错误响应可能含问题或原异常文本，接知识工具前仍需收敛；没有宣称完整PII保护或生产级知识治理。回滚先停受限文档调用，保留数据和Runtime历史；不能把空列表改为None或在失败时去掉范围作为兜底。无语义质量/性能/Token/费用改进数据。
 
 完整服务首轮`b2-knowledge-scope-services-final.log`三套路径通过（当时独立KB API语义尚未补齐）；补齐KB入口后重新运行`python scripts/test-security-flow.py`最终退出0，`b2-knowledge-scope-services-final-v2.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套均通过。真实Java省略docIds的默认调用、知识索引/检索、访客WS→AI→BOT回复、权限/计费/工单及只读readiness负面恢复保持；未并行Maven或其他服务验收。当前提交CI仍会重跑Runtime专项和六库完整检查，本批本地未无故重跑未改动的214项Runtime/SQL迁移。
+
+2bca997对应的[CI 44850593648](https://github.com/jkwang1129/SupportFlow/actions/runs/44850593648)两个job全部成功，含48项新增范围测试/551项AI普通、103项客服PG+11项KB Python、214项Runtime和三套完整实际服务，文档范围批次已完成本地/远端退出条件。
+
+## B2/M04 知识工具前置：应用诊断与已处理错误响应（2026-11-21）
+
+基线2bca997。修改`api/{kb,rag}.py`、`rag/{embedding,graph,llama_engine,pipeline,retriever,store}.py`及`services/rag.py`的诊断/已处理错误边界；新增`test_rag_diagnostic_privacy.py`、ADR-0016。不新建日志/观测框架，无SQL/Java/依赖/默认路由改变。
+
+问题/文件名/原始异常不再进入所测ai.*应用日志；保留现有Trace/租户/文档引用、长度/数量、模式/命中/分数/耗时、固定错误码与errorType。取消原异常正文和exc_info，已处理HTTP错误from None；解析400/其他500语义保持，提示改为固定文本。retriever仍error模式，error字段改固定RAG_RETRIEVAL_FAILED。原Embedding/Reader/关键词/无模型降级和正常回答/引用/索引文件元数据保持，非从授权业务结果删除正文。
+
+Python3.11.5，全部问题/文件名/凭据与上游响应为合成标记/Stub，无真实模型/.env：
+
+- 修正测试夹具后18项在旧代码上全部失败，`b2-rag-diagnostics-baseline-final.log`；修复后`cd ai-service; python -m pytest -q tests/test_rag_diagnostic_privacy.py`首轮18项通过，`b2-rag-diagnostics-unit-first.log`。包括两API原始错误/问题、解析400、成功问题日志、retriever固定错误、两引擎关键词、grade、两种Embedding异常、本地无模型降级、DB探活、两类诊断查询异常、索引API/两引擎正常文件元数据和可选Reader异常。
+- 首版夹具`b2-rag-diagnostics-baseline.log`为14失败/4通过，其中2项Stub缺字段/函数名错误，长问题标记也超出原40字截断而未被完整匹配；修正为短标记与真实split_text/Chunk字段，再在未改产品代码时得到18项实际负面失败。不把测试基础设施错误计为产品泄露证据。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b2-rag-diagnostics-ai-final.xml`：569 passed、211 skipped、1 xfailed，`b2-rag-diagnostics-ai-final.log/xml`。不将PG条件skip算通过，既有引用正文xfail保留。
+- `python scripts/report-rag-contract.py --junit .local/implementation/b2-rag-diagnostics-ai-final.xml --output .local/verification/rag-contract.json`：原24项全部执行通过、gate_passed=true，`b2-rag-diagnostics-gate-final.log`。
+
+边界：此处只覆盖所列ai.*应用日志/已处理错误响应，不保证第三方HTTP/访问/代理日志、未处理异常、Java可选payload日志、其他AI模块或模型上下文均无敏感信息；未清历史日志。不是通用PII检测/全系统脱敏/生产泄露报告。原业务正文仍按现有权限保留，后续Trace/评测导出和保留策略需M04/M07/M12治理。回滚保留固定错误与最小诊断，不恢复原正文输出；无业务数据/Runtime历史/预算回滚。新知识工具/发布版本与Embedding硬预算仍未完成，无质量/性能/费用成果。
+
+实际复现`python scripts/test-security-flow.py`最终退出0，`b2-rag-diagnostics-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整真实服务路径均通过，含知识索引/检索、访客WS→受保护AI→BOT回复、权限/工单/计费、六库版本与readiness负面恢复。日志调用的占位参数与降级正常路径经实际服务验证；测试期间无并行Maven/服务验收。无SQL/Runtime改动，本地不重复未改动的PG专项/214项Runtime；精确提交CI继续全跑。

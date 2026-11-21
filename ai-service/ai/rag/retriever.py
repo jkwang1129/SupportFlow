@@ -36,7 +36,7 @@ def retrieve_with_meta(query: str, tenant_code: str = "", top_k: int = 3,
     try:
         return pipeline.search(tenant_code=tenant_code, query=query, top_k=top_k, doc_ids=doc_ids)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("知识检索失败 tenant=%s query=%s error=%s: %s",
-                       tenant_code, query[:40], type(exc).__name__, exc)
+        logger.warning("知识检索失败 tenant=%s code=RAG_RETRIEVAL_FAILED errorType=%s",
+                       tenant_code,type(exc).__name__)
         return {"query": query, "results": [], "mode": "error", "vector_source": "none",
-                "error": str(exc)}
+                "error": "RAG_RETRIEVAL_FAILED"}

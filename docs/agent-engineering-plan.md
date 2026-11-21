@@ -33,7 +33,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M01 Reliable Runtime | 部分实现，尚未切换业务触发 | Run/Step/Worker、真实双向桥接、租约/Step许可、原子业务回执；中间产物与Step成功原子存储、Worker跨进程恢复 | 只读Loop/报告发布已通过实际服务组合；单一reply未知写已受控核销，其他未知写/审批/可信触发待补；PR-8/9/10。B |
 | M02 Context Engineering | 部分实现 | 旧最近12条对话；customer006冻结当前输入/每次重验；AI003步骤正文存储有字节/节点/深度及完整性边界 | Worker已能恢复正文；尚无统一长历史构建器/Token预算/压缩对照；正文存储不代替上下文策略或Checkpoint。B基础/C完善 |
 | M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、签名来源/工单SDK及实际Worker→客户JAR核权/版本刷新/预算阻断；有界Loop；宿主报告原子发布与回执核销 | 知识/创建工单/通用幂等写、可信MCP仍缺；不重复写业务服务。B |
-| M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权/固定事实报告；签名写许可、参数摘要与回执绑定、越权/假引用/假写声明负例 | 完整直接/间接注入集、通用PII/秘密保护、限时参数审批/防重放仍缺；无任意代码需求，暂不建Sandbox。A/B |
+| M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权/固定事实报告；签名写许可、参数摘要与回执绑定、越权/假引用/假写声明负例 | 已补RAG/KB所测应用日志与已处理错误的内容排除；完整直接/间接注入集、通用PII/秘密保护、限时参数审批/防重放仍缺；无任意代码需求，暂不建Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，本轮补齐低分拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号、租户过滤；两引擎拒答契约及文档选择范围/空选集回归 | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
 | M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime214项、原客服PG103项、实际只读Loop/进程恢复/五例发布/两例受控核销有机器证据 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
 | M07 Trace/Observability | 部分实现 | Java `TraceContext`；Python `core/trace.py`、图 steps、`llm_usage.py`；运营 `ObservabilityService#trace/evaluate`、告警规则与调用记录查询；本轮 RAG steps 增加 traceId/sequence/schemaVersion 与拒答原因 | 已有模型调用 Trace 查询与告警应复用；已有持久化Run/Step与trace_id；缺工具详情、异步业务链路/审批事件、统一查询、脱敏治理和安全replay。A/B/D |
@@ -74,12 +74,12 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-21，B2 知识检索范围前置子批次）
+## 当前执行位置（2026-11-21，B2 知识工具前置诊断边界）
 
-阶段A本地与远端CI退出条件已完成；B1/B2仍部分实现，默认旧Workflow保留，开发分支未合并main。已有持久化Run/Step/Worker/预算/租约fence、Outbox/双向签名API、来源快照/原子正文Checkpoint、显式租户模型Profile、当前来源/工单工具与版本缓存、有界模型决策Loop、固定事实报告/原子业务回复以及真实Worker进程恢复。终态reply-v1未知写可显式查询原业务回执核销，任务仍保持FAILED/取消事实；无回执继续阻断，其他写/HITL未完成。
+阶段A退出条件已完成；B1/B2/B3仍部分实现，默认旧Workflow保留，开发分支未合并main。持久化Run/Step/Worker/预算/租约fence、Outbox/双向签名API、原子正文Checkpoint/真实进程接管、显式模型Profile、当前来源/工单工具与版本刷新、有界模型Loop/固定报告发布均已验收。单一reply未知写可显式凭原业务回执核销，任务仍保留FAILED/取消事实；无回执继续阻断，其他写/HITL未完成。
 
-d8a65ad的[CI 44767901532](https://github.com/jkwang1129/SupportFlow/actions/runs/44767901532)两个job全部成功，含214项Runtime专项、九例实际Loop/进程恢复、五例报告发布、两例终态核销及三套完整部署。当前六库94表/1视图/5函数。本批无SQL/Java/新服务修改。
+2bca997的[CI 44850593648](https://github.com/jkwang1129/SupportFlow/actions/runs/44850593648)两个job全部成功。知识文档范围在内置/LlamaIndex向量/关键词退化路径一致，两API/两图路径区分None和空选集；48项范围测试、551项AI普通、103项客服PG+11项KB Python及214项Runtime/三套服务已核实。当前六库94表/1视图/5函数。
 
-本批先修复向量限定文档但关键词兜底丢范围、API/图将[]变成None的问题。None保持当前租户检索，[]在图/引擎/存储停止检索与生成；48项新增单元/图/两API负面测试、551项AI普通全量、103项Java PG及11项KB Python（含新7项真PG）通过，原24项拒答门禁继续通过。内置/LlamaIndex四条关键词退化路径保留文档选择；固定范围不是授权或已完成发布版本治理。实际结果、初始失败/修正、原始日志及回滚见reliability-verification与ADR-0015。
+本批将旧RAG/KB应用诊断中的问题/文件名/原异常正文排除，保留既有引用/长度/模式/计数/固定错误/errorType；已处理400/500用固定提示，正常授权回答/索引结果不删。18项合成标记负面复现后通过，AI普通569项与原24项拒答门禁通过。仅承诺已测试ai.*应用logger/处理响应，访问/第三方日志、未处理异常、其他模块/上下文/导出仍待治理。设计、实际失败/修正与回滚见reliability-verification及ADR-0016。
 
-后续依次：收敛旧RAG日志/错误响应中的问题及原异常文本，再接知识发布/租户授权和显式Embedding模型预算；幂等创建工单、可信自动登记/路由、租户Profile Resolver与HITL。上下文长历史/压缩、完整Eval/Trace、Provider选择/Token金额治理和生产运维仍按C～E；MCP/Multi-Agent按业务必要性实施。现有测试为合成协议/工程不变量验收，没有生产流量/客户/业务收益、LLM正确率或付费Token成本成果，B1/B2/B3尚未整体关闭。
+接下来：知识发布/租户资源授权、当前事实/版本绑定与显式Embedding模型预算，然后幂等创建工单、可信自动登记/路由、租户Profile Resolver与HITL。文档筛选不授予访问权，日志内容排除不等于全系统PII保护。上下文压缩、完整Eval/Trace、Provider选择/Token金额治理和运维仍按C～E；MCP/Multi-Agent按业务必要性实施。所有记录为合成本地工程验收，没有生产流量/客户/收益、LLM质量或付费Token成本结论。

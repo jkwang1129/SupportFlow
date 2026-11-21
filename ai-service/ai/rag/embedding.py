@@ -50,11 +50,11 @@ def embed_texts(texts: list[str], *, tenant_code: str = "", trace_id: str = "") 
         except Exception as exc:  # noqa: BLE001
             # 远程失败不能把整个上传卡死：退回本地向量，并把原因记下来
             logger.warning(
-                "远程向量化失败，降级为本地向量 trace=%s error=%s: %s\n"
+                "远程向量化失败，降级为本地向量 trace=%s code=RAG_EMBEDDING_FALLBACK errorType=%s\n"
                 "  → 本次写进去的向量没有语义，检索会退化成关键词匹配，效果明显变差。\n"
                 "  → 修好密钥（SUPPORTFLOW_AI_QWEN_API_KEY 或 SUPPORTFLOW_AI_EMBEDDING_API_KEY）后，"
                 "要把文档**重新索引**一遍——向量是索引那一刻算出来的。",
-                trace_id or "-", type(exc).__name__, exc)
+                trace_id or "-", type(exc).__name__)
     return [_local_vector(text) for text in texts], "local-hash"
 
 

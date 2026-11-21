@@ -135,8 +135,7 @@ def _read_file(file_name: str, payload: bytes):
     except Exception as exc:  # noqa: BLE001
         from . import parser as parser_module
 
-        logger.warning("LlamaIndex 读取 %s 失败（%s: %s），改用内置解析器",
-                       file_name, type(exc).__name__, exc)
+        logger.warning("LlamaIndex 读取失败，改用内置解析器 code=RAG_READER_FALLBACK errorType=%s",type(exc).__name__)
         text = parser_module.normalize(parser_module.parse(file_name, payload))
         if not text.strip():
             raise
@@ -163,7 +162,7 @@ def _embed_texts(texts: list[str], tenant_code: str, what: str = "查询"):
         return vectors, source
     except Exception as exc:  # noqa: BLE001
         # 没配密钥时接口会 401：退回客户端（它自带本地兜底），保证整条链路不中断
-        logger.warning("%s 向量化失败，改用内置客户端：%s: %s", what, type(exc).__name__, exc)
+        logger.warning("向量化失败，改用内置客户端 code=RAG_LLAMA_EMBEDDING_FALLBACK errorType=%s",type(exc).__name__)
         return embedding_module.embed_texts(texts, tenant_code=tenant_code)
 
 
@@ -202,8 +201,8 @@ def index_document(tenant_code: str, doc_id: int, file_name: str, payload: bytes
     vectors, source = _embed(chunks, tenant_code, file_name)
 
     saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source)
-    logger.info("LlamaIndex 索引完成 tenant=%s docId=%s file=%s 切片=%d 向量来源=%s",
-                tenant_code, doc_id, file_name, saved, source)
+    logger.info("LlamaIndex 索引完成 tenant=%s docId=%s 切片=%d 向量来源=%s",
+                tenant_code, doc_id, saved, source)
     return IndexResult(
         doc_id=doc_id,
         file_name=file_name,
@@ -273,6 +272,6 @@ def search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | No
     # 局部导入：pipeline 顶层也 import 了本模块，放顶层会形成循环导入
     from . import pipeline as pipeline_module
     pipeline_module.warn_if_degraded(mode, source, query)
-    logger.info("知识库检索（llama-index） tenant=%s query=%s 命中=%d 模式=%s 向量来源=%s",
-                tenant_code, query[:40], len(results), mode, source)
+    logger.info("知识库检索（llama-index） tenant=%s queryChars=%d 命中=%d 模式=%s 向量来源=%s",
+                tenant_code, len(query), len(results), mode, source)
     return {"query": query, "results": results, "vector_source": source, "mode": mode}
