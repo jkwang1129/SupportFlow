@@ -886,3 +886,23 @@ search_knowledge的模型参数只开放query/top_k/doc_ids；Scope为knowledge:
 最终`python scripts/test-agent-runtime.py --with-java-delivery`退出0，`b2-knowledge-tool-runtime-first.log`：241项专项与原全部实际Java/SDK/9例工单Loop/真实进程接管/5例发布/核销/许可/回复组合保持。新增7例实际Worker→Registry/两SDK→真实Embedding协议TCP→customer JAR/受限PG全部通过，`.local/verification/runtime-knowledge-tools.json`保存逐案原始计数。正常/下线后恢复各总7Steps/4Tools/1Model/1Retry，2次知识SDK、仅1次Embedding HTTP；下线命中1→0。接管后来源拒绝且无第二知识/模型；MODEL预算0在Embedding前阻断，刷新TOOL预算3在第二知识前阻断；空范围4Steps/2Tools/0Model/0知识请求；503自然重试总8Steps/4Tools/2Models/1Retry、实际Embedding HTTP2。每案仅原访客消息1、无业务回复/回执/新工单。模型选择工具未接入，来源DELIVERED为显式夹具；向量0.25/usage8是合成协议，不能当语义/成本/生产流量数据。
 
 本批无Java/SQL/默认流程变更，本地不重复刚通过85c0b89精确CI的三套默认服务/112项客服PG/六库迁移；当前精确提交CI仍全部执行。只添加现有实际客服JAR中的知识工具用例，无并行Maven/完整默认服务验收。
+
+1dc48d6对应的[CI 44862361047](https://github.com/jkwang1129/SupportFlow/actions/runs/44862361047)两个job全部成功，含771项AI普通、241项Runtime/7例真实知识工具和全部数据库/三套服务；知识工具子批次本地/远端退出条件完成。
+
+## B2 幂等建单前置：不可变业务回执存储（2026-11-21）
+
+基线1dc48d6。新增Customer009 `agent_ticket_receipt`，manifest追加009，唯一40-runtime-roles.sql保证重复provision后仍只SELECT/INSERT。ticket添加tenant/id复合唯一引用，原全局ID主键及已有行不变；回执绑定同租户来源event/run/snapshot与ticket，tenant/run、tenant/event、tenant/ticket唯一。固定ticket.create/ticket-create-v1、参数SHA、Step/fence及工单引用，FORCE RLS+restrictive guard，空scope/PLATFORM拒绝。created_at是DB插入记录时间，不是精确事务提交时刻。FK/Hash不代替当前主体/会话/客户/TTL/参数正文/AI写许可。
+
+新增`scripts/test-ticket-receipts.py`、`scripts/tests/test_ticket_receipts_postgres.py`与CI独立检查；更新新建/旧库迁移和完整服务的版本/权限断言、客服独立PG夹具、迁移说明及ADR-0022。没有Java/AI业务实现或API/模型WRITE工具变化；数据库建表不等于端到端Agent建单。后续必须复用既有TicketService，把业务行/事件与回执同事务提交，再接受控API/SDK/未知结果恢复。
+
+本地Python3.11.5/隔离PG17/JDK25，无本机业务数据库/.env/真实供应商：
+
+- `python scripts/test-ticket-receipts.py`最终38项全部通过，`b2-ticket-receipts-final.log`、`.local/verification/ticket-receipts.xml/json`。使用实际supportflow_customer（非owner/非superuser/非BYPASSRLS）；跨租户/缺省或空scope/PLATFORM读写拒绝，KB/平台不可读、AI不可连接customer库；同租户来源/Run/快照/工单复合FK，10种坏契约，重复Run/工单不覆盖SHA，UPDATE/DELETE/TRUNCATE拒绝；8路重复元数据插入只有1条回执；原始SQL业务行+回执同事务回滚/提交；即使加宽permissive策略仍被restrictive guard拒绝；6类管理员属性、角色继承/对象所有权共8种不安全能力组被迁移拒绝。再次完整provision后13条已提交回执精确不变，权限仍SI、无UD/TRUNCATE。该并发样本不是吞吐压测，SQL事务测试不代替TicketService整链路。
+- 首轮`b2-ticket-receipts-first.log`27失败/11通过，原因是大ID夹具基数再加序号超出bigint；修正为仍超过2^53且处于int64范围的合成ID后38项通过。保留失败，不将夹具错误描述为产品漏洞。
+- `python scripts/test-versioned-migrations.py`17项通过，`b2-ticket-receipts-upgrade.log`；原006→007/007→008、AI002→003→004保护保留，新增008→009前后已有工单全部字段及原来源/消息/知识精确不变，回执表初始为空；重复/失败回滚/checksum/历史/锁/只读与CLI继续通过。
+- 从隔离初始化/迁移生成`.local/implementation/customer009-contract.json`候选后逐项审查：仅新表、ticket复合唯一约束/索引和009版本/checksum，其他全部数据库、旧表列/策略/约束/索引、视图/函数及旧SQL Hash不变。`python scripts/test-schema-drift.py`95表/1视图/5函数、14项实际SQL+3项metadata负面全部通过，`b2-ticket-receipts-drift.log`。
+- `python scripts/test-database-init.py`空库六库95表、重复拒绝、旧数据/种子保留、权限/锁及失败库回滚通过，`b2-ticket-receipts-init.log`。
+- `python scripts/test-security-flow.py`最终退出0，`b2-ticket-receipts-services.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套实际Java/Python服务全部通过，含原知识/访客WS→brain→BOT回复/权限/工单/计费、六库历史Customer009与新回执SI权限、readiness故障恢复。完整服务单独运行，未并行Maven/其他服务验收。
+- `python scripts/test-customer-rls.py --with-ai`112项客服Java PG和19项Python KB全部通过，`b2-ticket-receipts-customer-pg.log`。独立夹具也应用009；新FK/索引不破坏原工单读、来源、消息幂等/认领/回复与知识查询测试。
+
+回滚停用后续新建单调用，保留已提交工单/回执与009历史，不删除表/改旧checksum或恢复无回执盲重试。当前只有存储底座，未验证实际Agent建单、HITL、工单未知写核销或自动调度；新/旧库应停业务备份后按migrate→provision→verify升级，生产恢复实测仍M12。无生产规模、模型质量、性能或业务收益数据。本批未改AI/Runtime，本地不重复刚全绿1dc48d6的771项AI/241项Runtime；精确提交CI全部执行并新增38项存储检查。

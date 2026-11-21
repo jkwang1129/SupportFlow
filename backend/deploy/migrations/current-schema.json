@@ -3608,6 +3608,155 @@
             }
           }
         },
+        "agent_ticket_receipt": {
+          "columns": {
+            "arguments_sha256": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "created_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "event_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "fence": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "operation": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(32)"
+            },
+            "run_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "schema_version": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "snapshot_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "step_key": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            },
+            "step_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "ticket_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "ticket_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(64)"
+            }
+          },
+          "constraints": {
+            "agent_ticket_receipt_arguments_sha256_check": "CHECK ((arguments_sha256 ~ '^[0-9a-f]{64}$'::text))",
+            "agent_ticket_receipt_fence_check": "CHECK ((fence > 0))",
+            "agent_ticket_receipt_operation_check": "CHECK (((operation)::text = 'ticket.create'::text))",
+            "agent_ticket_receipt_pkey": "PRIMARY KEY (tenant_code, run_id)",
+            "agent_ticket_receipt_schema_version_check": "CHECK (((schema_version)::text = 'ticket-create-v1'::text))",
+            "agent_ticket_receipt_step_key_check": "CHECK (((step_key)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$'::text))",
+            "agent_ticket_receipt_step_no_check": "CHECK (((step_no >= 1) AND (step_no <= 100)))",
+            "agent_ticket_receipt_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
+            "agent_ticket_receipt_tenant_code_event_id_key": "UNIQUE (tenant_code, event_id)",
+            "agent_ticket_receipt_tenant_code_event_id_run_id_snapshot__fkey": "FOREIGN KEY (tenant_code, event_id, run_id, snapshot_id) REFERENCES agent_source_snapshot(tenant_code, event_id, run_id, snapshot_id)",
+            "agent_ticket_receipt_tenant_code_ticket_id_fkey": "FOREIGN KEY (tenant_code, ticket_id) REFERENCES ticket(tenant_code, id)",
+            "agent_ticket_receipt_tenant_code_ticket_id_key": "UNIQUE (tenant_code, ticket_id)",
+            "agent_ticket_receipt_ticket_id_check": "CHECK ((ticket_id > 0))",
+            "agent_ticket_receipt_ticket_no_check": "CHECK (((ticket_no)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$'::text))"
+          },
+          "indexes": {
+            "agent_ticket_receipt_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_ticket_receipt_pkey ON public.agent_ticket_receipt USING btree (tenant_code, run_id)",
+              "valid": true
+            },
+            "agent_ticket_receipt_tenant_code_event_id_key": {
+              "definition": "CREATE UNIQUE INDEX agent_ticket_receipt_tenant_code_event_id_key ON public.agent_ticket_receipt USING btree (tenant_code, event_id)",
+              "valid": true
+            },
+            "agent_ticket_receipt_tenant_code_ticket_id_key": {
+              "definition": "CREATE UNIQUE INDEX agent_ticket_receipt_tenant_code_ticket_id_key ON public.agent_ticket_receipt USING btree (tenant_code, ticket_id)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_ticket_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_customer_tenant"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_ticket_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_customer_tenant"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "billing_usage_outbox": {
           "columns": {
             "ai_calls": {
@@ -9294,6 +9443,7 @@
             "ck_ticket_status": "CHECK ((status = ANY (ARRAY[1, 2, 3, 4, 5])))",
             "ck_ticket_ticket_type": "CHECK ((ticket_type = ANY (ARRAY[1, 2])))",
             "ticket_pkey": "PRIMARY KEY (id)",
+            "ticket_tenant_agent_result_ref": "UNIQUE (tenant_code, id)",
             "uk_tenant_ticket_no": "UNIQUE (tenant_code, ticket_no)"
           },
           "indexes": {
@@ -9315,6 +9465,10 @@
             },
             "ticket_pkey": {
               "definition": "CREATE UNIQUE INDEX ticket_pkey ON public.ticket USING btree (id)",
+              "valid": true
+            },
+            "ticket_tenant_agent_result_ref": {
+              "definition": "CREATE UNIQUE INDEX ticket_tenant_agent_result_ref ON public.ticket USING btree (tenant_code, id)",
               "valid": true
             },
             "uk_tenant_ticket_no": {
@@ -13299,6 +13453,10 @@
       {
         "checksum": "e692328aa70fcd7ab066073f6d4b2597b6777dd7ed84ea073202a3ce2d073bd9",
         "version": "008"
+      },
+      {
+        "checksum": "8065a35c6da6a358673798927474c8cf430b091ff4335b26a058fb786cac51bb",
+        "version": "009"
       }
     ],
     "ops_db": [

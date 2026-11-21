@@ -67,6 +67,15 @@ def existing_knowledge(connection):
     return read
 
 
+def existing_ticket(connection):
+    connection.execute("""INSERT INTO ticket(id,tenant_code,ticket_no,title,\"desc\",session_no,source_session_id,
+        priority,status,source_channel,sla_first_minutes,sla_resolve_minutes,creator,creator_name)
+        VALUES(774200,'UPGRADE_A','TICKET_UPGRADE_EXISTING','existing synthetic ticket','existing private body',
+            'RESULT_UPGRADE',774001,3,2,1,10,60,'synthetic-actor','synthetic creator')""")
+    def read():return connection.execute('SELECT * FROM ticket WHERE id=774200').fetchone()
+    return read
+
+
 def main():
     name="supportflow-migrations-test-"+secrets.token_hex(6)
     password=secrets.token_hex(24)
@@ -91,7 +100,7 @@ def main():
             with psycopg.connect(dsn(database),autocommit=True) as connection:
                 applied=[]
                 if database=='customer_db':
-                    assert plan[-1].version=='008'
+                    assert plan[-1].version=='009'
                     applied=run_plan(connection,plan[:6])["applied"]
                     read=existing_runtime_source(connection)
                     before=read()
@@ -102,6 +111,9 @@ def main():
                     read_kb=existing_knowledge(connection);before_kb=read_kb()
                     assert connection.execute("SELECT has_column_privilege('supportflow_kb_tenant','kb_document','index_status','SELECT')").fetchone()==(False,)
                     print('006 -> 007 upgrade preserved exact existing message, delivered event and immutable snapshot; result receipt table empty',flush=True)
+                    upgrade008=run_plan(connection,plan[:8]);applied+=upgrade008['applied']
+                    assert upgrade008['applied']==['008'] and read()==before and read_kb()==before_kb
+                    read_ticket=existing_ticket(connection);before_ticket=read_ticket()
                 if database=='ai_db':
                     assert [m.version for m in plan]==['001','002','003','004']
                     applied=run_plan(connection,plan[:2])["applied"]
@@ -113,13 +125,14 @@ def main():
                 result=run_plan(connection,plan)
                 assert applied+result["applied"]==[migration.version for migration in plan]
                 if database=='customer_db':
-                    assert result['applied']==['008'] and read()==before and read_kb()==before_kb
+                    assert result['applied']==['009'] and read()==before and read_kb()==before_kb and read_ticket()==before_ticket
+                    assert connection.execute('SELECT count(*) FROM agent_ticket_receipt').fetchone()==(0,)
                     assert connection.execute("SELECT has_column_privilege('supportflow_kb_tenant','kb_document','index_status','SELECT'),has_column_privilege('supportflow_kb_tenant','kb_document','content','SELECT'),has_table_privilege('supportflow_kb_tenant','kb_document','UPDATE,INSERT,DELETE')").fetchone()==(True,False,False)
                     for unsafe,restore in [('LOGIN','NOLOGIN'),('BYPASSRLS','NOBYPASSRLS'),('CREATEROLE','NOCREATEROLE')]:
                         connection.execute(f'ALTER ROLE supportflow_kb_tenant {unsafe}')
                         try:
                             with connection.transaction():
-                                try:connection.execute(plan[-1].content)
+                                try:connection.execute(plan[7].content)
                                 except psycopg.errors.RaiseException as failure:
                                     assert 'non-administrative' in str(failure)
                                     raise
@@ -127,6 +140,7 @@ def main():
                         except psycopg.errors.RaiseException:pass
                         finally:connection.execute(f'ALTER ROLE supportflow_kb_tenant {restore}')
                     print('007 -> 008 preserved existing business/source/draft/chunk data; granted only index_status SELECT; 3 unsafe capability states rejected',flush=True)
+                    print('008 -> 009 preserved every existing ticket/source/message/knowledge field; immutable ticket receipt initially empty; old global ticket PK retained',flush=True)
                 if database=='ai_db':
                     assert result['applied']==['004'] and read_ai()==before_ai and read_body()==before_body
                     assert connection.execute('SELECT count(*) FROM agent_reply_reconciliation').fetchone()==(0,)

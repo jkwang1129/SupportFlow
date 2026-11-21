@@ -17,7 +17,7 @@
 | PR-4 消息幂等 | 本轮已实现且真实 PG 验证通过 | `SessionService#appendMessage`、两个 Mapper；`SessionMessagePostgresTest` 7 项 | 原 25P02、回滚计费问题已复现后修复；含关闭竞争、跨租户和软删除键。持久化计量/任务仍在 PR-6/8。A2 完成 |
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
-| PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前94表/索引/RLS；customer008、AI004及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
+| PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前95表/索引/RLS；customer009、AI004及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
 | PR-8 持久化 Run | 部分实现：持久化Loop/报告发布/进程恢复 | Run/Step/Worker、双向API/SDK；241项Runtime，112项客服PG；实际JAR→AI写许可→业务回复/丢回执及真实Worker退出接管；默认关闭 | 可信调度/自动登记、租户Profile Resolver仍缺。B1进行中 |
 | PR-9 Tool Calling | 部分实现：来源/工单/知识只读与受控回复发布 | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 知识模型决策Loop与幂等创建工单仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。MCP尚未接入。B2 |
 | PR-10 Checkpoint/HITL | 部分实现：Runtime执行恢复已核验，HITL未实现 | Runtime原子正文/引用/原预算恢复与真实进程接管；单一reply未知写受控核销；旧LangGraph compile仍无原生checkpointer | 限时审批绑定主体/资源/参数、过期/撤销/审批后重新鉴权、其他未知写仍缺。B3 |
@@ -74,11 +74,11 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-21，B2 当前授权知识工具）
+## 当前执行位置（2026-11-21，B2 建单回执存储）
 
 阶段A已完成退出条件，B1/B2/B3仍部分实现，默认Workflow保留，开发分支未合并main。已有Run/Step/Worker/预算/租约fence、Outbox/签名API、正文Checkpoint/真实进程恢复、来源/工单工具、有界Loop/固定报告发布及单一reply未知写核销。无回执仍阻断，HITL/创建工单/可信自动触发未完成。
 
-3d644cb的[CI 44854145977](https://github.com/jkwang1129/SupportFlow/actions/runs/44854145977)两个job全部成功。文档范围/空选集、诊断内容排除和访客发布/索引就绪策略已完成本地/远端验收；当前Customer008/AI004、94表/1视图/5函数，新增KB列读取不授正文/文档修改。
+3d644cb的[CI 44854145977](https://github.com/jkwang1129/SupportFlow/actions/runs/44854145977)两个job全部成功。文档范围/空选集、诊断内容排除和访客发布/索引就绪策略已完成本地/远端验收；该批为Customer008/AI004、94表/1视图/5函数，新增KB列读取不授正文/文档修改。
 
 ad66e75的[CI 44856556934](https://github.com/jkwang1129/SupportFlow/actions/runs/44856556934)两个job全部成功。Runtime查询Embedding已具MODEL共享预算、原子向量Checkpoint与恢复，旧RAG尚未迁入。新50项单元/14项PG、645项AI普通/228项Runtime以及完整默认服务都已在该精确提交CI核实。
 
@@ -88,4 +88,6 @@ ad66e75的[CI 44856556934](https://github.com/jkwang1129/SupportFlow/actions/run
 
 85c0b89的[CI 44861323394](https://github.com/jkwang1129/SupportFlow/actions/runs/44861323394)两个job全部成功。当前知识Registry工具已接来源/签名SDK/共享MODEL预算，模型仅传query/top_k/doc_ids；每个Run固定Profile/策略，每次来源重验/知识重读，向量可原Checkpoint复用，空范围0模型/知识请求。工具26+新截止9+原Embedding50共85项通过；AI普通771通过/246条件skip/1原xfail，24项拒答门禁保持；新13项PG随241项专项/原全部实际组合保持。7例真实Worker→Embedding TCP→知识SDK/Java/受限PG通过，恢复下线命中1→0且总4Tools/1Model/1Retry。证据/设计/回滚见reliability-verification与ADR-0021。不是完整知识模型决策Loop或自动业务触发。
 
-下一批按B2先做幂等创建工单的业务事务/回执与权限边界，再做受控API/SDK和未知结果恢复；复用既有TicketService、AI写许可与迁移路径，逐批验收。知识用户级ACL/版本与在途输出最终核验仍未全部完成；可信登记路由/Profile Resolver/HITL、上下文/Eval/Trace/Token金额/运维继续按B～E依赖推进。无生产规模、付费模型质量/Token成本或业务收益成果。
+1dc48d6的[CI 44862361047](https://github.com/jkwang1129/SupportFlow/actions/runs/44862361047)两个job全部成功。当前先交付Customer009不可变建单回执存储，按tenant/run唯一并绑定同租户来源/工单，SI权限/强制RLS；六库95表，旧工单等字段不变。38项真实角色存储、迁移17项/漂移/初始化、三套完整实际服务和112项客服PG+19项KB通过。ADR-0022及reliability-verification记录设计/夹具失败/真实结果/回滚；只有存储不等于已完成Agent建单。
+
+下一批先把短期AI写许可绑定到闭合的具体操作，防止建单与回复许可混用，再复用TicketService实现业务行/事件与回执同事务、受控API/SDK和未知结果查询。知识用户级ACL/版本与在途输出最终核验仍未全部完成；可信登记路由/Profile Resolver/HITL、上下文/Eval/Trace/Token金额/运维继续按B～E依赖推进。无生产规模、付费模型质量/Token成本或业务收益成果。
