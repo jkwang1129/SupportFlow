@@ -61,6 +61,7 @@ class RagState(TypedDict, total=False):
     enough: bool          # 召回够不够
     rounds: int           # 已经改写了几次
     answer: str
+    answer_generated: bool
     citations: list[dict]
     abstention_reason: str
     steps: list[dict]     # 每一步的执行记录，前端展示"编排过程"用
@@ -139,36 +140,47 @@ def node_rewrite(state: RagState) -> dict:
 
 async def node_answer(state: RagState) -> dict:
     """生成回答：把召回切片编号后交给模型，要求它按 [1][2] 标注出处。"""
-    from ..services.rag import compose_answer
+    from ..services.rag import compose_answer_details
 
-    answer, citations = await compose_answer(
+    answer = await compose_answer_details(
         question=state["question"],
         hits=state.get("hits") or [],
         tenant_code=state.get("tenant_code") or "",
     )
     return {
-        "answer": answer,
-        "citations": citations,
+        "answer": answer.text,
+        "answer_generated": answer.generated,
+        "citations": answer.citations,
         "steps": _step(state, "answer",
-                       f"基于 {len(citations)} 条资料生成回答",
-                       citationCount=len(citations)),
+                       f"使用 {len(answer.citations)} 条资料生成回答或展示原文",
+                       citationCount=len(answer.citations)),
     }
 
 
 def node_verify(state: RagState) -> dict:
-    """校验引用：回答里出现的 [n] 必须在召回结果范围内，越界的剔掉。
+    """Withhold generated claims when any reference falls outside the evidence."""
+    from ..services.rag import OVERSIZED_CITATION_INDEX, verify_citations
 
-    模型偶尔会"顺手编一个出处"，比如只给了 3 条资料却写 [5]。
-    这一步把越界的引用去掉并记进轨迹——宁可少一个出处，也不能给错出处。
-    """
-    from ..services.rag import verify_citations
+    answer = state.get("answer") or ""
+    citations = state.get("citations") or []
+    if state.get("answer_generated") is False:
+        return {"steps": _step(state, "verify", "保留检索原文和来源", kept=len(citations), dropped=[])}
 
-    kept, dropped = verify_citations(state.get("answer") or "", state.get("citations") or [])
+    kept, dropped = verify_citations(answer, citations)
+    oversized = bool(OVERSIZED_CITATION_INDEX.search(answer))
+    if dropped or oversized:
+        return {
+            "answer": "回答引用未通过校验。请补充问题细节，或联系人工客服处理。",
+            "citations": [],
+            "enough": False,
+            "abstention_reason": "invalid_citation",
+            "steps": _step(state, "verify", "回答引用未通过校验", kept=0, dropped=dropped, oversized=oversized),
+        }
+
     return {
         "citations": kept,
         "steps": _step(state, "verify",
-                       f"校验引用：保留 {len(kept)} 条" + (f"，剔除越界 {len(dropped)} 条" if dropped else ""),
-                       kept=len(kept), dropped=dropped),
+                       f"校验引用：保留 {len(kept)} 条", kept=len(kept), dropped=[]),
     }
 
 

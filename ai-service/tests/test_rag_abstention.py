@@ -38,10 +38,10 @@ def test_routing_never_generates_after_the_evidence_budget_is_exhausted(monkeypa
 
     async def generate(**kwargs):
         generations.append(kwargs)
-        return "合成测试回答[1]", [{"index": 1, "doc_id": "101", "content": "合成测试资料"}]
+        return rag.ComposedAnswer("合成测试回答[1]", [{"index": 1, "doc_id": "101", "content": "合成测试资料"}], True)
 
     monkeypatch.setattr(graph.retriever, "retrieve_with_meta", retrieve)
-    monkeypatch.setattr(rag, "compose_answer", generate)
+    monkeypatch.setattr(rag, "compose_answer_details", generate)
     result = asyncio.run(graph.ask("合成测试问题", "CONTRACT_A", doc_ids=[101]))
     assert len(generations) == int(case["generate"])
     assert result["enough"] is case["generate"]

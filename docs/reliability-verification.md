@@ -1210,3 +1210,13 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - 该批普通 AI 测试 962 项通过、391 项条件跳过、1 项当时既有预期失败。24 项 RAG 原有契约通过。日志和 XML 位于 `.local/implementation/c1-canonical-context-*`。
 
 字节数测量针对一次合成结构化决定。长对话、真实模型 Token、准确率及生产时延待后续对照。
+
+## C2 RAG 越界引用拒答与门禁（2026-11-22）
+
+编排层区分模型生成和资料原文。生成正文出现任意越界编号时停止返回整段生成内容，清空引用，记录 `invalid_citation` 并提示补充问题或转人工。配有多个来源时，合法编号不会掩盖同一次生成中的越界编号。直接返回的检索原文保持原内容和来源。兼容既有本地传统 RAG 对照程序使用的正文与引用二元组。
+
+- 原预期失败已转为正常回归。线性与 LangGraph 共执行八条越界测试，覆盖双位、三位、Unicode 数字及超长编号，另外验证合法引用保留及无模型时原文编号保留。
+- `python -m pytest -q --junitxml=../.local/implementation/c2-rag-citation-gated.xml` 在 AI 服务目录运行，972 项通过、391 项条件跳过，预期失败为 0。测试日志 `c2-rag-citation-gated.log`。
+- `python scripts/report-rag-contract.py --junit .local/implementation/c2-rag-citation-gated.xml --require-citations --output .local/implementation/c2-rag-citation-report.json` 确认原拒答门禁 24 项和引用门禁 10 项全过。报告器 6 项测试通过，缺少引用案例会单独使 CI 失败。旧报告调用保留原 24 项口径及历史基线对照。
+
+当前只核对编号与召回来源的绑定，尚需验证单句事实由引用支持。回滚时一起回退生成结果流转与新门禁，既有数据库无迁移。

@@ -65,9 +65,9 @@ def test_graph_preserves_scope_and_empty_scope_abstains_without_search_or_genera
         return dict(mode='vector',results=[dict(doc_id=101,content='synthetic policy',score=1)])
     async def generate(**kwargs):
         if scope==[]:unexpected()
-        return 'synthetic answer',[]
+        return rag.ComposedAnswer('synthetic answer', [], True)
     monkeypatch.setattr(graph.retriever,'retrieve_with_meta',retrieve)
-    monkeypatch.setattr(rag,'compose_answer',generate)
+    monkeypatch.setattr(rag,'compose_answer_details',generate)
     result=asyncio.run(graph.ask('synthetic question','TENANT_A',doc_ids=scope))
     assert len(seen)==(0 if scope==[] else 1)
     if scope==[]:

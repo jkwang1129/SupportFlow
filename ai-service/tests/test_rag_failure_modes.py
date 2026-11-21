@@ -1,5 +1,7 @@
 """Fault injection against existing RAG nodes; no provider key or network required."""
 
+import asyncio
+
 import httpx
 import pytest
 
@@ -66,13 +68,37 @@ def test_no_evidence_has_one_bounded_rewrite_and_no_model_call(monkeypatch):
     assert not result["citations"] and not result["enough"]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="Known gap: verify removes source metadata but leaves [99] in answer text")
-def test_invalid_citation_is_removed_from_the_answer_text(monkeypatch):
+@pytest.mark.parametrize('engine', ['linear', 'langgraph'])
+@pytest.mark.parametrize('marker', ['99', '100', '９９', '9'*30],
+                         ids=['two_digit', 'three_digit', 'unicode_digits', 'oversized'])
+def test_invalid_citation_withholds_generated_answer(monkeypatch, engine, marker):
+    if engine == 'langgraph' and not graph.langgraph_available():
+        pytest.skip('requires test LangGraph dependency')
+    monkeypatch.setattr(graph, 'langgraph_available', lambda: engine == 'langgraph')
+    monkeypatch.setattr(graph, '_graph', None)
     configure(monkeypatch, lambda request: httpx.Response(200, json={
-        "choices": [{"message": {"content": "退款3至15个工作日到账[99]。"}}]}))
-    import asyncio
+        "choices": [{"message": {"content": f"已核对[1]。未支持的口径[{marker}]。"}}]}))
     result = asyncio.run(graph.ask("退款多久到账？", "EVAL_A"))
-    assert "[99]" not in result["answer"]
+    assert result["decision"] == "abstain" and result["abstention_reason"] == "invalid_citation"
+    assert not result["citations"] and f"[{marker}]" not in result["answer"] and "未支持的口径" not in result["answer"]
+    assert result["steps"][-1]["node"] == "verify"
+
+
+def test_generated_in_range_citation_is_preserved(monkeypatch):
+    configure(monkeypatch, lambda request: httpx.Response(200, json={
+        "choices": [{"message": {"content": "信用卡退款需要3至15个工作日到账[1]。"}}]}))
+    result = asyncio.run(graph.ask("退款多久到账？", "EVAL_A"))
+    assert result["decision"] == "answer" and result["abstention_reason"] is None
+    assert "[1]" in result["answer"] and [entry["index"] for entry in result["citations"]] == [1]
+
+
+def test_no_model_excerpt_keeps_literal_document_number_and_original_source(monkeypatch):
+    monkeypatch.setattr(graph.retriever, "retrieve_with_meta",
+                        lambda **kw: {"results": [dict(HIT, content="参见原文段落[99]。")], "mode": "vector"})
+    monkeypatch.setattr(rag, "resolve_provider", lambda _: (None, "fixture"))
+    result = asyncio.run(graph.ask("退款多久到账？", "EVAL_A"))
+    assert result["decision"] == "answer" and result["abstention_reason"] is None
+    assert "参见原文段落[99]。" in result["answer"] and len(result["citations"]) == 1
 
 
 def test_in_range_index_does_not_prove_claim_support():

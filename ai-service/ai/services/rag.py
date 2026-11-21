@@ -3,7 +3,7 @@
 两个关键约束：
     1. **只依据资料回答**：提示词里明确"资料里没有的不要编"，并在结尾要求给出口径；
     2. **引用必须可核**：要求模型用 `[1]` `[2]` 标注依据，编号对应检索结果的序号，
-       回答里出现越界编号（例如只给了 3 条资料却写 [5]）会在校验环节被剔掉。
+       回答里出现越界编号（例如只给了 3 条资料却写 [5]）会在校验环节停止返回生成正文。
 
 没配大模型密钥时不给"假装回答"，而是**把最相关的原文摘出来 + 说明没配模型**——
 宁可给用户看原文，也不要编一段像模像样的话。
@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 import re
 from typing import Any
@@ -31,6 +32,15 @@ SYSTEM_PROMPT = """你是企业客服的知识助手。请严格根据下面提�
 
 # 把"第几块"告诉模型时用的序号起点
 FIRST_CITATION_INDEX = 1
+_CITATION_INDEX = re.compile(r"\[(\d{1,9})\]")
+OVERSIZED_CITATION_INDEX = re.compile(r"\[\d{10,}\]")
+
+
+@dataclass(frozen=True)
+class ComposedAnswer:
+    text: str
+    citations: list[dict[str, Any]]
+    generated: bool
 
 
 def build_prompt(question: str, hits: list[dict[str, Any]]) -> str:
@@ -68,7 +78,7 @@ def _citations_of(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def extract_citation_indexes(answer: str) -> list[int]:
     """从回答里抠出引用编号，例如"…1 个工作日到账[1][2]" → [1, 2]。"""
-    return sorted({int(match) for match in re.findall(r"\[(\d{1,2})\]", answer or "")})
+    return sorted({int(match) for match in _CITATION_INDEX.findall(answer or "")})
 
 
 def verify_citations(answer: str, citations: list[dict[str, Any]]) -> tuple[list[dict], list[int]]:
@@ -76,8 +86,6 @@ def verify_citations(answer: str, citations: list[dict[str, Any]]) -> tuple[list
 
     @return (保留的来源, 被剔除的越界编号)
     """
-    if not citations:
-        return [], []
     valid = {int(item["index"]) for item in citations}
     used = extract_citation_indexes(answer)
     out_of_range = [index for index in used if index not in valid]
@@ -90,14 +98,17 @@ def verify_citations(answer: str, citations: list[dict[str, Any]]) -> tuple[list
 
 async def compose_answer(question: str, hits: list[dict[str, Any]],
                          tenant_code: str = "") -> tuple[str, list[dict[str, Any]]]:
-    """生成回答与引用来源。
+    """Return the text and citations for existing non-graph callers."""
+    reply = await compose_answer_details(question, hits, tenant_code)
+    return reply.text, reply.citations
 
-    @return (回答正文, 引用来源列表)
-    """
+
+async def compose_answer_details(question: str, hits: list[dict[str, Any]], tenant_code: str = "") -> ComposedAnswer:
+    """生成回答及来源，标记正文来自模型或检索原文。"""
     citations = _citations_of(hits)
     if not hits:
-        return ("知识库里没有查到与这个问题相关的资料。可以先到「企业知识库」上传对应文档，"
-                "或者转人工客服处理。"), []
+        return ComposedAnswer("知识库里没有查到与这个问题相关的资料。可以先到「企业知识库」上传对应文档，"
+                              "或者转人工客服处理。", [], generated=False)
 
     chosen, desc = resolve_provider(tenant_code)
     if chosen is None:
@@ -106,10 +117,10 @@ async def compose_answer(question: str, hits: list[dict[str, Any]],
         top = hits[0]
         logger.warning("知识问答未配置大模型密钥，返回检索原文 tenant=%s questionChars=%d",
                        tenant_code or "-", len(question))
-        return (f"（当前未配置大模型密钥，先把检索到的原文给你）\n\n"
+        return ComposedAnswer(f"（当前未配置大模型密钥，先把检索到的原文给你）\n\n"
                 f"依据《{top.get('doc_title') or '未命名文档'}》第 {top.get('chunk_no')} 块：\n"
                 f"{top.get('content') or ''}",
-                citations)
+                citations, generated=False)
 
     payload = {
         "model": chosen["model"],
@@ -126,4 +137,4 @@ async def compose_answer(question: str, hits: list[dict[str, Any]],
     answer = message_content(data)
     if not answer:
         raise RuntimeError("大模型返回了空回答")
-    return answer, citations
+    return ComposedAnswer(answer, citations, generated=True)

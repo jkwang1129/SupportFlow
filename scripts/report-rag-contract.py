@@ -15,12 +15,20 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "fixtures/evaluation/rag-abstention-v1.json"
+CITATION_CASES = {
+    f"test_invalid_citation_withholds_generated_answer[{marker}-{engine}]"
+    for marker in ("two_digit", "three_digit", "unicode_digits", "oversized")
+    for engine in ("linear", "langgraph")
+} | {"test_generated_in_range_citation_is_preserved", "test_no_model_excerpt_keeps_literal_document_number_and_original_source"}
+CITATION_TESTS = ("test_invalid_citation_withholds_generated_answer[", "test_generated_in_range_citation_is_preserved",
+                  "test_no_model_excerpt_keeps_literal_document_number_and_original_source")
 
 
-def read_cases(path):
+def read_cases(path, module="test_rag_abstention", prefixes=()):
     rows = []
     for case in ET.parse(path).iter("testcase"):
-        if "test_rag_abstention" not in case.get("classname", ""):
+        name = case.get("name", "")
+        if module not in case.get("classname", "") or (prefixes and not name.startswith(prefixes)):
             continue
         status = "passed"
         detail = None
@@ -29,7 +37,7 @@ def read_cases(path):
             if node is not None:
                 status, detail = tag, node.get("message")
                 break
-        rows.append({"case": case.get("name"), "status": status,
+        rows.append({"case": name, "status": status,
                      "duration_seconds": float(case.get("time", 0)), "failure": detail})
     return rows
 
@@ -39,18 +47,23 @@ def counts(rows):
                                   for status in ("passed", "failure", "error", "skipped")}}
 
 
+def passed(rows, expected):
+    actual = [row["case"] for row in rows]
+    return set(actual) == expected and len(actual) == len(expected) and all(row["status"] == "passed" for row in rows)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--junit", type=Path, required=True)
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--require-citations", action="store_true")
     args = parser.parse_args()
     dataset = json.loads(DATASET.read_text(encoding="utf-8"))
     rows = read_cases(args.junit)
     expected = {f"test_routing_never_generates_after_the_evidence_budget_is_exhausted[{case['id']}-{engine}]"
                 for case in dataset["cases"] for engine in ("linear", "langgraph")}
-    actual = [row["case"] for row in rows]
-    gate = set(actual) == expected and len(actual) == len(expected) and all(row["status"] == "passed" for row in rows)
+    gate = passed(rows, expected)
     report = {
         "schema_version": 1,
         "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
@@ -73,9 +86,20 @@ def main():
             report["environment"][package] = "NOT_INSTALLED_IN_REPORT_ENVIRONMENT"
     if args.baseline:
         report["baseline"] = {"junit_source": str(args.baseline), "counts": counts(read_cases(args.baseline))}
+    if args.require_citations:
+        citations = read_cases(args.junit, "test_rag_failure_modes", CITATION_TESTS)
+        citation_gate = passed(citations, CITATION_CASES)
+        report["citation_gate"] = {"counts": counts(citations), "cases": citations, "gate_passed": citation_gate}
+        for path in ("ai-service/ai/services/rag.py", "ai-service/tests/test_rag_failure_modes.py"):
+            report["code_sha256"][path] = hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+        gate = gate and citation_gate
+        report["gate_passed"] = gate
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"counts": report["counts"], "gate_passed": gate, "output": str(args.output)}, ensure_ascii=False))
+    summary = {"counts": report["counts"], "gate_passed": gate, "output": str(args.output)}
+    if args.require_citations:
+        summary["citation_counts"] = report["citation_gate"]["counts"]
+    print(json.dumps(summary, ensure_ascii=False))
     return 0 if gate else 1
 
 
