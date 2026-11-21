@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.supportflow.common.api.ApiResponse;
+import io.supportflow.common.auth.LoginUser;
 import io.supportflow.common.context.LoginUserContext;
 import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.exception.BizException;
@@ -14,6 +15,7 @@ import io.supportflow.customer.service.bot.AgentRuntimeClient;
 import io.supportflow.customer.service.bot.AgentSourceSnapshots;
 import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
@@ -32,7 +34,7 @@ import java.util.UUID;
 
 /** Reviews a known proposal using authenticated staff identity and current customer permissions. */
 @RestController
-@RequestMapping("/api/customer/agent-approvals/events/{eventId}/runs/{runId}/decisions")
+@RequestMapping("/api/customer/agent-approvals/events/{eventId}/runs/{runId}")
 public class AgentTicketApprovalController {
     private static final int BODY_LIMIT = 2048;
     private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
@@ -61,8 +63,31 @@ public class AgentTicketApprovalController {
         transaction.setTimeout(5);
     }
 
-    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(path = "/decisions", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ApiResponse<Map<String, String>> decide(@PathVariable UUID eventId, @PathVariable UUID runId, HttpServletRequest request) {
+        var user = requireReviewer();
+        String tenant = user.tenantCode();
+        var review = command(tenant, eventId, runId, user.userId(), readBody(request));
+        return TenantContext.bind(tenant, () -> {
+            transaction.executeWithoutResult(status -> verifySource(review));
+            String decision = runtime.reviewTicketApproval(review);
+            return ApiResponse.ok(Map.of("approval_id", review.approvalId().toString(), "status", decision));
+        });
+    }
+
+    @GetMapping("/proposal")
+    public ApiResponse<Map<String, String>> proposal(@PathVariable UUID eventId, @PathVariable UUID runId, HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store");
+        String tenant = requireReviewer().tenantCode();
+        return TenantContext.bind(tenant, () -> {
+            var source = transaction.execute(status -> snapshots.read(tenant, eventId, runId));
+            var proposal = runtime.previewTicketApproval(source);
+            transaction.executeWithoutResult(status -> snapshots.read(tenant, eventId, runId));
+            return ApiResponse.ok(proposal.response());
+        });
+    }
+
+    private LoginUser requireReviewer() {
         var user = LoginUserContext.require();
         if (runtime == null) throw new BizException(50307, "审批服务未启用");
         String tenant = user.tenantCode();
@@ -74,12 +99,7 @@ public class AgentTicketApprovalController {
         if (currentRoles == null || !(currentRoles.contains("ADMIN") || currentRoles.contains("SUPERVISOR"))) {
             throw new BizException(40307, "无审批权限");
         }
-        var review = command(tenant, eventId, runId, user.userId(), readBody(request));
-        return TenantContext.bind(tenant, () -> {
-            transaction.executeWithoutResult(status -> verifySource(review));
-            String decision = runtime.reviewTicketApproval(review);
-            return ApiResponse.ok(Map.of("approval_id", review.approvalId().toString(), "status", decision));
-        });
+        return user;
     }
 
     private JsonNode readBody(HttpServletRequest request) {
@@ -131,9 +151,12 @@ public class AgentTicketApprovalController {
 
     @ExceptionHandler(AgentRuntimeClient.DeliveryFailure.class)
     public ResponseEntity<ApiResponse<Void>> reviewFailure(AgentRuntimeClient.DeliveryFailure failure) {
-        return "APPROVAL_REVIEW_HTTP_409".equals(failure.code())
-                ? ResponseEntity.status(409).body(ApiResponse.fail(40907, "审批请求已变化或过期"))
-                : unavailable();
+        return switch (failure.code()) {
+            case "APPROVAL_REVIEW_HTTP_409", "APPROVAL_PREVIEW_HTTP_409" ->
+                    ResponseEntity.status(409).body(ApiResponse.fail(40907, "审批请求已变化或过期"));
+            case "APPROVAL_PREVIEW_HTTP_404" -> ResponseEntity.status(404).body(ApiResponse.fail(40407, "审批提案不可用"));
+            default -> unavailable();
+        };
     }
 
     @ExceptionHandler(DataAccessException.class)

@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.net.URI;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
@@ -83,6 +84,43 @@ class AgentApprovalReviewTest {
              var client = new AgentRuntimeClient(receiver.endpoint(), KEY)) {
             assertEquals(new AgentRuntimeClient.Receipt(event.eventId(), run), client.enqueue(event));
             assertEquals(1, receiver.calls.get());
+        }
+    }
+
+    @Test void readsOnlyTheSignedOriginalProposalAndChecksItsDigest() throws Exception {
+        Instant now = Instant.now();
+        var source = new AgentSourceSnapshots.Snapshot("TENANT_A", UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "source-v1", "{}", "test-hash", now, now.plusSeconds(120));
+        var terms = new AgentTicketArguments(source.tenant(), source.runId(), source.eventId(), source.snapshotId(), "标题🙂", "原文\n ");
+        UUID approval = UUID.randomUUID();
+        String content = JSON.writeValueAsString(Map.of("approval_id", approval.toString(), "status", "PENDING",
+                "expires_at", now.plusSeconds(60).toString(), "title", terms.title(), "content", terms.content(), "arguments_sha256", terms.argumentsSha256()));
+
+        try (var receiver = new RuntimeReceiverStub(request -> {
+            assertEquals("POST", request.method());
+            assertEquals("/api/ai/v1/runtime/runs/" + source.runId() + "/ticket-approval-preview", request.rawPath());
+            assertEquals(JSON.valueToTree(Map.of("source_event_id", source.eventId().toString())), JSON.readTree(request.body()));
+            assertNull(request.headers().get("Authorization"));
+            var signed = request.headers().get("X-SupportFlow-AI-Auth").getFirst();
+            long expiry = Long.parseLong(signed.split(":")[2]);
+            assertEquals(signed, AgentRuntimeProtocol.credential(KEY, expiry, request.method(), request.rawPath(), source.tenant(), request.body()));
+            return new RuntimeReceiverStub.Reply(200, content);
+        }); var client = new AgentRuntimeClient(receiver.endpoint(), KEY)) {
+            var proposal = client.previewTicketApproval(source);
+            assertEquals(approval, proposal.approvalId());
+            assertEquals(terms.content(), proposal.content());
+            assertFalse(proposal.toString().contains(terms.title()));
+            assertNull(receiver.failure.get());
+        }
+        for (String invalid : new String[]{content + "{}", content.replace("PENDING", "CONSUMED"),
+                content.replace("原文", "替换"), content.replace(terms.argumentsSha256(), "0".repeat(64)),
+                content.replace(now.plusSeconds(60).toString(), now.minusSeconds(60).toString())}) {
+            try (var receiver = new RuntimeReceiverStub(request -> new RuntimeReceiverStub.Reply(200, invalid));
+                 var client = new AgentRuntimeClient(receiver.endpoint(), KEY)) {
+                var failure = assertThrows(AgentRuntimeClient.DeliveryFailure.class, () -> client.previewTicketApproval(source));
+                assertEquals("INVALID_APPROVAL_PROPOSAL", failure.code());
+                assertEquals(1, receiver.calls.get());
+            }
         }
     }
 }

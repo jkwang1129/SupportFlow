@@ -25,7 +25,7 @@ public final class AgentRuntimeProtocol {
         String base = "(?:/[A-Za-z0-9_-]+)*/ai/v1/runtime/runs";
         String run = base + "/[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}";
         if (!("POST".equals(method) && (path.matches(base) || path.matches(run + "/cancel") || path.matches(run + "/authorize")
-                || path.matches(run + "/review-ticket-approval"))
+                || path.matches(run + "/review-ticket-approval") || path.matches(run + "/ticket-approval-preview"))
                 || "GET".equals(method) && path.matches(run))) {
             throw new IllegalArgumentException("Unsupported runtime operation");
         }

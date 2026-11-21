@@ -1115,3 +1115,13 @@ AI 内部预览承接客服签名的 Run 和来源，沿用审批开关。预览
 
 - `python -m pytest -q tests/test_runtime_approval_review.py tests/test_runtime_api.py tests/test_runtime_ticket_authority.py` 73 项通过，新增 7 项签名服务、默认关闭和参数范围用例。全 AI 测试 945 项通过、384 项条件跳过、1 项原有预期失败。RAG 契约 24 项通过。日志和 XML 位于 `.local/implementation/b3-approval-preview-*`。
 - `PYTEST_ADDOPTS='-k approval' python scripts/test-agent-runtime.py` 所选 59 项隔离 PostgreSQL 测试通过，其中 6 项新增覆盖原文和有效期、跨租户与来源、撤销、拒绝、过期、正文摘要异常。首轮预览调用缺少 Run 来源转换方法，两项用例报错，补齐共享方法后 59 项通过。原始日志为 `b3-java-review-runtime-final.log` 和 `b3-java-review-and-preview-runtime.log`。后者的 Runtime 联调部分另含客服角色夹具修正前的失败，最终真实接口结果记录在上一批。
+
+## B3 客服坐席读取提案原文（2026-11-21）
+
+客服公开 API 在同一企业登录态和当前管理员或主管角色下提供 `GET /api/customer/agent-approvals/events/{eventId}/runs/{runId}/proposal`。签名前确认当前来源和快照。AI 响应限定六个字段和有界长度，Java 用原工单参数规则独立核对当前快照与全文摘要。RPC 前后均重验当前会话，返回内容禁止缓存。审批决定按返回的 ID 和摘要提交，仍重验当前状态。
+
+- `python scripts/test-customer-rls.py --with-ai` 通过 148 项真实客服 PostgreSQL 17 用例及 19 项知识库用例。新增 3 项验证已授权原文、普通坐席或跨租户不可读、RPC 期间接管后不返回内容。日志 `b3-customer-preview-pg.log`。
+- JDK 25 的 `mvn -B -f backend/pom.xml verify` 通过。新增 TCP 用例校验精确签名、中文与原换行、正文替换、错摘要和过期响应的拒绝，日志 `b3-customer-preview-build.log`。
+- `PYTEST_ADDOPTS='-k runtime_approval_review' python scripts/test-agent-runtime.py --with-java-delivery` 的实际客服 JAR、AI 与 PostgreSQL 三案均通过。已授权坐席读取原文后以真实返回的审批 ID 和摘要提交决定。普通坐席与匿名均拒绝，接管或过期后预览不可用。一次准许建单、一条工单事件、一条回执，另两案均无业务写入。角色和数据为隔离合成夹具，日志 `b3-customer-preview-runtime.log`、原始报告 `runtime-ticket-approval.json` v4。
+
+预览仍需已有的来源事件和任务引用。待审批列表、坐席界面和可信业务触发待接。回滚关闭客服审批审核开关，保留原提案、决定及回执。该批不含数据库迁移，也无需付费模型。

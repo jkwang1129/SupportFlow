@@ -9,6 +9,7 @@ import io.supportflow.customer.internal.UserRoleClient;
 import io.supportflow.customer.service.bot.AgentEventOutbox;
 import io.supportflow.customer.service.bot.AgentRuntimeClient;
 import io.supportflow.customer.service.bot.AgentSourceSnapshots;
+import io.supportflow.customer.service.bot.AgentTicketArguments;
 import io.supportflow.customer.testkit.RuntimeReceiverStub;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,13 +20,16 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.sql.DriverManager;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 @EnabledIfEnvironmentVariable(named = "SUPPORTFLOW_RLS_TEST_URL", matches = ".+")
@@ -37,6 +41,9 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
     private final UUID run = UUID.randomUUID();
     private final UUID approval = UUID.randomUUID();
     private final AtomicInteger status = new AtomicInteger(200);
+    private final AtomicBoolean takeoverDuringPreview = new AtomicBoolean();
+    private static final String PROPOSAL_TITLE = "合成提案🙂";
+    private static final String PROPOSAL_BODY = "原始内容\n ";
     private UUID event;
     private String path;
     private UserRoleClient roles;
@@ -45,13 +52,12 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
     private MockMvc mvc;
 
     @BeforeEach void setupReview() throws Exception {
-        scoped(() -> transaction.execute(s -> {
+        var snapshot = scoped(() -> transaction.execute(s -> {
             var message = service.appendMessage("TENANT_A", sessionNo, 1, null, 1, "synthetic approval source", 1, "approval-source");
             var outbox = new AgentEventOutbox(jdbc);
             event = outbox.enqueue("TENANT_A", Long.parseLong(message.msgId()), "runtime-v1", 500).eventId();
             outbox.acknowledge(outbox.claim("TENANT_A", "approval-fixture", 30), event, run);
-            new AgentSourceSnapshots(jdbc).capture("TENANT_A", event, run);
-            return null;
+            return new AgentSourceSnapshots(jdbc).capture("TENANT_A", event, run);
         }));
         path = "/api/customer/agent-approvals/events/" + event + "/runs/" + run + "/decisions";
         roles = mock(UserRoleClient.class);
@@ -61,9 +67,18 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
             assertEquals(0, pool.getHikariPoolMXBean().getActiveConnections());
             var node = JSON.readTree(request.body());
             assertEquals(event.toString(), node.get("source_event_id").textValue());
-            assertEquals("staff:" + UID, node.get("reviewer_ref").textValue());
             assertEquals(List.of("TENANT_A"), request.headers().get("X-Tenant-Code"));
             assertNull(request.headers().get("Authorization"));
+            if (request.rawPath().endsWith("/ticket-approval-preview")) {
+                assertEquals(1, node.size());
+                if (status.get() != 200) return new RuntimeReceiverStub.Reply(status.get(), "synthetic private upstream failure");
+                if (takeoverDuringPreview.get()) scoped(() -> jdbc.update("UPDATE session SET agent_id=99 WHERE id=?", sessionId));
+                var arguments = new AgentTicketArguments("TENANT_A", run, event, snapshot.snapshotId(), PROPOSAL_TITLE, PROPOSAL_BODY);
+                return new RuntimeReceiverStub.Reply(200, JSON.writeValueAsString(Map.of("approval_id", approval.toString(),
+                        "title", PROPOSAL_TITLE, "content", PROPOSAL_BODY, "arguments_sha256", arguments.argumentsSha256(),
+                        "expires_at", Instant.now().plusSeconds(60).toString(), "status", "PENDING")));
+            }
+            assertEquals("staff:" + UID, node.get("reviewer_ref").textValue());
             if (status.get() != 200) return new RuntimeReceiverStub.Reply(status.get(), "synthetic private upstream failure");
             String result = switch (node.get("decision").textValue()) { case "approve" -> "APPROVED"; case "deny" -> "DENIED"; default -> "REVOKED"; };
             return new RuntimeReceiverStub.Reply(200, JSON.writeValueAsString(Map.of("approval_id", approval.toString(), "status", result)));
@@ -83,6 +98,11 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
     private MvcResult call(MockMvc target, LoginUser user, String route, String payload) throws Exception {
         return LoginUserContext.bind(user == null ? AuthState.anonymous() : AuthState.ok(user), () ->
                 target.perform(post(route).header("X-Tenant-Code", "FORGED").contentType("application/json").content(payload)).andReturn());
+    }
+
+    private MvcResult preview(LoginUser user) throws Exception {
+        return LoginUserContext.bind(user == null ? AuthState.anonymous() : AuthState.ok(user), () ->
+                mvc.perform(get(path.replace("/decisions", "/proposal")).header("X-Tenant-Code", "FORGED")).andReturn());
     }
 
     @AfterEach @Override void cleanup() {
@@ -154,6 +174,37 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
             assertFalse(response.getContentAsString().contains("synthetic private"));
         }
         assertEquals(3, server.calls.get());
+        assertNull(server.failure.get());
+    }
+
+    @Test void previewReturnsExactOriginalTermsWithoutCaching() throws Exception {
+        var response = preview(ADMIN).getResponse();
+        assertEquals(200, response.getStatus());
+        assertEquals("no-store", response.getHeader("Cache-Control"));
+        var terms = JSON.readTree(response.getContentAsByteArray()).get("data");
+        assertEquals(6, terms.size());
+        assertEquals(PROPOSAL_BODY, terms.get("content").textValue());
+        assertEquals(PROPOSAL_TITLE, terms.get("title").textValue());
+        assertEquals(approval.toString(), terms.get("approval_id").textValue());
+        assertEquals(1, server.calls.get());
+        assertNull(server.failure.get());
+    }
+
+    @Test void unauthorizedRolesAndTenantCannotPreviewTheTerms() throws Exception {
+        assertEquals(401, preview(null).getResponse().getStatus());
+        assertEquals(404, preview(new LoginUser(UID, "U_1", "other tenant", 2, "TENANT_B")).getResponse().getStatus());
+        when(roles.rolesOf(UID, "TENANT_A")).thenReturn(List.of("AGENT"));
+        assertEquals(403, preview(ADMIN).getResponse().getStatus());
+        assertEquals(0, server.calls.get());
+    }
+
+    @Test void takeoverWhilePreviewIsInFlightPreventsDisclosure() throws Exception {
+        takeoverDuringPreview.set(true);
+        var response = preview(ADMIN).getResponse();
+        assertEquals(404, response.getStatus());
+        assertEquals("no-store", response.getHeader("Cache-Control"));
+        assertFalse(response.getContentAsString().contains(PROPOSAL_BODY));
+        assertEquals(1, server.calls.get());
         assertNull(server.failure.get());
     }
 }

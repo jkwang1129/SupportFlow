@@ -20,7 +20,7 @@
 | PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前97表/索引/RLS；customer009、AI007及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
 | PR-8 持久化 Run | 部分实现：持久化Loop/报告发布/进程恢复 | Run/Step/Worker、双向API/SDK；276项Runtime，139项客服PG；实际JAR→AI写许可→业务回复/丢回执及真实Worker退出接管；默认关闭 | 可信调度/自动登记、租户Profile Resolver仍缺。B1进行中 |
 | PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。MCP尚未接入。B2 |
-| PR-10 Checkpoint/HITL | 部分实现：工单审批、恢复与决定入口 | 原子正文和原预算恢复、真实进程接管、限时审批绑定主体/快照/参数、一次性消费、到期/撤销、坐席角色与来源重验、回复及建单未知写核销 | 待接原提案预览、待审任务发现与坐席操作界面；其他写操作需各自回执。B3 |
+| PR-10 Checkpoint/HITL | 部分实现：工单审批、恢复、预览与决定 API | 原子正文和原预算恢复、真实进程接管、限时审批绑定主体/快照/参数、一次性消费、到期/撤销、坐席角色与来源重验、回复及建单未知写核销 | 待接待审任务发现与坐席操作界面；其他写操作需各自回执。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
 | PR-12 RAG | 部分完成：本轮拒答首批已通过 | `rag/graph.py` 增加 abstain；版本化 12 案例 × 两引擎 24 项通过；`services/rag.py#verify_citations` 仍只核编号 | 文档范围/空选集/关键词降级、访客发布就绪策略已回归；未完成事实支持、冲突/版本/ACL 评测，越界引用正文问题仍 xfail；不预设必须混检/重排。A6 首批/C |
 
@@ -117,3 +117,5 @@ AI007 将未消费的过期审批加入既有 Worker 发现及领取。77 项审
 1e278f4 的 [CI 44892566490](https://github.com/jkwang1129/SupportFlow/actions/runs/44892566490) 全部通过。客服侧已接登录态、当前管理员或主管角色、短事务核验来源和签名审批决定。受限数据库测试 145 项通过，另有 19 项知识库测试。待审 Run 的重复投递可以确认。坐席需要通过原提案预览取得审批 ID 和摘要，再提交决定。
 
 AI 内部签名预览已通过测试。它绑定租户、来源、Run、原检查点和有效期。59 项审批数据库用例以及 945 项普通 AI 测试通过。客服侧将复核当前来源及提案摘要后向已授权坐席返回正文。
+
+客服预览与决定已在真实 Java/AI/受限 PostgreSQL 三条流程中连通，受限客服数据库测试共 148 项通过。已有可信事件和 Run 的坐席可调用接口查看原提案并决定。待审任务发现、坐席界面和业务入口仍待交付。

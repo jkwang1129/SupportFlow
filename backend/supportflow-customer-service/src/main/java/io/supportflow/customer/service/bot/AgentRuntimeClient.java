@@ -121,6 +121,31 @@ public final class AgentRuntimeClient implements AutoCloseable {
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_REVIEW_RESULT"); }
     }
 
+    public AgentApprovalProposal previewTicketApproval(AgentSourceSnapshots.Snapshot source) {
+        if (source == null) throw new IllegalArgumentException("Verified approval source required");
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Approval preview must run outside the business transaction");
+        final byte[] body;
+        try { body = mapper.writeValueAsBytes(Map.of("source_event_id", source.eventId().toString())); }
+        catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_PREVIEW_REFERENCE"); }
+        URI uri = URI.create(endpoint + "/" + source.runId() + "/ticket-approval-preview");
+        var response = exchange(AgentRuntimeProtocol.request(uri, "POST", source.tenant(), body, secret), "APPROVAL_PREVIEW", 12288);
+        int code = response.statusCode();
+        if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, "APPROVAL_PREVIEW_HTTP_" + code);
+        if (!hasPlainJsonBody(response)) throw new DeliveryFailure(false, "INVALID_APPROVAL_PROPOSAL");
+        try {
+            JsonNode json = mapper.readTree(response.body());
+            if (json == null || !json.isObject() || json.size() != 6) throw new IllegalArgumentException();
+            String rawId = text(json, "approval_id");
+            UUID approval = UUID.fromString(rawId);
+            if (!approval.toString().equals(rawId)) throw new IllegalArgumentException();
+            var proposal = new AgentApprovalProposal(approval, text(json, "status"), Instant.parse(text(json, "expires_at")),
+                    text(json, "arguments_sha256"), text(json, "title"), text(json, "content"));
+            if (!proposal.matches(source)) throw new IllegalArgumentException();
+            return proposal;
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_PROPOSAL"); }
+    }
+
     private AgentActionPermit authorize(AgentActionPermit.Request action,AgentActionPermit.Operation expectedOperation) {
         if (action == null || action.operation()!=expectedOperation) throw new IllegalArgumentException("Matching action reference is required");
         if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
@@ -149,7 +174,11 @@ public final class AgentRuntimeClient implements AutoCloseable {
     }
 
     private HttpResponse<byte[]> exchange(HttpRequest request, String operation) {
-        var future = client.sendAsync(request, ignored -> new BoundedBody());
+        return exchange(request, operation, 8192);
+    }
+
+    private HttpResponse<byte[]> exchange(HttpRequest request, String operation, int maxBodyBytes) {
+        var future = client.sendAsync(request, ignored -> new BoundedBody(maxBodyBytes));
         final HttpResponse<byte[]> response;
         try {
             // Covers headers AND body completion; no unbounded InputStream read.
@@ -182,12 +211,14 @@ public final class AgentRuntimeClient implements AutoCloseable {
     private static final class BoundedBody implements HttpResponse.BodySubscriber<byte[]> {
         private final CompletableFuture<byte[]> result = new CompletableFuture<>();
         private final ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        private final int maxBodyBytes;
         private Flow.Subscription subscription;
+        BoundedBody(int maxBodyBytes) { this.maxBodyBytes = maxBodyBytes; }
         public CompletionStage<byte[]> getBody() { return result; }
         public void onSubscribe(Flow.Subscription value) { subscription = value; value.request(1); }
         public void onNext(List<ByteBuffer> chunks) {
             for (var chunk : chunks) {
-                if (chunk.remaining() > 8192 - bytes.size()) {
+                if (chunk.remaining() > maxBodyBytes - bytes.size()) {
                     subscription.cancel(); result.completeExceptionally(new OversizeBody()); return;
                 }
                 byte[] part = new byte[chunk.remaining()]; chunk.get(part); bytes.writeBytes(part);

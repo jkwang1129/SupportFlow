@@ -77,22 +77,34 @@ def _fixture_token(key, tenant, user_id):
     return 'Bearer ' + (signed + b'.' + signature).decode()
 
 
-def _staff_review(client, base, key, source, run, row):
-    path = f'/api/customer/agent-approvals/events/{source.source_event_id}/runs/{run}/decisions'
+def _review_path(base, source, run):
+    return base + f'/api/customer/agent-approvals/events/{source.source_event_id}/runs/{run}'
 
-    def request(digest, user_id=None):
-        headers = {'Authorization': _fixture_token(key, source.tenant, user_id)} if user_id is not None else {}
-        return client.post(base+path, headers=headers, json={
-            'approval_id': str(row['approval_id']), 'arguments_sha256': digest, 'decision': 'approve',
+
+def _staff_review(client, base, key, source, run, row, title, content):
+    path = _review_path(base, source, run)
+    auth = {'Authorization': _fixture_token(key, source.tenant, 123)}
+    agent = {'Authorization': _fixture_token(key, source.tenant, 124)}
+    assert client.get(path+'/proposal').status_code == 401
+    assert client.get(path+'/proposal', headers=agent).status_code == 403
+    response = client.get(path+'/proposal', headers=auth)
+    assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+    proposal = response.json()['data']
+    assert proposal['title'] == title and proposal['content'] == content and proposal['status'] == 'PENDING'
+    assert proposal['approval_id'] == str(row['approval_id']) and proposal['arguments_sha256'] == row['arguments_sha256']
+
+    def request(digest, headers):
+        return client.post(path+'/decisions', headers=headers, json={
+            'approval_id': proposal['approval_id'], 'arguments_sha256': digest, 'decision': 'approve',
         })
 
-    digest = row['arguments_sha256']
-    assert request(digest).status_code == 401
-    assert request(digest, 124).status_code == 403
-    conflict = request('0'*64, 123)
+    digest = proposal['arguments_sha256']
+    assert request(digest, {}).status_code == 401
+    assert request(digest, agent).status_code == 403
+    conflict = request('0'*64, auth)
     assert conflict.status_code == 409, (conflict.status_code, conflict.json().get('code'))
     for _ in range(2):
-        result = request(digest, 123)
+        result = request(digest, auth)
         assert result.status_code == 200, (result.status_code, result.json().get('code'))
         assert result.json()['data'] == {'approval_id': str(row['approval_id']), 'status': 'APPROVED'}
 
@@ -126,7 +138,7 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store):
         assert waiting['state'] == 'WAITING_APPROVAL' and row['snapshot_id'] == snapshot.snapshot_id
         assert waiting['step_count'] == 1 and store.claim_next(tenant, 'must-wait') is None
         with httpx.Client(trust_env=False, follow_redirects=False, timeout=3) as client:
-            _staff_review(client, base, jwt_key, source, run, row)
+            _staff_review(client, base, jwt_key, source, run, row, approved_title, approved_body)
         assert approvals.get(tenant, run)['decided_by'] == 'staff:123'
 
         if mode == 'taken_over_after_approval':
@@ -137,6 +149,12 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store):
                 db.execute("""UPDATE agent_approval SET requested_at=clock_timestamp()-interval '3 minutes',
                     decided_at=clock_timestamp()-interval '150 seconds',expires_at=clock_timestamp()-interval '2 minutes'
                     WHERE tenant_code=%s AND run_id=%s""", (tenant, run))
+        if mode != 'accepted':
+            with httpx.Client(trust_env=False, timeout=3) as client:
+                unavailable = client.get(_review_path(base, source, run)+'/proposal',
+                    headers={'Authorization': _fixture_token(jwt_key, source.tenant, 123)})
+                assert unavailable.status_code == 404
+                assert approved_title not in unavailable.text
         resumed = RuntimeWorker(store, {'runtime-v1': lambda ctx: TicketApprovals(store).execute(ctx, executor)}, 'approval-second')
         result = resumed.run_once(tenant)
         if mode == 'expired_before_resume':
@@ -163,7 +181,7 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store):
             approval_status=audit['status'], steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=int(receipt is not None), events=events))
     artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v3', mode='SYNTHETIC_ROLE_SOURCE_REAL_JAVA_AI_PG',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v4', mode='SYNTHETIC_ROLE_SOURCE_REAL_JAVA_AI_PG',
         cases=observations), indent=2)+'\n', encoding='utf-8')
-    print('Authenticated customer-JAR ticket review: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
+    print('Authenticated customer-JAR proposal preview and review: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
           'duplicate approval preserved, one approved ticket/receipt, zero writes after takeover or expiry', flush=True)
