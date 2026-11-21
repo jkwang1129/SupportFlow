@@ -100,6 +100,21 @@ class TicketApprovals:
             return dict(approval_id=row['approval_id'], status=row['status'], expires_at=row['expires_at'],
                         arguments_sha256=args['arguments_sha256'], title=args['title'], content=args['content'])
 
+    def active_reference(self, tenant, session_no):
+        """Locate the one live approval for an already authorized session."""
+        identifier(session_no)
+        with self.store._scope(tenant) as connection:
+            rows = connection.execute("""SELECT r.run_id,r.source_event_id,a.status,a.expires_at
+                FROM agent_run r JOIN agent_approval a ON a.tenant_code=r.tenant_code AND a.run_id=r.run_id
+                WHERE r.tenant_code=%s AND r.session_no=%s AND a.principal_ref=r.principal_ref
+                  AND r.deadline_at>clock_timestamp() AND a.expires_at>clock_timestamp()
+                  AND ((r.state='WAITING_APPROVAL' AND a.status='PENDING')
+                    OR (r.state IN ('PENDING','RETRY_WAIT','RUNNING') AND a.status='APPROVED'))
+                LIMIT 2""", (tenant, session_no)).fetchall()
+        if len(rows) > 1:
+            raise RuntimeConflict('Multiple live approvals for the same session')
+        return rows[0] if rows else None
+
     def decide(self, tenant, run_id, approval_id, reviewer, *, approve, expected=None):
         if type(approve) is not bool:
             raise ValueError('Approval decision must be explicit')

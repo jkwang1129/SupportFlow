@@ -118,3 +118,32 @@ def test_invalid_checkpoint_digest_never_returns_terms(store, monkeypatch):
     with TestClient(app) as client:
         reply = post(client, route, {'source_event_id': str(source.source_event_id)})
     assert reply.status_code == 409 and reply.json() == {'detail': 'Approval proposal is unavailable'}
+
+
+def test_active_reference_is_only_run_and_source_metadata_for_this_session(store, monkeypatch):
+    app, review, command, source, waiting, approvals, row = setup(store, monkeypatch)
+    route, ref = f'{PATH}/ticket-approval-active', {'session_no': source.session_no}
+    with TestClient(app) as client:
+        pending = post(client, route, ref)
+        assert pending.status_code == 200 and pending.headers['cache-control'] == 'no-store'
+        body = pending.json()
+        assert body == dict(run_id=str(row['run_id']), source_event_id=str(source.source_event_id),
+                            status='PENDING', expires_at=body['expires_at'])
+        assert datetime.fromisoformat(body['expires_at']) == row['expires_at']
+        assert store.get(source.tenant, row['run_id']) == waiting and approvals.get(source.tenant, row['run_id']) == row
+        assert post(client, route, ref, tenant='TENANT_B').status_code == 404
+        assert post(client, route, {'session_no': 'OTHER_SESSION'}).status_code == 404
+        assert post(client, review, command).status_code == 200
+        assert post(client, route, ref).json()['status'] == 'APPROVED'
+        assert post(client, review, command | {'decision': 'revoke'}).status_code == 200
+        assert post(client, route, ref).status_code == 404
+
+
+def test_elapsed_approval_is_hidden_even_before_worker_settles_it(store, monkeypatch):
+    app, _, _, source, waiting, approvals, row = setup(store, monkeypatch)
+    elapsed(row)
+    with TestClient(app) as client:
+        reply = post(client, f'{PATH}/ticket-approval-active', {'session_no': source.session_no})
+    assert reply.status_code == 404 and reply.json() == {'detail': 'Active approval not found'}
+    assert store.get(source.tenant, row['run_id']) == waiting
+    assert approvals.get(source.tenant, row['run_id'])['status'] == 'PENDING'

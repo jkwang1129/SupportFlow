@@ -80,6 +80,16 @@ class TicketApprovalReviewRequest(TicketApprovalSource):
         return value
 
 
+class TicketApprovalSession(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    session_no: StrictStr = Field(min_length=1, max_length=64)
+
+    @field_validator('session_no')
+    @classmethod
+    def session_identifier(cls, value):
+        return identifier(value)
+
+
 class ActionRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     tenant_code: StrictStr = Field(min_length=1,max_length=16)
@@ -211,5 +221,21 @@ def ticket_approval_preview(run_id: UUID, body: TicketApprovalSource, request: R
         raise HTTPException(503, 'Approval persistence unavailable') from None
     if row is None:
         raise HTTPException(404, 'Approval proposal not found')
+    response.headers['Cache-Control'] = 'no-store'
+    return row
+
+
+@router.post('/ticket-approval-active')
+def active_ticket_approval(body: TicketApprovalSession, request: Request, response: Response, store=Depends(runtime_store)):
+    if not get_settings().runtime_approval_review_enabled:
+        raise HTTPException(503, 'Runtime approval review is disabled')
+    try:
+        row = TicketApprovals(store).active_reference(request.state.runtime_tenant, body.session_no)
+    except RuntimeConflict:
+        raise HTTPException(409, 'Active approval reference is inconsistent') from None
+    except psycopg.Error:
+        raise HTTPException(503, 'Approval persistence unavailable') from None
+    if row is None:
+        raise HTTPException(404, 'Active approval not found')
     response.headers['Cache-Control'] = 'no-store'
     return row

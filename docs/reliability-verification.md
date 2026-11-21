@@ -1154,3 +1154,12 @@ AI 内部预览承接客服签名的 Run 和来源，沿用审批开关。预览
 - 实际消息 API 拒绝匿名，重发相同消息号保留 1 条消息和 1 条 Outbox，通过真实后台投递创建 1 个对应 Run。独立 Worker 对其生成 1 份工单报告，使用 2 次合成模型 HTTP 调用、5 次工具预留、10 个步骤、0 次重试。10 条实际工单读取用例均通过。原始机器报告 `runtime-ticket-loop.json` v2。
 
 单租户 Worker 的 [CI 44894872366](https://github.com/jkwang1129/SupportFlow/actions/runs/44894872366) 和客服提案预览的 [CI 44894414086](https://github.com/jkwang1129/SupportFlow/actions/runs/44894414086) 均通过。测试全程使用隔离合成数据，验证范围为显式启用的只读任务。生产流量、费用和语义质量未测。
+
+## B3 按会话发现有效审批引用（2026-11-21）
+
+AI 新增签名客服查询。一条请求只接受一个会话编号。受限数据库按当前租户、会话和存活状态返回最多一条审批引用，仅含来源事件、Run、状态和有效期。并发状态变化由后续提案读取及决定接口再校验，过期、不可用或不一致的引用拒绝返回。回滚可关闭审批开关，保留待审任务和历史记录。
+
+- 定向 API 单元与相邻鉴权测试 79 项通过，其中 6 项新增覆盖错误服务身份、默认停用、错误会话格式、额外批量字段。全 AI 测试 959 项通过、386 项条件跳过、1 项原有预期失败。RAG 契约 24 项通过。日志与 XML 在 `.local/implementation/b3-approval-active-*`。
+- `PYTEST_ADDOPTS='-k runtime_approval_review' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 下 13 项通过。新增两项覆盖同租户和同会话的待审引用、批准后状态、撤销后消失、其他租户／会话不可见，以及 Worker 尚未执行前已经过期的记录。原日志 `b3-approval-active-pg.log`。
+
+客服受权会话入口和坐席 UI 分批接入。动作继续按原提案摘要及当前状态核验。
