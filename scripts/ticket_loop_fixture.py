@@ -12,6 +12,7 @@ import secrets
 import socket
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from threading import Thread
 import time
 from uuid import uuid4
@@ -104,7 +105,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             verify_ticket_approval(connect,base,child['SUPPORTFLOW_JWT_SECRET'],secret,store)
             observations=[];scenarios={}
             with planner_server(scenarios,connect) as model_base:
-                for index,mode in enumerate(('normal','late_status','owner_revoked','foreign_parameter','phantom_reference','fake_write_claim','model503','turn_limit','process_restart')):
+                for index,mode in enumerate(('normal','late_status','owner_revoked','foreign_parameter','phantom_reference','fake_write_claim','model503','turn_limit','process_restart','configured_worker')):
                     tenant='LP_'+chr(ord('A')+index);session_id=15_900_001+index*10;message_id=session_id+1;customer_id=session_id+2;ticket_id=session_id+3
                     ticket_no='LOOP_'+tenant;source=RunInput(tenant,uuid4(),'LOOP_JAR_'+str(index),1,message_id,'visitor-session:'+str(session_id),'loop-'+str(index))
                     run=store.enqueue(source)['run_id']
@@ -146,6 +147,31 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         (ROOT/'.local/implementation/loop-resume-process.log').write_text(resumed.stdout+resumed.stderr,encoding='utf-8')
                         assert resumed.returncode==0
                         result=store.get(tenant,run);assert result['attempt']==2
+                    elif mode=='configured_worker':
+                        other = RunInput('LP_UNASSIGNED', uuid4(), 'UNASSIGNED_WORKER', 1, message_id+2000,
+                                         'visitor-session:'+str(session_id+2000), 'unassigned-worker')
+                        queued = store.enqueue(other)
+                        allowed = ('PATH','SystemRoot','WINDIR','TEMP','TMP','USERPROFILE','APPDATA','LOCALAPPDATA','LANG','LC_ALL')
+                        worker_env = {key: os.environ[key] for key in allowed if key in os.environ}
+                        worker_env.update(PYTHONUTF8='1', PYTHONPATH=str(ROOT/'ai-service'),
+                            SUPPORTFLOW_AI_DATABASE_URL=runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'],
+                            SUPPORTFLOW_AI_CUSTOMER_RUNTIME_URL=base, SUPPORTFLOW_AI_CUSTOMER_SECRET=secret,
+                            SUPPORTFLOW_AI_QWEN_API_KEY=model_key, SUPPORTFLOW_AI_QWEN_BASE_URL=model_base,
+                            SUPPORTFLOW_AI_QWEN_MODEL='fixture-chat')
+                        command = [sys.executable, '-m', 'ai.runtime.ticket_worker', '--tenant', tenant, '--provider', 'qwen', '--once']
+                        options = dict(capture_output=True, text=True, encoding='utf-8',
+                                       timeout=35, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
+                        with TemporaryDirectory(prefix='supportflow-worker-fixture-') as directory:
+                            disabled = subprocess.run(command, cwd=directory,
+                                env=worker_env | {'SUPPORTFLOW_AI_RUNTIME_API_ENABLED':'false'}, **options)
+                            assert disabled.returncode == 1 and store.get(tenant, run)['state'] == 'PENDING'
+                            configured = subprocess.run(command, cwd=directory,
+                                env=worker_env | {'SUPPORTFLOW_AI_RUNTIME_API_ENABLED':'true'}, **options)
+                        (ROOT/'.local/implementation/ticket-worker-process.log').write_text(
+                            disabled.stdout+disabled.stderr+configured.stdout+configured.stderr, encoding='utf-8')
+                        assert configured.returncode == 0 and model_key not in configured.stderr
+                        assert store.get(other.tenant, queued['run_id']) == queued
+                        result = store.get(tenant,run)
                     else:result=worker.run_once(tenant)
                     if mode=='model503':
                         assert result['state']=='RETRY_WAIT' and result['model_calls']==1
@@ -158,7 +184,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     expected={'normal':(None,2,5,10,0),'late_status':(None,2,6,11,0),'owner_revoked':('TICKET_REVOKED',2,5,9,0),
                               'foreign_parameter':('TOOL_ARGUMENTS_INVALID',1,2,4,0),'phantom_reference':('REPORT_EVIDENCE_INVALID',1,2,4,0),
                               'fake_write_claim':('PLANNER_DECISION_INVALID',1,2,4,0),'model503':(None,3,6,12,1),'turn_limit':('PLANNER_TURN_LIMIT',1,4,7,0),
-                              'process_restart':(None,2,6,11,1)}[mode]
+                              'process_restart':(None,2,6,11,1),'configured_worker':(None,2,5,10,0)}[mode]
                     assert result['state']==('SUCCEEDED' if expected[0] is None else 'FAILED') and result['error_code']==expected[0]
                     assert (result['model_calls'],result['tool_calls'],result['step_count'],result['retry_count'])==expected[1:]
                     assert scenario['model_http_calls']==result['model_calls']
@@ -178,11 +204,12 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     observations.append(dict(case=mode,run_id=str(run),event_id=str(source.source_event_id),state=result['state'],error_code=result['error_code'],
                         model_http_calls=scenario['model_http_calls'],model_reservations=result['model_calls'],tool_reservations=result['tool_calls'],steps=result['step_count'],retries=result['retry_count'],
                         reports=len(reports),report_status=reports[0]['status'] if reports else None,actual_ticket_status=fact,source_messages=messages,result_receipts=receipts,tickets=tickets,
-                        worker_process_restart=mode=='process_restart',fixture_lease_seconds=3 if mode=='process_restart' else 30))
+                        worker_process_restart=mode=='process_restart',configured_worker_process=mode=='configured_worker',
+                        fixture_lease_seconds=3 if mode=='process_restart' else 30))
             report=ROOT/'.local/verification/runtime-ticket-loop.json';report.parent.mkdir(parents=True,exist_ok=True)
             report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v1',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
                 source_enrollment='EXPLICIT_FIXTURE_SETUP',publication='NOT_IMPLEMENTED',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
-            print('Actual model-protocol TCP -> durable TicketReadLoop -> signed SDK/customer JAR/restricted PG: 9 cases passed; current facts/owner checks, invalid actions, model503 retry, turn budgets and real Worker process death/takeover verified; reports only, no business publication or ticket creation; synthetic model decisions/usage',flush=True)
+            print('Actual model-protocol TCP -> durable TicketReadLoop -> signed SDK/customer JAR/restricted PG: 10 cases passed; current facts/owner checks, invalid actions, model503 retry, bounded turns, process takeover and scoped worker CLI verified; reports only, synthetic model decisions/usage',flush=True)
             from knowledge_tool_fixture import verify_knowledge_tools
             verify_knowledge_tools(connect,base,secret,store)
             from ticket_creation_api_fixture import verify_ticket_creation_api

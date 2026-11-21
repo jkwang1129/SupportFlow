@@ -1125,3 +1125,12 @@ AI 内部预览承接客服签名的 Run 和来源，沿用审批开关。预览
 - `PYTEST_ADDOPTS='-k runtime_approval_review' python scripts/test-agent-runtime.py --with-java-delivery` 的实际客服 JAR、AI 与 PostgreSQL 三案均通过。已授权坐席读取原文后以真实返回的审批 ID 和摘要提交决定。普通坐席与匿名均拒绝，接管或过期后预览不可用。一次准许建单、一条工单事件、一条回执，另两案均无业务写入。角色和数据为隔离合成夹具，日志 `b3-customer-preview-runtime.log`、原始报告 `runtime-ticket-approval.json` v4。
 
 预览仍需已有的来源事件和任务引用。待审批列表、坐席界面和可信业务触发待接。回滚关闭客服审批审核开关，保留原提案、决定及回执。该批不含数据库迁移，也无需付费模型。
+
+## B1 可单独启动的只读工单 Worker（2026-11-21）
+
+基于 1a94acf。新入口按运营侧显式提供的租户和供应商创建 Profile，沿用真实签名客户工具、租户和预算校验及现有只读 Loop。启动读取 Runtime 结构和角色元数据。租户限定的 Worker 跳过全局发现，开关关闭时退出。配置、退出边界和回滚见 [ADR-0033](decisions/0033-opt-in-ticket-worker.md)。
+
+- `python -m pytest -q tests/test_ticket_worker.py tests/test_ticket_loop.py tests/test_runtime_models.py` 82 项通过，其中新增 8 项覆盖租户、无凭据、错误供应商、默认关闭、缺少运行角色和其他租户不领取。AI 全量 953 项通过、384 项条件跳过、1 项既有预期失败。RAG 契约 24 项通过。日志、XML 与契约结果在 `.local/implementation/b1-ticket-worker-*`。
+- `PYTEST_ADDOPTS='-k "runtime_worker or ticket_loop"' python scripts/test-agent-runtime.py --with-java-delivery` 的真实 PostgreSQL 定向测试 44 项通过。原九项实际只读路径与新增真实进程路径共十项通过。真实独立 Worker 使用合成模型 TCP 和受限数据库、客服 JAR，消费指定租户且另一租户的待处理任务逐字段一致。开关关闭先退出 1 并保留任务，开启后成功产生 1 份报告，2 次模型请求、5 次工具预留、10 个步骤、0 次重试、0 条新增回复或回执。原始日志 `b1-ticket-worker-runtime.log`、`ticket-worker-process.log` 和报告 `runtime-ticket-loop.json`。
+
+前序坐席决定及内部预览分别通过 [CI 44893909323](https://github.com/jkwang1129/SupportFlow/actions/runs/44893909323) 和 [CI 44893967231](https://github.com/jkwang1129/SupportFlow/actions/runs/44893967231)。本阶段运营入口消费已有可信任务。客服侧自动调度、访客消息登记和生产流量仍待验证。

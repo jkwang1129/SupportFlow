@@ -7,7 +7,7 @@ from uuid import UUID
 import psycopg
 
 from .store import RuntimeStore
-from .types import ActionDenied, Lease, LostLease, BudgetExceeded, RuntimeConflict, identifier, fingerprint, reference
+from .types import ActionDenied, Lease, LostLease, BudgetExceeded, RuntimeConflict, identifier, fingerprint, reference, tenant_code
 from .payloads import SCHEMAS,encode as encode_payload
 
 
@@ -131,7 +131,7 @@ class RuntimeWorker:
     require bounded external I/O; Python cannot forcibly cancel a blocked thread.
     The FastAPI app does not auto-start this worker before business integration.
     """
-    def __init__(self, store: RuntimeStore, handlers: Mapping[str, Callable], owner, *, lease_seconds=30):
+    def __init__(self, store: RuntimeStore, handlers: Mapping[str, Callable], owner, *, lease_seconds=30, tenant=None):
         self.store = store
         self.owner = identifier(owner)
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 60:
@@ -142,10 +142,13 @@ class RuntimeWorker:
             identifier(version, 32)
         self.handlers = MappingProxyType(dict(handlers))
         self.lease_seconds = lease_seconds
+        self.tenant = tenant_code(tenant) if tenant is not None else None
         self._slot = Lock()
         self._last_tenant = None
 
     def run_once(self, tenant):
+        if self.tenant is not None and self.tenant != tenant:
+            return None
         if not self._slot.acquire(blocking=False):
             return None
         stopped, lost = Event(), Event()
@@ -215,7 +218,7 @@ class RuntimeWorker:
             return self.store.get(context.lease.tenant, context.lease.run_id)
 
     def tick(self):
-        tenants = self.store.due_tenants()
+        tenants = [self.tenant] if self.tenant is not None else self.store.due_tenants()
         if not tenants:
             return None
         # Local round-robin only; this does not claim cross-process tenant quotas.
