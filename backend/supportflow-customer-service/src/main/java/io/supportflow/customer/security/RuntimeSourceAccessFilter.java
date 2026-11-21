@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
 public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
     private static final String AUDIENCE = "supportflow-customer-runtime:v1";
     private static final String UUID_PATTERN = "[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}";
-    private static final Pattern ROUTE = Pattern.compile("/api/customer/internal/runtime/events/(" + UUID_PATTERN + ")/runs/(" + UUID_PATTERN + ")/(snapshot|reply|tickets/([A-Za-z0-9][A-Za-z0-9_-]{0,63}))");
+    private static final Pattern ROUTE = Pattern.compile("/api/customer/internal/runtime/events/(" + UUID_PATTERN + ")/runs/(" + UUID_PATTERN + ")/(snapshot|reply|tickets/([A-Za-z0-9][A-Za-z0-9_-]{0,63})|knowledge/search)");
     private static final Pattern CREDENTIAL = Pattern.compile("runtime:ai:([0-9]{1,12}):([0-9a-f]{64}):([0-9a-f]{64})");
     private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
@@ -96,11 +96,13 @@ public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
         }
         boolean reply=route.group(3).equals("reply");
         boolean ticket=route.group(4)!=null;
+        boolean knowledge=route.group(3).equals("knowledge/search");
         if (ticket && !request.getMethod().equals("GET")) { reject(response,403,"Runtime read operation requires GET"); return; }
-        if (!(ticket ? readToolsEnabled : reply ? resultEnabled : sourceEnabled)) { reject(response, 503, "Runtime API is disabled"); return; }
+        if (knowledge && !request.getMethod().equals("POST")) { reject(response,403,"Runtime knowledge operation requires POST"); return; }
+        if (!(ticket || knowledge ? readToolsEnabled : reply ? resultEnabled : sourceEnabled)) { reject(response, 503, "Runtime API is disabled"); return; }
         // Exact reply JSON may escape each content byte as six characters.
         // The parsed content still has the independent 8192 UTF-8 byte bound.
-        int limit=reply ? 65536 : 8192;
+        int limit=reply || knowledge ? 65536 : 8192;
         if (request.getContentLengthLong() > limit) { reject(response, 413, "Runtime body is too large"); return; }
         byte[] body = request.getInputStream().readNBytes(limit+1);
         if (body.length > limit) { reject(response, 413, "Runtime body is too large"); return; }
@@ -121,6 +123,9 @@ public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
                 if (reply) {
                     try { request.setAttribute(RuntimeReplyCommand.ATTRIBUTE,RuntimeReplyCommand.parse(object,call)); }
                     catch (IllegalArgumentException invalid) { reject(response,422,"Invalid runtime reply request"); return; }
+                } else if(knowledge) {
+                    try { request.setAttribute(RuntimeKnowledgeCommand.ATTRIBUTE,RuntimeKnowledgeCommand.parse(object,parsed.group(2))); }
+                    catch(IllegalArgumentException invalid) { reject(response,422,"Invalid runtime knowledge request");return; }
                 } else if (!object.isEmpty()) { reject(response, 400, "Runtime source request must be an empty object"); return; }
             } catch (com.fasterxml.jackson.core.JsonProcessingException invalid) {
                 reject(response, 400, "Invalid runtime JSON request"); return;

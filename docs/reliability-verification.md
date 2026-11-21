@@ -821,3 +821,23 @@ EmbeddingProfile由宿主显式绑定租户/配置/1024维/查询策略/端点Ha
 Token8、向量值0.25等均合成协议值，不是项目实际Token成本/检索质量；MODEL次数为预留而非付款次数。输入字节边界不是实际Tokenizer预算。取消/超时不能撤销供应商费用，失败和丢输出费用仍可能未知；硬Token/金额预留/结算后续M11。当前只算单查询表示，不读知识事实或授予文档权限；知识工具仍需当前来源/文档/版本授权。旧RAG Embedding仍原实现，尚无自动Worker/业务切换。回滚不注册新适配/保留原chat包装，保留MODEL/payload/usage/预算，不删除成功步骤重请求，不换策略套旧缓存。无生产/付费模型资格、性能、成本或业务收益结论。
 
 最终`python scripts/test-agent-runtime.py --with-java-delivery`退出0，`b2-runtime-embedding-runtime-first.log`：228项PG/Python专项+6次能力组负面，原全部Java交付/来源/工单/九例只读Loop（含真实进程退出接管）/五例报告发布/两例核销/写许可和丢回执回复全部通过。新14项首轮通过，3例Embedding TCP/14项PG及原Chat TCP正负例保持。公共传输层改动在实际模型协议/客户JAR组合链路核实；无SQL/Java/默认流程变更，本地不额外重复上批已完整通过的三套默认服务/103客服PG/六库迁移，精确提交CI仍全跑。
+
+ad66e75对应的[CI 44856556934](https://github.com/jkwang1129/SupportFlow/actions/runs/44856556934)两个job全部成功，含645项AI普通、228项Runtime专项及全部数据库/三套实际服务。Embedding适配子批次本地/远端退出条件已完成。
+
+## B2 业务端受控知识查询API（2026-11-21）
+
+基线ad66e75。新增`RuntimeKnowledgeCommand`、`AgentKnowledgeQueries`、`RuntimeKnowledgeController`、两类Java测试、ADR-0019及实际HTTP夹具`knowledge_api_fixture.py`；复用RuntimeSourceAccessFilter、既有read-tools开关、服务签名/可信租户绑定与来源快照。不加表、授权、依赖、模型服务或默认Worker入口。Python签名SDK/Registry接入是下一子批次，本批实际HTTP夹具自行签名，不能当已经完成Agent知识工具。
+
+请求只接受六个固定字段，1024维有限非零向量、top_k整数1～5、文档正int64列表≤200且只缩小范围；HMAC覆盖原始请求体。Java在单个≤5秒事务中锁定并核对当前DELIVERED来源/会话/访客消息/快照，SQL限制同租户、发布且索引完成、未删除及精确Embedding模型标签。返回≤5条受限标题/片段/整数百万分评分，不含文件/客户/向量；锁定选中知识行，再核DB时钟来源TTL。响应绑定请求SHA和结果投影SHA；投影Hash不是全库版本或MVCC证明。Embedding须事务外单独计MODEL预算，Java本身不调用模型。当前仅租户公开FAQ策略，不代表用户级文档ACL、撤回已发上下文或最终回答事实支持已完成。
+
+本地Python3.11.5/JDK25.0.5+8/Maven3.9.16/隔离pgvector PG17；凭据/来源/向量均合成，不读.env、不调用真实供应商：
+
+- Java定向测试15项通过＝新`RuntimeKnowledgeAccessTest`6项+原来源Filter9项，`b2-knowledge-api-unit-first.log`。测试含签名/方法/禁用/不可注入权限或URL/严格类型/1024维非零有限边界/重复或尾随JSON/体积/正文篡改，失败在数据库前拒绝。
+- `python scripts/test-customer-rls.py --with-ai`：112项真实受限Java PG全部通过＝原103+新`RuntimeKnowledgePostgresTest`9项；19项Python KB全部通过，`b2-knowledge-api-pg-first.log`。新9项含发布/就绪/模型/删除/跨租户/空范围、快照不符/接管/关闭/隐藏/改文/过期、状态变化立即反映、6路并发无业务副作用、实际行锁阻止修改（55P03）、实际SQL后过期重验、撤销SELECT时固定503且不回显SQL。1024个emoji片段为4096 UTF-8字节上限。管理员仅造隔离数据/注入故障，产品查询使用受限角色。
+- `mvn -B -f backend/pom.xml verify`全部模块BUILD SUCCESS，`b2-knowledge-api-backend-final.log`；普通Maven中的119项客服条件skip不计通过，PG专项实际执行如上。
+
+回滚：关闭read-tools或停用新调用，保留数据、来源/Run/预算/历史迁移；不回退无发布过滤的直连SQL、不把空列表转全范围。无质量、延迟、Token费用、生产流量或业务收益成果。
+
+`python scripts/test-agent-runtime.py --with-java-delivery`退出0，`b2-knowledge-api-runtime.log`：228项Runtime专项全部通过，原实际Java交付/来源/工单/9例Loop及真实进程接管/5例发布/受控核销/写许可/丢回执回复保持。新增实际customer JAR+受限角色PG知识HTTP夹具验证原始请求签名、Java/Python独立投影SHA一致、发布兼容命中1、空范围0/被排除范围0、跨租户404/错密钥401/人工接管404，无新增消息/回执/模型调用；机器报告`.local/verification/runtime-knowledge-api.json`。该夹具复用已DELIVERED来源，用固定合成向量手动签名，不是知识SDK/Registry、自动调度、向量语义质量或性能成果。
+
+`python scripts/test-security-flow.py`退出0，`b2-knowledge-api-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整实际服务全部通过，含访客WS→现有brain→BOT回复、知识索引/检索、权限/工单/计费、六库历史及readiness负面恢复。验收期间未并行Maven/其他完整服务任务；下一批SDK未改当前运行代码。无SQL变更，未重复未改动迁移/结构专项，精确提交CI继续全跑。

@@ -58,13 +58,14 @@ def verify_ticket_tools(connect,environment,passwords,secret,ai_base,runtime_env
                 else:raise RuntimeError('Disposable ticket service not ready')
             client=TicketClient(base,secret)
             executor=ToolExecutor(ToolRegistry([ticket_status_tool(client)]),frozenset({'ticket:read'}))
-            observations=[]
+            observations=[];knowledge_source=None
             for case,mode in enumerate(('authorized_resume','owner_revoked','status_changed','status_changed_budget3')):
                 tenant='TICKET_'+chr(ord('A')+case)
                 session_id=14_900_001+case*10;message_id=session_id+1;customer_id=session_id+2;ticket_id=session_id+3
                 ticket_no='TOOL_'+tenant;source=RunInput(tenant,uuid4(),'TICKET_JAR_'+str(case),1,message_id,
                                                        'visitor-session:'+str(session_id),'ticket-tool-'+str(case))
                 run=store.enqueue(source,Limits(max_tool_calls=3) if case==3 else Limits())['run_id']
+                if case==0:knowledge_source=(source,run)
                 with connect('customer_db') as db:
                     db.execute("INSERT INTO customer(id,tenant_code,customer_no,name) VALUES(%s,%s,%s,'SYNTHETIC PRIVATE CUSTOMER')",(customer_id,tenant,'C_'+tenant))
                     db.execute("INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,customer_id,start_time) VALUES(%s,%s,%s,1,2,1,%s,CURRENT_TIMESTAMP)",
@@ -112,6 +113,8 @@ def verify_ticket_tools(connect,environment,passwords,secret,ai_base,runtime_env
                     error_code=result['error_code'],tool_calls=result['tool_calls'],model_calls=result['model_calls'],step_count=result['step_count'],
                     retry_count=result['retry_count'],payload_rows=payloads,session_messages=messages,result_receipts=receipts,
                     observed_ticket_status=fact,handler_statuses=returned,cache_policy='current-version',cache_refreshed=case==2))
+            from knowledge_api_fixture import verify_knowledge_api
+            verify_knowledge_api(connect,base,secret,*knowledge_source)
             report=ROOT/'.local/verification/runtime-ticket-tools.json';report.parent.mkdir(parents=True,exist_ok=True)
             report.write_text(json.dumps(dict(schema_version='ticket-tool-qualification-v2',mode='SYNTHETIC_LOCAL_REAL_HTTP_PG',cases=observations,
                                              performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')

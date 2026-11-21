@@ -18,8 +18,8 @@
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
 | PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前94表/索引/RLS；customer008、AI004及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
-| PR-8 持久化 Run | 部分实现：持久化Loop/报告发布/进程恢复 | Run/Step/Worker、双向API/SDK；214项Runtime，原103项客服PG持续CI；实际JAR→AI写许可→业务回复/丢回执及真实Worker退出接管；默认关闭 | 可信调度/自动登记、租户Profile Resolver仍缺。B1进行中 |
-| PR-9 Tool Calling | 部分实现：实际来源/工单只读与受控回复发布 | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/版本缓存/预算，实际JAR工具联调；bounded JSON决策Loop已有核验 | 知识只读/幂等创建工单仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。MCP尚未接入。B2 |
+| PR-8 持久化 Run | 部分实现：持久化Loop/报告发布/进程恢复 | Run/Step/Worker、双向API/SDK；228项Runtime，112项客服PG；实际JAR→AI写许可→业务回复/丢回执及真实Worker退出接管；默认关闭 | 可信调度/自动登记、租户Profile Resolver仍缺。B1进行中 |
+| PR-9 Tool Calling | 部分实现：实际来源/工单只读与受控回复发布 | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/版本缓存/预算，实际JAR工具联调；bounded JSON决策Loop已有核验；知识Java窄API已实现并验当前授权/发布策略 | 知识Python SDK/Registry与幂等创建工单仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。MCP尚未接入。B2 |
 | PR-10 Checkpoint/HITL | 部分实现：Runtime执行恢复已核验，HITL未实现 | Runtime原子正文/引用/原预算恢复与真实进程接管；单一reply未知写受控核销；旧LangGraph compile仍无原生checkpointer | 限时审批绑定主体/资源/参数、过期/撤销/审批后重新鉴权、其他未知写仍缺。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
 | PR-12 RAG | 部分完成：本轮拒答首批已通过 | `rag/graph.py` 增加 abstain；版本化 12 案例 × 两引擎 24 项通过；`services/rag.py#verify_citations` 仍只核编号 | 文档范围/空选集/关键词降级、访客发布就绪策略已回归；未完成事实支持、冲突/版本/ACL 评测，越界引用正文问题仍 xfail；不预设必须混检/重排。A6 首批/C |
@@ -32,10 +32,10 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | --- | --- | --- | --- |
 | M01 Reliable Runtime | 部分实现，尚未切换业务触发 | Run/Step/Worker、真实双向桥接、租约/Step许可、原子业务回执；中间产物与Step成功原子存储、Worker跨进程恢复 | 只读Loop/报告发布已通过实际服务组合；单一reply未知写已受控核销，其他未知写/审批/可信触发待补；PR-8/9/10。B |
 | M02 Context Engineering | 部分实现 | 旧最近12条对话；customer006冻结当前输入/每次重验；AI003步骤正文存储有字节/节点/深度及完整性边界 | Worker已能恢复正文；尚无统一长历史构建器/Token预算/压缩对照；正文存储不代替上下文策略或Checkpoint。B基础/C完善 |
-| M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、签名来源/工单SDK及实际Worker→客户JAR核权/版本刷新/预算阻断；有界Loop；宿主报告原子发布与回执核销 | 知识/创建工单/通用幂等写、可信MCP仍缺；不重复写业务服务。B |
+| M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、签名来源/工单SDK及实际Worker→客户JAR核权/版本刷新/预算阻断；有界Loop；宿主报告原子发布与回执核销；知识Java查询API | 知识SDK/Registry、创建工单/通用幂等写、可信MCP仍缺；不重复写业务服务。B |
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权/固定事实报告；签名写许可、参数摘要与回执绑定、越权/假引用/假写声明负例 | 已补RAG/KB所测应用日志与已处理错误的内容排除；完整直接/间接注入集、通用PII/秘密保护、限时参数审批/防重放仍缺；无任意代码需求，暂不建Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，本轮补齐低分拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号、租户过滤；两引擎拒答/文档范围/空选集和访客发布就绪过滤回归 | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
-| M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime214项、原客服PG103项、实际只读Loop/进程恢复/五例发布/两例受控核销有机器证据 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
+| M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime228项、客服PG112项、实际只读Loop/进程恢复/五例发布/两例受控核销及受控知识API有机器证据 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
 | M07 Trace/Observability | 部分实现 | Java `TraceContext`；Python `core/trace.py`、图 steps、`llm_usage.py`；运营 `ObservabilityService#trace/evaluate`、告警规则与调用记录查询；本轮 RAG steps 增加 traceId/sequence/schemaVersion 与拒答原因 | 已有模型调用 Trace 查询与告警应复用；已有持久化Run/Step与trace_id；缺工具详情、异步业务链路/审批事件、统一查询、脱敏治理和安全replay。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界Chat/查询Embedding与Runtime适配 | core.llm_chat单次HTTP/稳定错误/正文边界；显式租户ChatProfile、Prompt/请求Hash、MODEL原子正文/usage及预算恢复；实际协议TCP故障/进程验收；llm_gateway.py仍旧Mock占位 | 视觉/旧RAG同步Embedding、租户选择/Prompt发布/供应商权限和usage/Token金额结算治理仍缺；不造第二入口。E |
 | M09 Streaming/交互 | 部分实现 | `supportflow-realtime-service` WebSocket、消息 seq/ACK/补拉、机器人 typing | 缺持久化 Run 事件、审批/取消/恢复展示；优先复用 WebSocket。依赖 B、M07。E |
@@ -74,12 +74,14 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-21，B2 Runtime查询Embedding）
+## 当前执行位置（2026-11-21，B2 业务端受控知识查询）
 
 阶段A已完成退出条件，B1/B2/B3仍部分实现，默认Workflow保留，开发分支未合并main。已有Run/Step/Worker/预算/租约fence、Outbox/签名API、正文Checkpoint/真实进程恢复、来源/工单工具、有界Loop/固定报告发布及单一reply未知写核销。无回执仍阻断，HITL/创建工单/可信自动触发未完成。
 
 3d644cb的[CI 44854145977](https://github.com/jkwang1129/SupportFlow/actions/runs/44854145977)两个job全部成功。文档范围/空选集、诊断内容排除和访客发布/索引就绪策略已完成本地/远端验收；当前Customer008/AI004、94表/1视图/5函数，新增KB列读取不授正文/文档修改。
 
-本批新增显式租户EmbeddingProfile/RuntimeEmbeddingClient，复用同一受限模型HTTP，固定单查询1024维/≤4096字节；先预留MODEL，向量/usage原子Checkpoint，恢复与密钥轮换不重请求或退预算。未把旧RAG同步Embedding移入Run账本。新50项单元含真实TCP三例/原Chat112项共162通过，AI普通645项、新14项真PG随228项专项、原全部实际Java/Loop/发布/核销联调通过，原24项拒答门禁保持。新/旧策略、取消、丢提交确认、损坏Checkpoint和共享Chat预算均有负例；usage缺失保持未知，Token8/向量0.25均合成，不是付费质量/成本数据。证据/设计/回滚见reliability-verification和ADR-0018。
+ad66e75的[CI 44856556934](https://github.com/jkwang1129/SupportFlow/actions/runs/44856556934)两个job全部成功。Runtime查询Embedding已具MODEL共享预算、原子向量Checkpoint与恢复，旧RAG尚未迁入。新50项单元/14项PG、645项AI普通/228项Runtime以及完整默认服务都已在该精确提交CI核实。
 
-下一批先在既有customer服务建立受控知识查询API（当前来源权限、发布状态/兼容向量、有限结果在业务事务内核验），再接Python签名SDK/Registry，与已完成Embedding预算组合；不让模型直接访问业务SQL。知识用户级ACL/版本与在途输出最终核验仍未全部完成。随后创建工单/可信登记路由/Profile Resolver/HITL；上下文/Eval/Trace/Token金额/运维按C～E。无生产规模、付费模型质量/Token成本或业务收益成果。
+本批在既有customer增加窄POST知识API，当前来源/发布就绪/同租户/模型标签与有限结果同事务核验，查询后再次核DB时钟TTL；复用服务签名/read-tools默认关闭。新6项Java单元/9项真实PG，客服PG共112项与Python KB19项通过；228项Runtime及实际JAR签名知识查询/原全部Loop/发布/核销回归通过。响应绑定请求SHA与投影Hash（不是全库版本），无业务副作用/模型调用。三套默认服务验收结果见reliability-verification。本批未注册Python知识工具。证据/边界/回滚见ADR-0019。
+
+下一批接Python签名SDK与严格结果核验，再接Registry的当前授权/每次重新查询，与已完成Embedding预算组合；不让模型直接访问业务SQL。知识用户级ACL/版本与在途输出最终核验仍未全部完成。随后创建工单/可信登记路由/Profile Resolver/HITL；上下文/Eval/Trace/Token金额/运维按C～E。无生产规模、付费模型质量/Token成本或业务收益成果。
