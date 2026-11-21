@@ -78,11 +78,12 @@ def existing_ticket(connection):
 
 def existing_reconciliation(url, *, ticket=False):
     from psycopg.rows import dict_row
+    from psycopg.types.json import Jsonb
     from ai.runtime.reconciliation import ReplyRecoveryCandidate, TicketRecoveryCandidate
     from ai.runtime.result import ReplyReceipt
     from ai.runtime.store import RuntimeStore
     from ai.runtime.ticket_creation import TicketCreationReceipt
-    from ai.runtime.types import Lease, RunInput
+    from ai.runtime.types import Lease, RunInput, fingerprint
 
     store = RuntimeStore(lambda: psycopg.connect(url, row_factory=dict_row))
     label = 'TICKET' if ticket else 'REPLY'
@@ -92,8 +93,18 @@ def existing_reconciliation(url, *, ticket=False):
     snapshot = uuid4()
     digest = 'a' * 64
     candidate_type = TicketRecoveryCandidate if ticket else ReplyRecoveryCandidate
-    store.reserve_step(lease, 'old-write', 'TOOL', 'WRITE', dict(operation=candidate_type.operation, version=candidate_type.version,
-        resource_ref=source.principal_ref, input_ref=str(snapshot), arguments_sha256=digest))
+    intent = dict(operation=candidate_type.operation, version=candidate_type.version,
+                  resource_ref=source.principal_ref, input_ref=str(snapshot), arguments_sha256=digest)
+    if ticket:
+        # Fixture models a reservation made by the pre-approval AI005 writer.
+        # The current writer requires the AI006 table before reserving tickets.
+        with psycopg.connect(url) as connection:
+            connection.execute('UPDATE agent_run SET step_count=1,tool_calls=1 WHERE tenant_code=%s AND run_id=%s', (source.tenant, run))
+            connection.execute("""INSERT INTO agent_step(tenant_code,run_id,step_no,step_key,kind,effect,intent_hash,intent_ref,fence)
+                VALUES(%s,%s,1,'old-write','TOOL','WRITE',%s,%s,%s)""",
+                (source.tenant, run, fingerprint(dict(kind='TOOL', effect='WRITE', intent=intent)), Jsonb(intent), lease.fence))
+    else:
+        store.reserve_step(lease, 'old-write', 'TOOL', 'WRITE', intent)
     held = store.cancel(source.tenant, run)
     candidate = candidate_type.from_rows(held, store.steps(source.tenant, run))
     if ticket:
@@ -107,6 +118,27 @@ def existing_reconciliation(url, *, ticket=False):
 
     def read():
         return store.get(source.tenant, run), store.steps(source.tenant, run), read_audit(source.tenant, run)
+    return read
+
+
+def existing_approval(url):
+    from psycopg.rows import dict_row
+    from ai.runtime.approvals import TicketApprovals
+    from ai.runtime.store import RuntimeStore
+    from ai.runtime.types import RunInput
+    from ai.runtime.worker import RuntimeWorker
+
+    store = RuntimeStore(lambda: psycopg.connect(url, row_factory=dict_row))
+    source = RunInput('APPROVAL_UP', uuid4(), 'APPROVAL_UPGRADE', 1, 774002, 'visitor-session:774001', 'approval-upgrade')
+    run = store.enqueue(source)['run_id']
+    snapshot = uuid4()
+    approvals = TicketApprovals(store)
+    runner = RuntimeWorker(store, {'runtime-v1': lambda context: approvals.pause(
+        context, snapshot, 'synthetic upgrade request', 'exact synthetic original body ')}, 'upgrade-worker')
+    assert runner.run_once(source.tenant)['state'] == 'WAITING_APPROVAL'
+
+    def read():
+        return store.get(source.tenant, run), store.steps(source.tenant, run), approvals.get(source.tenant, run)
     return read
 
 
@@ -149,7 +181,7 @@ def main():
                     assert upgrade008['applied']==['008'] and read()==before and read_kb()==before_kb
                     read_ticket=existing_ticket(connection);before_ticket=read_ticket()
                 if database=='ai_db':
-                    assert [m.version for m in plan]==['001','002','003','004','005','006']
+                    assert [m.version for m in plan]==['001','002','003','004','005','006','007']
                     applied=run_plan(connection,plan[:2])["applied"]
                     read_ai=existing_ai_step(dsn(database));before_ai=read_ai()
                     applied+=run_plan(connection,plan[:3])['applied']
@@ -166,6 +198,11 @@ def main():
                     assert connection.execute('SELECT count(*) FROM agent_ticket_reconciliation').fetchone()==(0,)
                     print('AI 004 -> 005 preserved exact Runtime Run/Step, payload and confirmed reply audit; ticket audit table initially empty',flush=True)
                     read_ticket_audit=existing_reconciliation(dsn(database),ticket=True);before_ticket_audit=read_ticket_audit()
+                    applied+=run_plan(connection,plan[:6])['applied']
+                    assert read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
+                    assert connection.execute('SELECT count(*) FROM agent_approval').fetchone()==(0,)
+                    print('AI 005 -> 006 preserved exact Runtime rows, payload and both reconciliation ledgers; approval table initially empty',flush=True)
+                    read_approval=existing_approval(dsn(database));before_approval=read_approval()
                 result=run_plan(connection,plan)
                 assert applied+result["applied"]==[migration.version for migration in plan]
                 if database=='customer_db':
@@ -186,9 +223,9 @@ def main():
                     print('007 -> 008 preserved existing business/source/draft/chunk data; granted only index_status SELECT; 3 unsafe capability states rejected',flush=True)
                     print('008 -> 009 preserved every existing ticket/source/message/knowledge field; immutable ticket receipt initially empty; old global ticket PK retained',flush=True)
                 if database=='ai_db':
-                    assert result['applied']==['006'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
-                    assert connection.execute('SELECT count(*) FROM agent_approval').fetchone()==(0,)
-                    print('AI 005 -> 006 preserved exact Runtime rows, payload and both reconciliation ledgers; approval table initially empty',flush=True)
+                    assert result['applied']==['007'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
+                    assert read_approval()==before_approval
+                    print('AI 006 -> 007 preserved waiting approval, checkpoint reference, budgets and previous audit rows',flush=True)
                 assert run_plan(connection,plan)["applied"]==[]
                 run_plan(connection,plan,verify=True)
         runtime_password=secrets.token_hex(24)

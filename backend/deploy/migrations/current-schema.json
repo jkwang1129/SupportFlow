@@ -4,7 +4,7 @@
       "database": "ai_db",
       "format": 1,
       "functions": {
-        "supportflow_agent_due_tenants(p_limit integer)": "CREATE OR REPLACE FUNCTION public.supportflow_agent_due_tenants(p_limit integer)\n RETURNS TABLE(tenant_code character varying)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n SELECT r.tenant_code FROM public.agent_run r\n WHERE ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())\n    OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))\n AND NOT EXISTS(SELECT 1 FROM public.agent_run earlier WHERE earlier.tenant_code=r.tenant_code AND earlier.session_no=r.session_no\n    AND earlier.run_id<>r.run_id AND (earlier.state='RUNNING' OR\n       (earlier.event_seq<r.event_seq AND (earlier.state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR earlier.error_code='SIDE_EFFECT_UNKNOWN'))))\n GROUP BY r.tenant_code ORDER BY min(r.created_at),r.tenant_code\n LIMIT greatest(1,least(coalesce(p_limit,32),100))\n$function$\n"
+        "supportflow_agent_due_tenants(p_limit integer)": "CREATE OR REPLACE FUNCTION public.supportflow_agent_due_tenants(p_limit integer)\n RETURNS TABLE(tenant_code character varying)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n WITH due AS (\n   SELECT r.tenant_code,r.created_at FROM public.agent_run r\n   WHERE ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())\n      OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))\n   AND NOT EXISTS(SELECT 1 FROM public.agent_run earlier WHERE earlier.tenant_code=r.tenant_code AND earlier.session_no=r.session_no\n      AND earlier.run_id<>r.run_id AND (earlier.state='RUNNING' OR\n         (earlier.event_seq<r.event_seq AND (earlier.state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR earlier.error_code='SIDE_EFFECT_UNKNOWN'))))\n   UNION ALL\n   SELECT r.tenant_code,r.created_at FROM public.agent_approval a\n   JOIN public.agent_run r ON r.tenant_code=a.tenant_code AND r.run_id=a.run_id\n   WHERE a.status IN ('PENDING','APPROVED') AND a.expires_at<=clock_timestamp()\n     AND r.state IN ('WAITING_APPROVAL','PENDING','RETRY_WAIT','RUNNING')\n     AND NOT EXISTS(SELECT 1 FROM public.agent_step s WHERE s.tenant_code=r.tenant_code AND s.run_id=r.run_id\n       AND s.effect='WRITE' AND s.state IN ('RESERVED','UNKNOWN'))\n )\n SELECT due.tenant_code FROM due GROUP BY due.tenant_code\n ORDER BY min(due.created_at),due.tenant_code\n LIMIT greatest(1,least(coalesce(p_limit,32),100))\n$function$\n"
       },
       "tables": {
         "agent_approval": {
@@ -172,6 +172,10 @@
             "agent_approval_tool_name_check": "CHECK (((tool_name)::text = 'create_ticket'::text))"
           },
           "indexes": {
+            "agent_approval_due_idx": {
+              "definition": "CREATE INDEX agent_approval_due_idx ON public.agent_approval USING btree (tenant_code, expires_at, run_id) WHERE ((status)::text = ANY ((ARRAY['PENDING'::character varying, 'APPROVED'::character varying])::text[]))",
+              "valid": true
+            },
             "agent_approval_pkey": {
               "definition": "CREATE UNIQUE INDEX agent_approval_pkey ON public.agent_approval USING btree (tenant_code, run_id)",
               "valid": true
@@ -13788,6 +13792,10 @@
       {
         "checksum": "9e4fc45f3cffdef0eb8ccea0798fbca265d611c4bbd0e826ea29caaa03de26e4",
         "version": "006"
+      },
+      {
+        "checksum": "9305aff58869f20d7251a0a791e9288dd65809919b1eef37ffd0844207ef5952",
+        "version": "007"
       }
     ],
     "billing_db": [

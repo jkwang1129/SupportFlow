@@ -180,6 +180,28 @@ class TicketApprovals:
                 return row
             return self._close(connection, run, row, 'EXPIRED', 'system:approval-expiry', now)
 
+    def expire_due(self, tenant, *, limit=16):
+        """Settle a bounded batch before claiming the tenant's next task."""
+        if type(limit) is not int or not 1 <= limit <= 32:
+            raise ValueError('Approval expiry batch must be bounded')
+        with self.store._scope(tenant) as connection:
+            runs = connection.execute("""SELECT r.* FROM agent_approval a JOIN agent_run r
+                ON r.tenant_code=a.tenant_code AND r.run_id=a.run_id
+                WHERE r.tenant_code=%s AND a.status IN ('PENDING','APPROVED') AND a.expires_at<=clock_timestamp()
+                    AND r.state IN ('WAITING_APPROVAL','PENDING','RETRY_WAIT','RUNNING')
+                    AND NOT EXISTS(SELECT 1 FROM agent_step s WHERE s.tenant_code=r.tenant_code AND s.run_id=r.run_id
+                        AND s.effect='WRITE' AND s.state IN ('RESERVED','UNKNOWN'))
+                ORDER BY a.expires_at,r.run_id LIMIT %s FOR UPDATE OF r SKIP LOCKED""", (tenant, limit)).fetchall()
+            closed = 0
+            for run in runs:
+                approval = self._approval(connection, tenant, run['run_id'])
+                now = self._clock(connection)
+                if (approval is not None and approval['status'] in ('PENDING', 'APPROVED')
+                        and approval['expires_at'] <= now and not self.store._unknown_write(connection, run)):
+                    self._close(connection, run, approval, 'EXPIRED', 'system:approval-expiry', now)
+                    closed += 1
+            return closed
+
     @staticmethod
     def _approval(connection, tenant, run_id):
         return connection.execute('SELECT * FROM agent_approval WHERE tenant_code=%s AND run_id=%s FOR UPDATE',

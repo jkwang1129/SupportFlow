@@ -56,11 +56,11 @@ def verify_ticket_approval(connect, base, secret, store):
                 db.execute("""UPDATE agent_approval SET requested_at=clock_timestamp()-interval '3 minutes',
                     decided_at=clock_timestamp()-interval '150 seconds',expires_at=clock_timestamp()-interval '2 minutes'
                     WHERE tenant_code=%s AND run_id=%s""", (tenant, run))
-            expired = approvals.expire(tenant, run, row['approval_id'])
-            assert expired['status'] == 'EXPIRED'
-
         resumed = RuntimeWorker(store, {'runtime-v1': lambda ctx: TicketApprovals(store).execute(ctx, executor)}, 'approval-second')
-        result = resumed.run_once(tenant) if mode != 'expired_before_resume' else store.get(tenant, run)
+        result = resumed.run_once(tenant)
+        if mode == 'expired_before_resume':
+            assert result is None
+            result = store.get(tenant, run)
         assert resumed.run_once(tenant) is None
         audit = approvals.get(tenant, run)
         writes = [step for step in store.steps(tenant, run) if step['effect'] == 'WRITE']

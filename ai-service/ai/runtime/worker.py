@@ -151,6 +151,8 @@ class RuntimeWorker:
         stopped, lost = Event(), Event()
         heartbeat = None
         try:
+            from .approvals import TicketApprovals
+            TicketApprovals(self.store).expire_due(tenant)
             run = self.store.claim_next(tenant, self.owner, lease_seconds=self.lease_seconds)
             if run is None:
                 return None

@@ -34,6 +34,7 @@ def main():
         command += [environment['SUPPORTFLOW_TEST_PG_CONTAINER'], 'psql', '-h', '127.0.0.1',
                     '-U', 'supportflow', '-d', 'postgres', '-wXq', '-v', 'ON_ERROR_STOP=1']
         provisioning = (ROOT/'backend/deploy/db-init/40-runtime-roles.sql').read_text(encoding='utf-8')
+        approval_role_guard = next(migration for migration in plans['ai_db'] if migration.version == '006')
         # Both migration SQL and credential provisioning must reject a pre-existing
         # elevated capability group; all faults are in this disposable cluster.
         for unsafe, restore in [('LOGIN', 'NOLOGIN'), ('BYPASSRLS', 'NOBYPASSRLS'), ('CREATEROLE', 'NOCREATEROLE')]:
@@ -41,7 +42,7 @@ def main():
                 connection.execute(f'ALTER ROLE supportflow_agent_runtime {unsafe}')
                 try:
                     with connection.transaction():
-                        connection.execute(plans['ai_db'][-1].content)
+                        connection.execute(approval_role_guard.content)
                 except psycopg.errors.RaiseException as failure:
                     assert 'non-administrative' in str(failure)
                 else:
@@ -80,6 +81,7 @@ def main():
                         'tests/test_approval_storage_postgres.py',
                         'tests/test_approval_lifecycle_postgres.py',
                         'tests/test_approval_consumption_postgres.py',
+                        'tests/test_approval_expiry_postgres.py',
                         f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)
         with connect('ai_db') as connection:

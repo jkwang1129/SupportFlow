@@ -1073,3 +1073,18 @@ cdda89c 的 [CI 44890433299](https://github.com/jkwang1129/SupportFlow/actions/r
 - AI 普通测试 923 项通过、367 项条件跳过、1 项既有预期失败，为追加两例前的全量结果。24 项 RAG 契约全部通过。首次从仓库根直接调用 pytest 导致 AI 模块导入失败，切换到 `ai-service` 工作目录通过。保留 `b3-approval-consumption-ai.log`、`b3-approval-consumption-ai-final.log` 和 XML。
 
 批准后的会话接管会使任务失败，已记录的审批决定仍可审计。审批消费失败不会增加写次数。此阶段的决定入口面向可信宿主。自动过期调度与坐席身份接入另行验收。回滚停用审批执行入口并保留原检查点、审计、预算和业务回执。见 [ADR-0031](decisions/0031-approval-consumption-and-expiry.md)。
+
+2d64038 的 [CI 44890932330](https://github.com/jkwang1129/SupportFlow/actions/runs/44890932330) 前后端任务均通过。
+
+## B3 自动发现和关闭到期审批（2026-11-21）
+
+基于 83bb132。新增 AI007 的到期索引和现有租户发现函数分支。Worker 处理当前租户的有限批次，每次默认 16 条。按 Run 再审批记录加锁，跳过已锁任务，复查数据库时钟、审批状态和未知副作用。闭合过期审批与终止等待任务同事务。保留审核决定、检查点和预算，同会话下一条任务可继续。跨租户记录及已消费写入保持原有处理规则。
+
+- 在隔离 PostgreSQL 17 设置 `PYTEST_ADDOPTS='-k "approval or runtime_worker"'`，执行 `python scripts/test-agent-runtime.py`。77 项通过，其中新增 4 项验证租户到期发现、后续会话工作、获批过期不进处理器、锁跳过、跨租户和未知写保持。首轮角色负面夹具误用最新版本 SQL，导致重复创建到期索引。将夹具明确绑定含能力守卫的 AI006 后通过。日志 `b3-approval-expiry-pg.log`、`b3-approval-expiry-pg-final.log`。
+- `python scripts/test-versioned-migrations.py` 17 项通过。005 的历史写步骤按当时契约植入，避免用需 AI006 的现版本写入方法模拟旧行为。006 → 007 保留已有审批、任务、检查点和预算，既有回复和工单核销记录逐字段一致。`b3-approval-expiry-upgrade.log`。
+- `python scripts/test-schema-drift.py` 通过 97 表、1 视图、5 受控函数和 17 项漂移检查。候选对比差异仅为 AI007、到期索引和租户发现函数。`b3-approval-expiry-drift.log`。
+- `python scripts/test-security-flow.py` 退出 0。默认新库、旧库升级和 CLI 初始化三套完整服务通过，核实 AI007 及审批权限。`b3-approval-expiry-services.log`。
+
+83bb132 的 [CI 44891384398](https://github.com/jkwang1129/SupportFlow/actions/runs/44891384398) 通过 Runtime 联调，迁移测试因旧库夹具调用当前建单预留方法而失败，错误为 AI005 中找不到审批表。当前批修正了夹具，17 项本地迁移测试和旧库完整服务通过。该失败运行记录继续保留。
+
+回滚可停用 Worker 到期调度，保留 AI007、历史审批和回执，由可信宿主显式处理仍到期的任务。真实业务评测使用隔离合成样本。坐席审查入口按 ADR-0032 另行交付。
