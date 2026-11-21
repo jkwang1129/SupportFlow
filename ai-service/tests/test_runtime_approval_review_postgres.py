@@ -1,4 +1,5 @@
 """Signed review requests change only the exact persisted tenant proposal."""
+from datetime import datetime
 import os
 from uuid import uuid4
 
@@ -6,9 +7,9 @@ from fastapi.testclient import TestClient
 import pytest
 
 from runtime_api_support import PATH, build_app
-from test_approval_lifecycle_postgres import elapsed, wait
+from test_approval_lifecycle_postgres import CONTENT, TITLE, elapsed, wait
 from test_runtime_approval_review import post
-from test_runtime_store_postgres import store
+from test_runtime_store_postgres import admin, store
 
 pytestmark = pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'), reason='requires disposable runtime PostgreSQL')
 
@@ -65,3 +66,55 @@ def test_expired_review_returns_conflict_after_recording_expiry(store, monkeypat
         assert failure.status_code == 409 and failure.json() == {'detail': 'Approval has expired'}
     assert approvals.get(source.tenant, row['run_id'])['status'] == 'EXPIRED'
     assert store.get(source.tenant, row['run_id'])['error_code'] == 'APPROVAL_EXPIRED'
+
+
+def test_preview_preserves_original_terms_and_never_advances_run(store, monkeypatch):
+    app, review, command, source, waiting, approvals, row = setup(store, monkeypatch)
+    route = f"{PATH}/{row['run_id']}/ticket-approval-preview"
+    ref = {'source_event_id': str(source.source_event_id)}
+    with TestClient(app) as client:
+        result = post(client, route, ref)
+        assert result.status_code == 200 and result.headers['cache-control'] == 'no-store'
+        assert result.json() == dict(approval_id=str(row['approval_id']), status='PENDING',
+            expires_at=result.json()['expires_at'], arguments_sha256=row['arguments_sha256'], title=TITLE, content=CONTENT)
+        assert datetime.fromisoformat(result.json()['expires_at']) == row['expires_at']
+        assert store.get(source.tenant, row['run_id']) == waiting
+        assert approvals.get(source.tenant, row['run_id']) == row
+        assert post(client, review, command).status_code == 200
+        assert post(client, route, ref).json()['status'] == 'APPROVED'
+
+
+def test_wrong_tenant_or_source_cannot_read_terms(store, monkeypatch):
+    app, _, _, source, _, _, row = setup(store, monkeypatch)
+    route = f"{PATH}/{row['run_id']}/ticket-approval-preview"
+    with TestClient(app) as client:
+        wrong_tenant = post(client, route, {'source_event_id': str(source.source_event_id)}, tenant='TENANT_B')
+        wrong_event = post(client, route, {'source_event_id': str(uuid4())})
+    assert wrong_tenant.status_code == wrong_event.status_code == 404
+    assert wrong_tenant.json() == wrong_event.json() == {'detail': 'Approval proposal not found'}
+
+
+@pytest.mark.parametrize('close', ['deny', 'revoke', 'expires'])
+def test_closed_or_expired_terms_are_unavailable(store, monkeypatch, close):
+    app, review, command, source, _, _, row = setup(store, monkeypatch)
+    route = f"{PATH}/{row['run_id']}/ticket-approval-preview"
+    with TestClient(app) as client:
+        if close == 'revoke':
+            assert post(client, review, command).status_code == 200
+        if close == 'expires':
+            elapsed(row)
+        else:
+            assert post(client, review, command | {'decision': close}).status_code == 200
+        before = store.get(source.tenant, row['run_id'])
+        assert post(client, route, {'source_event_id': str(source.source_event_id)}).status_code == 404
+    assert store.get(source.tenant, row['run_id']) == before
+
+
+def test_invalid_checkpoint_digest_never_returns_terms(store, monkeypatch):
+    app, _, _, source, _, _, row = setup(store, monkeypatch)
+    route = f"{PATH}/{row['run_id']}/ticket-approval-preview"
+    with admin() as connection:
+        connection.execute('UPDATE agent_payload SET payload_hash=%s WHERE run_id=%s', ('0'*64, row['run_id']))
+    with TestClient(app) as client:
+        reply = post(client, route, {'source_event_id': str(source.source_event_id)})
+    assert reply.status_code == 409 and reply.json() == {'detail': 'Approval proposal is unavailable'}

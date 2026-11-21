@@ -3,7 +3,7 @@ from typing import Literal
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
 
 from ..config import get_settings
@@ -49,20 +49,28 @@ class EmptyRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
-class TicketApprovalReviewRequest(BaseModel):
+class TicketApprovalSource(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    approval_id: StrictStr = Field(min_length=36, max_length=36)
     source_event_id: StrictStr = Field(min_length=36, max_length=36)
+
+    @field_validator('source_event_id')
+    @classmethod
+    def event_uuid(cls, value):
+        if str(UUID(value)) != value:
+            raise ValueError('Canonical review UUID required')
+        return value
+
+
+class TicketApprovalReviewRequest(TicketApprovalSource):
+    approval_id: StrictStr = Field(min_length=36, max_length=36)
     arguments_sha256: StrictStr = Field(pattern=r'^[0-9a-f]{64}$')
     reviewer_ref: StrictStr = Field(pattern=r'^staff:[1-9][0-9]{0,18}$')
     decision: Literal['approve','deny','revoke']
 
-    @field_validator('approval_id', 'source_event_id')
+    @field_validator('approval_id')
     @classmethod
-    def canonical_uuid(cls, value):
-        if str(UUID(value)) != value:
-            raise ValueError('Canonical review UUID required')
-        return value
+    def approval_uuid(cls, value):
+        return cls.event_uuid(value)
 
     @field_validator('reviewer_ref')
     @classmethod
@@ -188,3 +196,20 @@ def review_ticket_approval(run_id: UUID, body: TicketApprovalReviewRequest, requ
     if row['status'] == 'EXPIRED':
         raise HTTPException(409, 'Approval has expired')
     return {'approval_id': row['approval_id'], 'status': row['status']}
+
+
+@router.post('/{run_id}/ticket-approval-preview')
+def ticket_approval_preview(run_id: UUID, body: TicketApprovalSource, request: Request, response: Response,
+                            store=Depends(runtime_store)):
+    if not get_settings().runtime_approval_review_enabled:
+        raise HTTPException(503, 'Runtime approval review is disabled')
+    try:
+        row = TicketApprovals(store).preview(request.state.runtime_tenant, run_id, UUID(body.source_event_id))
+    except RuntimeConflict:
+        raise HTTPException(409, 'Approval proposal is unavailable') from None
+    except psycopg.Error:
+        raise HTTPException(503, 'Approval persistence unavailable') from None
+    if row is None:
+        raise HTTPException(404, 'Approval proposal not found')
+    response.headers['Cache-Control'] = 'no-store'
+    return row

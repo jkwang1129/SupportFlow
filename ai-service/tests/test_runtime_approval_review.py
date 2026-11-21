@@ -85,3 +85,23 @@ def test_bad_signature_and_duplicate_body_are_rejected_before_business(monkeypat
         assert client.post(route, content=raw, headers={'Content-Type': 'application/json'}).status_code == 401
         assert client.post(route, content=duplicate, headers=signed('POST', route, raw)).status_code == 401
         assert client.post(route, content=duplicate, headers=signed('POST', route, duplicate)).status_code == 400
+
+
+@pytest.mark.parametrize('caller, enabled, status', [('gateway', True, 403), ('ops', True, 403),
+    ('tenant', True, 403), ('customer', False, 503)])
+def test_preview_requires_customer_identity_and_review_flag(monkeypatch, caller, enabled, status):
+    monkeypatch.setattr(runtime, 'TicketApprovals', lambda _: pytest.fail('Disallowed preview reached storage'))
+    app = build_app(monkeypatch, store=object(), approval_enabled=enabled)
+    with TestClient(app) as client:
+        route = f'{PATH}/{uuid4()}/ticket-approval-preview'
+        assert post(client, route, {'source_event_id': str(uuid4())}, caller=caller).status_code == status
+
+
+@pytest.mark.parametrize('value', [{'source_event_id': 'bad'}, {'source_event_id': str(uuid4()), 'title': 'new'},
+                                 {'source_event_id': str(uuid4()), 'payload_ref': 'untrusted'}])
+def test_preview_input_only_accepts_canonical_source_reference(monkeypatch, value):
+    monkeypatch.setattr(runtime, 'TicketApprovals', lambda _: pytest.fail('Invalid preview reached storage'))
+    app = build_app(monkeypatch, store=object(), approval_enabled=True)
+    with TestClient(app) as client:
+        route = f'{PATH}/{uuid4()}/ticket-approval-preview'
+        assert post(client, route, value).status_code == 422

@@ -68,9 +68,7 @@ class ToolIdentity:
     @classmethod
     def from_context(cls, context):
         run, lease = context.run, context.lease
-        source = RunInput(
-            run['tenant_code'], run['source_event_id'], run['session_no'],
-            run['event_seq'], run['message_id'], run['principal_ref'], run['trace_id'], run['runtime_version'])
+        source = RunInput.from_run(run)
         if source.tenant != lease.tenant or run['run_id'] != lease.run_id:
             raise PermanentFailure('TOOL_IDENTITY_INVALID')
         return cls(source, lease.run_id)

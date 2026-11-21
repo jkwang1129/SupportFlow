@@ -67,6 +67,8 @@ class RuntimeAuthMiddleware:
                    or (scope['method'] == 'POST' and path.endswith('/authorize') and RUN_PATH.fullmatch(path[:-10]))
                    or (scope['method'] == 'POST' and path.endswith('/review-ticket-approval')
                        and RUN_PATH.fullmatch(path.removesuffix('/review-ticket-approval')))
+                   or (scope['method'] == 'POST' and path.endswith('/ticket-approval-preview')
+                       and RUN_PATH.fullmatch(path.removesuffix('/ticket-approval-preview')))
                    or (scope['method'] == 'POST' and path.endswith('/cancel') and RUN_PATH.fullmatch(path[:-7])))
         if caller != 'customer' or not allowed or query or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,15}', tenant) or tenant.upper() == 'PLATFORM':
             return await reject(403, 'Runtime operation is not authorized')

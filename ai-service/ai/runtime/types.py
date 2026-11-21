@@ -71,6 +71,11 @@ class RunInput:
         data['source_event_id'] = str(self.source_event_id)
         return fingerprint({'input':data,'limits':asdict(limits)})
 
+    @classmethod
+    def from_run(cls, run):
+        return cls(run['tenant_code'], run['source_event_id'], run['session_no'],
+                   run['event_seq'], run['message_id'], run['principal_ref'], run['trace_id'], run['runtime_version'])
+
 
 @dataclass(frozen=True)
 class Lease:

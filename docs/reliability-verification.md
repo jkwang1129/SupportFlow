@@ -1108,3 +1108,10 @@ cdda89c 的 [CI 44890433299](https://github.com/jkwang1129/SupportFlow/actions/r
 - JDK 25 运行 `mvn -B -f backend/pom.xml verify` 通过。新增 4 项 TCP 单元测试，包括精确签名、大整数坐席 ID、拒绝变更的决定响应以及重复投递确认，日志 `b3-java-review-backend.log`。
 - 初次完整 Runtime 联调的既有 `lost_ack` 工单用例已提交且尝试一次查询，但未能确认回执，Run 保留 `SIDE_EFFECT_UNKNOWN`。夹具原先用一秒期限共享模拟丢确认和回执查询。改为确认上游提交后断开测试代理连接，保留正常三秒查询期限。10 项写工具路径复测通过，包含两例只读核销和一例无回执保持阻断。日志 `b3-java-review-runtime.log` 和 `b3-java-review-and-preview-runtime.log`。
 - 以 `PYTEST_ADDOPTS='-k runtime_approval_review'` 执行 `python scripts/test-agent-runtime.py --with-java-delivery`。实际客服 JAR、AI 服务与 PostgreSQL 的 3 条坐席审批用例通过。匿名、普通坐席、错摘要分别返回 401、403、409，消费前重放仍为原审批。批准后建单 1 张、工单事件和回执各 1 条。批准后来源接管或过期各 0 张工单。身份令牌和用户角色响应由隔离夹具生成，调用进入真实登录过滤器和角色客户端；角色夹具首轮缺少标准时间戳而被拒绝，补齐响应后通过。日志 `b3-java-review-api-final.log`、机器报告 `runtime-ticket-approval.json` v3。
+
+## B3 签名提案预览（2026-11-21）
+
+AI 内部预览承接客服签名的 Run 和来源，沿用审批开关。预览在受限租户事务下用共享锁读取任务，复用审批恢复的原检查点和参数摘要核验。只返回等待或尚未消费的有效提案，响应禁止缓存。读操作不改变任务、审批、步骤或预算。回滚关闭审批开关或回退预览路由，原检查点和决定继续保留。客服侧提案显示及发现另行接入。
+
+- `python -m pytest -q tests/test_runtime_approval_review.py tests/test_runtime_api.py tests/test_runtime_ticket_authority.py` 73 项通过，新增 7 项签名服务、默认关闭和参数范围用例。全 AI 测试 945 项通过、384 项条件跳过、1 项原有预期失败。RAG 契约 24 项通过。日志和 XML 位于 `.local/implementation/b3-approval-preview-*`。
+- `PYTEST_ADDOPTS='-k approval' python scripts/test-agent-runtime.py` 所选 59 项隔离 PostgreSQL 测试通过，其中 6 项新增覆盖原文和有效期、跨租户与来源、撤销、拒绝、过期、正文摘要异常。首轮预览调用缺少 Run 来源转换方法，两项用例报错，补齐共享方法后 59 项通过。原始日志为 `b3-java-review-runtime-final.log` 和 `b3-java-review-and-preview-runtime.log`。后者的 Runtime 联调部分另含客服角色夹具修正前的失败，最终真实接口结果记录在上一批。

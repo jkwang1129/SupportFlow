@@ -6,7 +6,7 @@ from psycopg.types.json import Jsonb
 
 from .ticket_creation import arguments_hash
 from .tools import ToolCall, ToolExecutor, ToolIdentity, WriteTool
-from .types import RuntimeConflict, fingerprint, identifier
+from .types import RunInput, RuntimeConflict, fingerprint, identifier
 from .worker import ApprovalPending
 
 _OPERATION = 'ticket.create'
@@ -78,6 +78,28 @@ class TicketApprovals:
             return connection.execute('SELECT * FROM agent_approval WHERE tenant_code=%s AND run_id=%s',
                                       (tenant, UUID(str(run_id)))).fetchone()
 
+    def preview(self, tenant, run_id, source_event_id):
+        """Read the exact proposal from a live approval without advancing the Run."""
+        with self.store._scope(tenant) as connection:
+            run = connection.execute("""SELECT * FROM agent_run
+                WHERE tenant_code=%s AND run_id=%s AND source_event_id=%s FOR SHARE""",
+                (tenant, run_id, source_event_id)).fetchone()
+            if run is None:
+                return None
+            row = connection.execute('SELECT * FROM agent_approval WHERE tenant_code=%s AND run_id=%s',
+                                     (tenant, run_id)).fetchone()
+            if row is None or row['principal_ref'] != run['principal_ref']:
+                return None
+            if not (row['status'] == 'PENDING' and run['state'] == 'WAITING_APPROVAL'
+                    or row['status'] == 'APPROVED' and run['state'] in ('PENDING', 'RETRY_WAIT', 'RUNNING')):
+                return None
+            now = self._clock(connection)
+            if min(row['expires_at'], run['deadline_at']) <= now:
+                return None
+            args = self._checkpoint(connection, RunInput.from_run(run), run, row)
+            return dict(approval_id=row['approval_id'], status=row['status'], expires_at=row['expires_at'],
+                        arguments_sha256=args['arguments_sha256'], title=args['title'], content=args['content'])
+
     def decide(self, tenant, run_id, approval_id, reviewer, *, approve, expected=None):
         if type(approve) is not bool:
             raise ValueError('Approval decision must be explicit')
@@ -124,31 +146,35 @@ class TicketApprovals:
                     raise RuntimeConflict('Consumed approval has no verified successful write')
             elif row['status'] != 'APPROVED' or row['expires_at'] <= self._clock(connection):
                 raise RuntimeConflict('Live approval is unavailable')
-            refs = run['result_ref']
-            if (refs.get('outcome') != 'waiting-approval' or refs.get('resource_ref') != str(row['approval_id'])
-                    or refs.get('arguments_sha256') != row['arguments_sha256']
-                    or refs.get('operation') != _OPERATION or refs.get('version') != _VERSION):
-                raise RuntimeConflict('Approval checkpoint reference changed')
-            try:
-                payload_ref = refs['input_ref']
-                payload_id = UUID(payload_ref.removeprefix('payload:'))
-                if payload_ref != 'payload:'+str(payload_id):
-                    raise ValueError()
-            except (KeyError, TypeError, ValueError, AttributeError):
-                raise RuntimeConflict('Approval checkpoint reference is invalid') from None
-        payload = self.store.payload(lease.tenant, lease.run_id, payload_id)
+            args = self._checkpoint(connection, identity.source, run, row)
+        context.check_active()
+        return args
+
+    def _checkpoint(self, connection, source, run, row):
+        refs = run['result_ref']
+        if (refs.get('outcome') != 'waiting-approval' or refs.get('resource_ref') != str(row['approval_id'])
+                or refs.get('arguments_sha256') != row['arguments_sha256']
+                or refs.get('operation') != _OPERATION or refs.get('version') != _VERSION):
+            raise RuntimeConflict('Approval checkpoint reference changed')
+        try:
+            payload_ref = refs['input_ref']
+            payload_id = UUID(payload_ref.removeprefix('payload:'))
+            if payload_ref != 'payload:'+str(payload_id):
+                raise ValueError()
+        except (KeyError, TypeError, ValueError, AttributeError):
+            raise RuntimeConflict('Approval checkpoint reference is invalid') from None
+        payload = self.store._payload(connection, source.tenant, run['run_id'], payload_id)
         if payload is None or payload.schema != 'working-state-v1':
             raise RuntimeConflict('Approval checkpoint is unavailable')
         value = payload.value
         try:
             if set(value) != {'title', 'content', 'snapshot_id', 'arguments_sha256'}:
                 raise ValueError()
-            digest = arguments_hash(identity.source, identity.run_id, row['snapshot_id'], value['title'], value['content'])
+            digest = arguments_hash(source, run['run_id'], row['snapshot_id'], value['title'], value['content'])
             if digest != row['arguments_sha256'] or value['arguments_sha256'] != digest or value['snapshot_id'] != str(row['snapshot_id']):
                 raise ValueError()
         except (TypeError, ValueError):
             raise RuntimeConflict('Approval checkpoint arguments changed') from None
-        context.check_active()
         return dict(snapshot_id=row['snapshot_id'], title=value['title'], content=value['content'], arguments_sha256=digest)
 
     def execute(self, context, executor):

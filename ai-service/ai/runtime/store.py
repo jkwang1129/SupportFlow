@@ -398,12 +398,16 @@ class RuntimeStore:
 
     def payload(self,tenant,run_id,payload_id):
         with self._scope(tenant) as connection:
-            row=connection.execute('''SELECT * FROM agent_payload WHERE tenant_code=%s AND run_id=%s AND payload_id=%s
-                AND expires_at>clock_timestamp()''',(tenant,UUID(str(run_id)),UUID(str(payload_id)))).fetchone()
-            if row is None:return None
-            try:value=decode_payload(row['payload_schema'],row['payload_json'],row['payload_hash'])
-            except (ValueError,TypeError,UnicodeError,RecursionError):raise RuntimeConflict('Persisted payload is invalid') from None
-            return StepPayload(row['payload_id'],row['run_id'],row['step_no'],row['payload_schema'],row['payload_hash'],value,row['created_at'],row['expires_at'])
+            return self._payload(connection,tenant,run_id,payload_id)
+
+    @staticmethod
+    def _payload(connection,tenant,run_id,payload_id):
+        row=connection.execute('''SELECT * FROM agent_payload WHERE tenant_code=%s AND run_id=%s AND payload_id=%s
+            AND expires_at>clock_timestamp()''',(tenant,UUID(str(run_id)),UUID(str(payload_id)))).fetchone()
+        if row is None:return None
+        try:value=decode_payload(row['payload_schema'],row['payload_json'],row['payload_hash'])
+        except (ValueError,TypeError,UnicodeError,RecursionError):raise RuntimeConflict('Persisted payload is invalid') from None
+        return StepPayload(row['payload_id'],row['run_id'],row['step_no'],row['payload_schema'],row['payload_hash'],value,row['created_at'],row['expires_at'])
 
     def complete_step(self, lease: Lease, step_key, state, result_ref):
         identifier(step_key)
