@@ -1,0 +1,54 @@
+"""Read live Runtime trace metadata from PostgreSQL with the restricted account."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+from ai.runtime.types import RuntimeConflict
+from ai.runtime.worker import RuntimeWorker
+from test_runtime_store_postgres import admin, request, store
+
+pytestmark = pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'), reason='requires disposable runtime PostgreSQL')
+
+
+def test_trace_cli_exports_run_and_ordered_steps_without_private_references(store, tmp_path):
+    source = request()
+    queued = store.enqueue(source)
+    run = queued['run_id']
+
+    def handler(context):
+        context.payload_step('fixture-private-step', 'TOOL', 'READ', {'resource_ref': 'fixture-private-resource'},
+                             'tool-output-v1', lambda: {'content': 'fixture-private-content'})
+        return {'outcome': 'fixture-private-result'}
+
+    completed = RuntimeWorker(store, {'runtime-v1': handler}, 'fixture-private-owner').run_once(source.tenant)
+    assert completed['state'] == 'SUCCEEDED'
+    assert store.trace_snapshot('TENANT_B', run) is None
+    server_env = {key: os.environ[key] for key in ('PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP') if key in os.environ}
+    server_env.update(PYTHONUTF8='1', PYTHONPATH=str(Path(__file__).resolve().parents[1]),
+                      SUPPORTFLOW_AI_DATABASE_URL=os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'])
+    export = subprocess.run([sys.executable, '-m', 'ai.runtime.trace_export', '--tenant', source.tenant, '--run', str(run)],
+                            cwd=tmp_path, env=server_env, capture_output=True, text=True, encoding='utf-8', timeout=10)
+    assert export.returncode == 0 and 'fixture-private-' not in export.stdout + export.stderr
+    trace = json.loads(export.stdout)
+    assert trace['schema_version'] == 'runtime-trace-v1'
+    assert {'run_id', 'trace_id', 'state', 'error_code', 'created_at', 'finished_at'} <= trace['run'].keys()
+    assert trace['run']['state'] == 'SUCCEEDED' and trace['run']['tool_calls'] == 1
+    assert trace['run']['run_id'] == str(run) and trace['run']['trace_id'] == source.trace_id
+    step, = trace['steps']
+    assert set(step) == {'step_no', 'kind', 'effect', 'state', 'created_at', 'completed_at'}
+    assert (step['step_no'], step['kind'], step['effect'], step['state']) == (1, 'TOOL', 'READ', 'SUCCEEDED')
+    assert store.get(source.tenant, run) == completed
+
+
+def test_incomplete_trace_is_rejected_without_correcting_the_database(store):
+    source = request()
+    run = store.enqueue(source)['run_id']
+    with admin() as db:
+        db.execute('UPDATE agent_run SET step_count=1 WHERE run_id=%s', (run,))
+    with pytest.raises(RuntimeConflict, match='inconsistent'):
+        store.trace_snapshot(source.tenant, run)
+    assert store.get(source.tenant, run)['step_count'] == 1 and store.steps(source.tenant, run) == []

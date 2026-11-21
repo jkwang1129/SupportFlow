@@ -1220,3 +1220,11 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - `python scripts/report-rag-contract.py --junit .local/implementation/c2-rag-citation-gated.xml --require-citations --output .local/implementation/c2-rag-citation-report.json` 确认原拒答门禁 24 项和引用门禁 10 项全过。报告器 6 项测试通过，缺少引用案例会单独使 CI 失败。旧报告调用保留原 24 项口径及历史基线对照。
 
 当前只核对编号与召回来源的绑定，尚需验证单句事实由引用支持。回滚时一起回退生成结果流转与新门禁，既有数据库无迁移。
+
+## D1 Runtime 轨迹元数据导出（2026-11-22）
+
+从 AI 服务目录执行 `python -m ai.runtime.trace_export --tenant TENANT_A --run RUN_UUID`。本地运营入口使用受限数据库角色，按指定租户读取一个 Run。短共享锁下导出步骤顺序、类型、状态、时间与预算计数，检测步骤数异常。输出为版本化 JSON，固定投影不读业务引用、租约持有者或检查点正文。回滚停止调用导出入口，Runtime 表和执行路径无需更改。
+
+- `PYTEST_ADDOPTS='-k runtime_trace' python scripts/test-agent-runtime.py` 在真实 PostgreSQL 17 通过 2 项。通过独立 CLI 进程验证投影、顺序、跨租户缺失及读前读后状态一致，并验证不完整轨迹拒绝。首轮夹具为工具步骤误用了工作状态 Schema，改用原工具结果 Schema 后通过。原日志 `d1-runtime-trace-pg.log`、`d1-runtime-trace-pg-final.log`。
+
+这批提供受限运营导出。离线故障轨迹检查、网页查询和业务执行重演分批验收。

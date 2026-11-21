@@ -36,7 +36,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权/固定事实报告；操作专属签名许可/参数摘要与回执绑定、有效MAC跨操作拒绝、越权/假引用/假写声明负例 | 已补RAG/KB所测应用日志与已处理错误的内容排除；完整直接/间接注入集、通用PII/秘密保护、限时参数审批/防重放仍缺；无任意代码需求，暂不建Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，证据不足及越界引用拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号与租户过滤；实际引用契约进入 CI | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
 | M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime373项（含工单核销与审批测试）、客服PG139项、38项回执存储、实际只读Loop/进程恢复/五例发布/两例核销/七例知识工具和操作许可有机器证据 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
-| M07 Trace/Observability | 部分实现 | Java `TraceContext`；Python `core/trace.py`、图 steps、`llm_usage.py`；运营 `ObservabilityService#trace/evaluate`、告警规则与调用记录查询；本轮 RAG steps 增加 traceId/sequence/schemaVersion 与拒答原因 | 已有模型调用 Trace 查询与告警应复用；已有持久化Run/Step与trace_id；缺工具详情、异步业务链路/审批事件、统一查询、脱敏治理和安全replay。A/B/D |
+| M07 Trace/Observability | 部分实现，Runtime 可导出受限轨迹 | Java `TraceContext`、Python 图步骤、模型调用量、既有运营 Trace 与告警；Runtime Run 和步骤的版本化元数据导出 | 待接统一查询、审批与工具可观测字段、离线评测与重演。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界Chat/查询Embedding与Runtime适配 | core.llm_chat单次HTTP/稳定错误/正文边界；显式租户ChatProfile、Prompt/请求Hash、MODEL原子正文/usage及预算恢复；实际协议TCP故障/进程验收；llm_gateway.py仍旧Mock占位 | 视觉/旧RAG同步Embedding、租户选择/Prompt发布/供应商权限和usage/Token金额结算治理仍缺；不造第二入口。E |
 | M09 Streaming/交互 | 部分实现 | `supportflow-realtime-service` WebSocket、消息 seq/ACK/补拉、机器人 typing | 缺持久化 Run 事件、审批/取消/恢复展示；优先复用 WebSocket。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
@@ -139,3 +139,5 @@ AI 已增加签名会话审批发现。返回有效审批的事件和任务引�
 C1 已交付可选工单规划历史压缩。18 项定向单元、17 项 Runtime PostgreSQL 和 10 条实际工单读取路径通过。合成格式样本的规划文本在下一轮从 4,907 字节减至 120 字节，原工单事实和调用次数一致。后续评测长会话的槽位保留和真实模型消耗。
 
 C2 已交付生成回答越界引用拒答。AI 全量 972 项通过，引用和拒答门禁合计 34 项通过。检索原文和旧的基线调用方式保持兼容。下一阶段继续单句事实支持和来源版本评测，并按 M03 接入可信 MCP 工具。
+
+D1 可从受限数据库导出单个 Runtime 轨迹，2 项真实数据库验证包含独立命令、跨租户和不完整记录拒绝。离线回放使用这份版本化元数据核对步骤与结果。

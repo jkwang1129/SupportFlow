@@ -69,6 +69,23 @@ class RuntimeStore:
         with self._scope(tenant) as connection:
             return connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s ORDER BY step_no', (tenant,UUID(str(run_id)))).fetchall()
 
+    def trace_snapshot(self, tenant, run_id):
+        """Export one tenant-bound trace without loading checkpoint or business content."""
+        run_id = UUID(str(run_id))
+        with self._scope(tenant) as connection:
+            # Writers fence against this same Run before reserving or completing
+            # steps. Keep metadata and recorded steps from the same state.
+            run = connection.execute("""SELECT run_id,trace_id,runtime_version,state,error_code,attempt,
+                    step_count,model_calls,tool_calls,retry_count,cancel_requested,created_at,finished_at,deadline_at
+                FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR SHARE""", (tenant, run_id)).fetchone()
+            if run is None:
+                return None
+            steps = connection.execute("""SELECT step_no,kind,effect,state,created_at,completed_at
+                FROM agent_step WHERE tenant_code=%s AND run_id=%s ORDER BY step_no LIMIT 101""", (tenant, run_id)).fetchall()
+            if len(steps) != run['step_count'] or len(steps) > 100:
+                raise RuntimeConflict('Runtime trace steps are inconsistent')
+            return {'schema_version': 'runtime-trace-v1', 'run': run, 'steps': steps}
+
     @staticmethod
     def _confirmed_reconciliation(connection, run, operation, version, audit_table):
         query = sql.SQL('SELECT * FROM {} WHERE tenant_code=%s AND run_id=%s').format(sql.Identifier(audit_table))
