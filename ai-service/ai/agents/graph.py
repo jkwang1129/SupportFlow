@@ -45,7 +45,7 @@ async def chat_reply(messages: list[dict[str, str]], tenant_code: str = "",
                 "citations": [], "needHuman": True,
                 "engine": rag_graph.engine_name(), "enough": False}
 
-    result = await rag_graph.ask(question=question, tenant_code=tenant_code, top_k=5)
+    result = await rag_graph.ask(question=question, tenant_code=tenant_code, top_k=5,published_only=True)
     citations = result.get("citations") or []
     enough = bool(result.get("enough")) and bool(citations)
     logger.info("机器人回复 session=%s 编排=%s 引用=%d 资料够用=%s",

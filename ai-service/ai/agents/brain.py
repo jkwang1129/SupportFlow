@@ -220,6 +220,7 @@ async def node_recall(state: BrainState) -> dict:
         question=state["question"],
         tenant_code=state["tenant_code"],
         top_k=state.get("top_k", 5),
+        published_only=True,
     )
     citations = result.get("citations") or []
     enough = bool(result.get("enough")) and bool(citations)

@@ -27,7 +27,7 @@ python scripts/db-migrate.py verify --database customer_db
 
 ## 尚未覆盖
 
-当前六库均有版本计划：客服七条增量、计费一条增量；AI一条基线及002～004增量；User/Tenant/Ops各一条基线采纳。AI 与五个 Java 数据服务已有只读 Readiness。统一 init/migrate/verify 已具备本地验收；备份恢复、生产部署与运维仍需阶段 E 实测，不能据此宣布生产验收完成。
+当前六库均有版本计划：客服八条增量、计费一条增量；AI一条基线及002～004增量；User/Tenant/Ops各一条基线采纳。AI 与五个 Java 数据服务已有只读 Readiness。统一 init/migrate/verify 已具备本地验收；备份恢复、生产部署与运维仍需阶段 E 实测，不能据此宣布生产验收完成。
 
 ## 四库基线采纳
 
@@ -86,3 +86,9 @@ AI 001 是原 8 张表的历史基线，保持不变；002 新增 agent_run/agen
 ReplyReconciler为显式可信宿主控制面，无公开路由/自动轮询/模型工具。只读一次客户回复回执，严格绑定原tenant/event/run/snapshot/参数Hash；确认既成提交后，短事务追加不可改核销记录、确认原WRITE、把Run错误从SIDE_EFFECT_UNKNOWN改为SIDE_EFFECT_CONFIRMED。Run保持FAILED，取消/完成时间/调用预算不变，无新租约、不重发消息。原未知错误/Step结果、观察fence、operator_ref/消息引用/DB确认时间保留在账本。找不到回执或查询失败继续阻断后续同会话任务，不当成可以重做的证据。
 
 003→004升级保留已有Run/Step/预算及正文/Hash/有效期；旧002→003升级用例仍保留。候选schema从隔离PG生成审查，只增加新表与004版本；六库当前94张表。回滚停用核销组件，保留账本和历史；不删迁移、不撤销已确认业务提交、不恢复旧执行权。不能将SIDE_EFFECT_CONFIRMED解读为整项任务成功或外部渠道送达。设计与适用边界见docs/decisions/0014-terminal-reply-reconciliation.md。
+
+## Customer 008：知识发布状态列的最小读取权限
+
+新版访客RAG仅检索status=3且index_status=3的文档，原KB能力组只可读id/tenant/title/status/is_deleted，不能直接使用新谓词。008只追加index_status列SELECT，校验KB能力组NOLOGIN/非owner/无管理员权限；不授予整表SELECT、正文读取或文档修改，不更改RLS。角色provisioning保留能力组授权，无需复制第二份GRANT。AI只读readiness要求该列可读，必须migrate→provision→verify后启动；不能编辑旧003/checksum或让AI改用管理员绕过。
+
+007→008测试保留原业务来源/快照/消息、草稿文档/切片精确不变，确认新增一列读取且正文和修改仍拒绝；3种不安全能力组状态拒绝。008不建表，当前仍94表/1视图/5函数。回滚停止访客知识答复或转人工，保留历史/数据和最小列授权，不回退到允许草稿答复；完整知识版本/ACL和Runtime工具仍需后续实现。

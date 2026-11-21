@@ -781,3 +781,25 @@ Python3.11.5，全部问题/文件名/凭据与上游响应为合成标记/Stub�
 边界：此处只覆盖所列ai.*应用日志/已处理错误响应，不保证第三方HTTP/访问/代理日志、未处理异常、Java可选payload日志、其他AI模块或模型上下文均无敏感信息；未清历史日志。不是通用PII检测/全系统脱敏/生产泄露报告。原业务正文仍按现有权限保留，后续Trace/评测导出和保留策略需M04/M07/M12治理。回滚保留固定错误与最小诊断，不恢复原正文输出；无业务数据/Runtime历史/预算回滚。新知识工具/发布版本与Embedding硬预算仍未完成，无质量/性能/费用成果。
 
 实际复现`python scripts/test-security-flow.py`最终退出0，`b2-rag-diagnostics-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整真实服务路径均通过，含知识索引/检索、访客WS→受保护AI→BOT回复、权限/工单/计费、六库版本与readiness负面恢复。日志调用的占位参数与降级正常路径经实际服务验证；测试期间无并行Maven/服务验收。无SQL/Runtime改动，本地不重复未改动的PG专项/214项Runtime；精确提交CI继续全跑。
+
+c224389对应的[CI 44852709345](https://github.com/jkwang1129/SupportFlow/actions/runs/44852709345)两个job全部成功，含569项AI普通/18项诊断内容排除、完整PG/Runtime和三套服务。该批本地/远端退出条件已完成。
+
+## B2/M05 访客知识的发布/索引就绪策略（2026-11-21）
+
+基线c224389。新增`test_rag_published_policy.py`、`test_rag_published_policy_postgres.py`、ADR-0017；可信宿主brain/旧chat固定published_only=True，用户问题/状态同名值不能覆盖。策略贯穿RAG图的改写重检、retriever、内置/LlamaIndex向量/关键词，与doc_ids求交；SQL增加d.status=3 AND d.index_status=3，保留同租户JOIN/RLS/删除过滤。后台现有问答/检索默认False继续支持编写预览，无新访客请求字段。严格bool，不把0/字符串当权限策略。
+
+真实受限KB账号揭示index_status列无SELECT，不能仅靠单元Stub验收。新增Customer008权威增量，只给NOLOGIN/非owner/非管理员KB能力组该列SELECT；没有整表/正文SELECT或文档修改权限，不改历史003。AI schema_guard的KB必读列加index_status；manifest/current-schema、迁移测试与独立SQL夹具/版本断言更新，仍94表/1视图/5函数。唯一40-runtime-roles.sql无需复制授权，原能力组列授权在provision后保留。
+
+本地Python3.11.5/隔离PG17/JDK25；向量/模型为合成Stub，无真实供应商/.env：
+
+- 新26项在旧代码下全部失败（原无该宿主策略/参数，含不支持参数的TypeError；不把这些当生产泄露事件），`b2-published-policy-baseline.log`。实现后新26+48范围+24拒答共98项通过，`b2-published-policy-unit-first.log`。访客入口硬选择/伪造状态，两图改写不丢策略，两引擎向量/三种关键词路径保留策略+文档范围，8种非bool调用在I/O前拒绝。
+- AI普通全量595 passed、219 skipped、1 xfailed，`b2-published-policy-ai-final.log/xml`；新8项PG由专项执行，既有引用正文xfail保留。
+- 首轮`python scripts/test-customer-rls.py --with-ai`：103项Java通过，Python11过/新8失败，真实KB角色查询index_status被拒，`b2-published-policy-pg-first.log`。新增最小008授权后同命令103项Java及Python19项全部通过，`b2-published-policy-pg-final.log`。19=原4知识诊断+7范围+新8发布策略PG。新8覆盖真实向量/关键词只返已发布且索引就绪，草稿/审核/下线/未索引/索引中/失败/删除/异租户均不返；后台默认仍可见同租户草稿；限定doc_ids与发布策略交集；下线/失败/索引中/重新发布后的下一查询反映当前状态；两引擎local/zero/vector miss后关键词不漏策略/范围。
+- `python scripts/test-versioned-migrations.py`：17项通过，`b2-published-policy-upgrade-final.log`。原006→007与AI002→003→004数据保护保留；新增007→008前后业务来源/快照/消息及草稿/切片全字段精确不变，index_status读取False→True、content SELECT和文档INSERT/UPDATE/DELETE仍False，3种不安全KB能力组状态拒绝。迁移重复、只读verify/checksum/历史/锁/回滚继续通过。
+- `python scripts/test-schema-drift.py`：94表/1视图/5函数、14 SQL+3 metadata负例通过，`b2-published-policy-drift-final.log`。从隔离canonical生成候选后审查current-schema差异只有008版本/Hash四行，既有结构/SQL校验和不变。
+- `python scripts/test-database-init.py`新建CLI/拒绝覆盖/部分失败回滚通过，`b2-published-policy-init-final.log`；`python scripts/test-runtime-security.py --with-ai-readiness`新/旧分别29/30条安全断言、每套4项AI/KB只读readiness测试通过，`b2-published-policy-roles-final.log`。
+- 最终JUnit的RAG报告门禁24项全部通过，`b2-published-policy-gate-final.log`。
+
+边界/回滚：这是SQL查询时点的访客发布可见性，不是文档用户级ACL/版本快照/并发撤权后的最终输出重验，也不能撤回已经发给模型的内容。未引入RAG结果缓存；新查询重新核条件。Embedding仍旧实现，可先于查询发生，不能声称无发布文档时整轮零模型费用；Runtime知识工具的来源核权与显式Embedding预算仍下一步。停止访客知识答复/转人工即可回退，不重新开放草稿、不撤销历史008/清数据；后台编写功能保留。无语义正确率/性能/Token费用或生产收益结论。
+
+最终实际`python scripts/test-security-flow.py`退出0，`b2-published-policy-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整真实服务路径均通过，含显式发布索引文档后的Java检索/访客WS→实际brain→BOT回复、后台默认预览链路、权限/计费/工单、六库历史Customer008和各readiness故障恢复。无并行Maven/服务验收。原Run/Step/预算无改动，本地未重复214项Runtime；精确提交CI全跑。

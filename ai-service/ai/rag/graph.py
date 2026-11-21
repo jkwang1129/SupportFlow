@@ -54,6 +54,7 @@ class RagState(TypedDict, total=False):
     tenant_code: str
     top_k: int
     doc_ids: list[int] | None
+    published_only: bool
     query: str            # 当前这一轮实际用的检索问法
     hits: list[dict]      # 召回的切片
     mode: str             # 检索口径
@@ -84,6 +85,7 @@ def node_retrieve(state: RagState) -> dict:
         tenant_code=state["tenant_code"],
         top_k=state.get("top_k", 5),
         doc_ids=state.get("doc_ids"),
+        published_only=state.get('published_only',False),
     )
     hits = result.get("results") or []
     mode = result.get("mode") or "vector"
@@ -234,16 +236,18 @@ _graph = None
 
 
 async def ask(question: str, tenant_code: str, top_k: int = 5,
-              doc_ids: list[int] | None = None) -> dict:
+              doc_ids: list[int] | None = None,*,published_only: bool=False) -> dict:
     """知识问答主入口：编排一条完整的"查资料 → 回答 → 标出处"链路。"""
     global _graph
-    from .document_scope import document_scope
+    from .document_scope import document_scope,published_policy
     doc_ids=document_scope(doc_ids)
+    published_only=published_policy(published_only)
     state: RagState = {
         "question": question,
         "tenant_code": tenant_code,
         "top_k": top_k,
         "doc_ids": doc_ids,
+        "published_only": published_only,
         "query": question,
         "rounds": 0,
         "steps": [],

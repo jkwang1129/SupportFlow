@@ -18,13 +18,13 @@ from . import pipeline
 logger = logging.getLogger(__name__)
 
 
-def retrieve(query: str, tenant_code: str = "", top_k: int = 3) -> list[dict[str, Any]]:
+def retrieve(query: str, tenant_code: str = "", top_k: int = 3,*,published_only: bool=False) -> list[dict[str, Any]]:
     """检索知识切片；没配租户或没建索引时返回空列表（调用方按"没查到"处理即可）。"""
-    return retrieve_with_meta(query, tenant_code, top_k).get("results", [])
+    return retrieve_with_meta(query, tenant_code, top_k,published_only=published_only).get("results", [])
 
 
 def retrieve_with_meta(query: str, tenant_code: str = "", top_k: int = 3,
-                       doc_ids: list[int] | None = None) -> dict[str, Any]:
+                       doc_ids: list[int] | None = None,*,published_only: bool=False) -> dict[str, Any]:
     """检索并带上"这次是怎么检的"（口径、向量来源）。
 
     知识问答的编排节点用的就是它——编排需要知道检索口径才能判断"召回够不够"
@@ -34,7 +34,7 @@ def retrieve_with_meta(query: str, tenant_code: str = "", top_k: int = 3,
     if not query or not tenant_code:
         return {"query": query, "results": [], "mode": "empty", "vector_source": "none"}
     try:
-        return pipeline.search(tenant_code=tenant_code, query=query, top_k=top_k, doc_ids=doc_ids)
+        return pipeline.search(tenant_code=tenant_code, query=query, top_k=top_k, doc_ids=doc_ids,published_only=published_only)
     except Exception as exc:  # noqa: BLE001
         logger.warning("知识检索失败 tenant=%s code=RAG_RETRIEVAL_FAILED errorType=%s",
                        tenant_code,type(exc).__name__)

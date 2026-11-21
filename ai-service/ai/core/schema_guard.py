@@ -25,7 +25,7 @@ REQUIRED_COLUMNS.update({name: AI_SOURCE for name in (
     "ai_usage_record.request_id", "ai_usage_record.cost_amount", "ai_usage_record.stat_date")})
 KB_COLUMNS = {
     "kb_chunk": ("id", "tenant_code", "doc_id", "chunk_no", "content", "char_count", "token_count", "embedding", "embedding_model"),
-    "kb_document": ("id", "tenant_code", "title", "status", "is_deleted"),
+    "kb_document": ("id", "tenant_code", "title", "status", "index_status", "is_deleted"),
 }
 RUNTIME_SOURCE = 'backend/deploy/migrations/sql/ai_db_002_agent_runtime.sql'
 PAYLOAD_SOURCE = 'backend/deploy/migrations/sql/ai_db_003_agent_payload.sql'

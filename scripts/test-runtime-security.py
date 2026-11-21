@@ -83,7 +83,9 @@ def scenario(legacy, with_ai_readiness=False):
             cmd += ['-e', f'SUPPORTFLOW_{role.upper()}_DB_PASSWORD']
         cmd += [name, 'psql', '-h', '127.0.0.1', '-U', 'supportflow', '-d', 'customer_db', '-wXq', '-v', 'ON_ERROR_STOP=1']
         sql = '\n'.join((INIT / filename).read_text(encoding='utf-8') for filename in ('channel-tenant-lookup.sql', 'public-bot-avatar.sql'))
-        sql += '\n' + MIGRATION.read_text(encoding='utf-8') + '\n' + (INIT / '40-runtime-roles.sql').read_text(encoding='utf-8')
+        sql += '\n' + MIGRATION.read_text(encoding='utf-8')
+        sql += '\n' + (ROOT/'backend/deploy/migrations/sql/customer_db_008_kb_publication_read.sql').read_text(encoding='utf-8')
+        sql += '\n' + (INIT / '40-runtime-roles.sql').read_text(encoding='utf-8')
         for _ in range(2):
             result = run(cmd, input=sql, capture_output=True)
         with connect() as conn:
@@ -105,6 +107,7 @@ def scenario(legacy, with_ai_readiness=False):
         with connect('supportflow_kb') as conn:
             conn.execute("SELECT set_config('app.tenant_code','TENANT_B',false)")
             check(conn.execute('SELECT content FROM kb_chunk').fetchall() == ([('B',)] if legacy else []), 'KB tenant isolation')
+            check(conn.execute("SELECT has_column_privilege(current_user,'kb_document','index_status','SELECT')").fetchone()[0], 'KB reads publication readiness only')
             denied(conn, 'SELECT * FROM file_meta')
             denied(conn, 'SELECT content FROM kb_document')
             denied(conn, 'CREATE TABLE forbidden(id int)')

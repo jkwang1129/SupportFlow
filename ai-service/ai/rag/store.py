@@ -18,7 +18,7 @@ from psycopg.rows import dict_row
 
 from ..config import get_settings
 from .embedding import to_pgvector
-from .document_scope import document_scope
+from .document_scope import document_scope,published_policy
 
 logger = logging.getLogger(__name__)
 
@@ -134,9 +134,10 @@ def list_chunks(tenant_code: str, doc_id: int, limit: int = 200) -> list[dict]:
         return cur.fetchall()
 
 
-def search(tenant_code: str, vector: list[float], top_k: int = 5, doc_ids: list[int] | None = None) -> list[dict]:
+def search(tenant_code: str, vector: list[float], top_k: int = 5, doc_ids: list[int] | None = None,*,published_only: bool=False) -> list[dict]:
     """按余弦相似度检索：走 HNSW 索引，返回相似度降序的切片。"""
     doc_ids=document_scope(doc_ids)
+    published_only=published_policy(published_only)
     if not vector or doc_ids==[]:
         return []
     literal = to_pgvector(vector)
@@ -151,6 +152,7 @@ def search(tenant_code: str, vector: list[float], top_k: int = 5, doc_ids: list[
            AND d.is_deleted = FALSE
     """
     params: list = [literal, tenant_code]
+    if published_only:sql+=' AND d.status = 3 AND d.index_status = 3'
     if doc_ids is not None:
         sql += " AND c.doc_id = ANY(%s)"
         params.append(doc_ids)
@@ -228,13 +230,14 @@ def _is_function_fragment(term: str) -> bool:
     return all(char in FUNCTION_CHARS for char in term)
 
 
-def keyword_search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | None = None) -> list[dict]:
+def keyword_search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | None = None,*,published_only: bool=False) -> list[dict]:
     """关键词兜底检索：把查询拆成片段，命中越多排得越前。
 
     什么时候用：没配向量密钥（本地兜底向量没有语义），或者向量检索一条都没命中。
     返回的 score 是"命中片段数 / 查询片段数"，所以是 0~1 之间的匹配度，不是余弦相似度。
     """
     doc_ids=document_scope(doc_ids)
+    published_only=published_policy(published_only)
     if doc_ids==[]:return []
     terms = query_terms(query)
     if not terms:
@@ -243,6 +246,7 @@ def keyword_search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[i
     hit_where = " OR ".join(["c.content ILIKE %s"] * len(terms))
     patterns = [f"%{term}%" for term in terms]
     scope_sql=' AND c.doc_id = ANY(%s)' if doc_ids is not None else ''
+    visibility_sql=' AND d.status = 3 AND d.index_status = 3' if published_only else ''
     sql = f"""
         SELECT c.id, c.doc_id, c.chunk_no, c.content, c.embedding_model,
                d.title AS doc_title, d.status AS doc_status,
@@ -253,6 +257,7 @@ def keyword_search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[i
            AND d.is_deleted = FALSE
            AND ({hit_where})
            {scope_sql}
+           {visibility_sql}
          ORDER BY score DESC, c.doc_id DESC, c.chunk_no
          LIMIT %s
     """
