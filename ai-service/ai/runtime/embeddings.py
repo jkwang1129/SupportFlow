@@ -2,6 +2,7 @@
 import asyncio
 from dataclasses import dataclass,field
 import math
+from time import monotonic
 
 from ..core.chat_transport import ModelCallFailure,_configuration,_send_embedding_json
 from .types import tenant_code,identifier,fingerprint
@@ -89,7 +90,14 @@ class RuntimeEmbeddingClient:
             return EmbeddingResult(vector,self.profile.profile_ref,self.profile.query_version,digest,tokens)
         except (ValueError,TypeError,KeyError,OverflowError):raise PermanentFailure('EMBEDDING_CHECKPOINT_INVALID') from None
 
-    def embed(self,context,key,text):
+    def embed(self,context,key,text,*,expires_at=None):
+        if expires_at is not None and (type(expires_at) not in (int,float) or not math.isfinite(expires_at)):
+            raise ValueError('Invalid host embedding deadline')
+        def network_timeout():
+            remaining=self.profile.timeout_seconds if expires_at is None else min(self.profile.timeout_seconds,expires_at-monotonic())
+            if remaining<.05:raise TransientFailure('MODEL_TIMEOUT')
+            return remaining
+        network_timeout()  # Do not reserve a model for an already expired call.
         if (self.profile.tenant!=context.lease.tenant or context.run['tenant_code']!=context.lease.tenant
                 or context.run['run_id']!=context.lease.run_id):raise PermanentFailure('MODEL_PROFILE_DENIED')
         try:
@@ -101,7 +109,7 @@ class RuntimeEmbeddingClient:
         intent=dict(operation='model.embedding',model=self.profile.profile_ref,version=self.profile.query_version,
                     input_ref=self.profile.definition_hash(),arguments_sha256=digest)
         def execute():
-            try:data=asyncio.run(_send_embedding_json(self.profile.chosen(),payload,self.profile.timeout_seconds,transport=self._transport))
+            try:data=asyncio.run(_send_embedding_json(self.profile.chosen(),payload,network_timeout(),transport=self._transport))
             except ModelCallFailure as error:
                 failure=TransientFailure if error.retryable else PermanentFailure
                 raise failure(error.code) from None

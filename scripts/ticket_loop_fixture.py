@@ -179,6 +179,8 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v1',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
                 source_enrollment='EXPLICIT_FIXTURE_SETUP',publication='NOT_IMPLEMENTED',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
             print('Actual model-protocol TCP -> durable TicketReadLoop -> signed SDK/customer JAR/restricted PG: 9 cases passed; current facts/owner checks, invalid actions, model503 retry, turn budgets and real Worker process death/takeover verified; reports only, no business publication or ticket creation; synthetic model decisions/usage',flush=True)
+            from knowledge_tool_fixture import verify_knowledge_tools
+            verify_knowledge_tools(connect,base,secret,store)
         except BaseException:
             failed=True;raise
         finally:

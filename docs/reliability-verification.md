@@ -864,3 +864,25 @@ ad66e75对应的[CI 44856556934](https://github.com/jkwang1129/SupportFlow/actio
 修复后`python scripts/test-agent-runtime.py --with-java-delivery`最终退出0，`b2-knowledge-sdk-runtime-final.log`：228项专项及原全部实际交付/来源/工单/9例Loop/真实进程接管/5例发布/核销/写许可/回复联调保持。新增产品KnowledgeClient→实际customer JAR→受限PG通过，Java全局long字符串格式、签名/投影Hash、null/空/有限文档范围、其他租户/错误密钥/当前接管全部验证；机器报告`runtime-knowledge-api.json` v2的agent_sdk=VERIFIED_EXPLICIT_READ_CLIENT。请求SHA由手工字节独立计算，结果SHA由独立公式与SDK/Java交叉核对，无新增消息/回执/模型请求。未把SDK称为已接入Registry/模型决策Loop。
 
 本批无Java/SQL/默认流程变更，本地不重复914767a已全绿CI的三套默认服务/112项客服PG/六库迁移，远端精确提交CI仍全跑。下一批工具文件独立未纳入本次提交及验收。
+
+85c0b89对应的[CI 44861323394](https://github.com/jkwang1129/SupportFlow/actions/runs/44861323394)两个job全部成功，含736项AI普通、228项Runtime、实际知识SDK及完整数据库/三套服务；SDK子批次本地/远端退出条件完成。
+
+## B2 当前授权知识工具与Embedding共享预算（2026-11-21）
+
+基线85c0b89。新增`ai/runtime/knowledge_tools.py`、`test_knowledge_tools.py`、`test_knowledge_tools_postgres.py`、`scripts/knowledge_tool_fixture.py`、ADR-0021；Runtime专项纳入新PG，复用已启用来源/只读工具的实际Loop客服JAR验收新工具。既有RuntimeEmbeddingClient仅新增可信宿主可缩小的单次monotonic截止时间，保持Profile Hash/原Checkpoint/调用方默认行为。不新增表/权限/服务、通用代理、旧RAG隐藏Embedding或自动业务切换。
+
+search_knowledge的模型参数只开放query/top_k/doc_ids；Scope为knowledge:read。每个ExecutionContext构造独立工具，核同服务来源/知识客户端与配置租户，不接受模型传租户/来源/权限/向量/URL/索引模型。Run中绑定Profile定义/服务地址/工具策略（不绑定可轮换密钥），恢复换策略则拒绝。先当前来源核权计授权READ，执行计另一READ，查询表示另预留共享MODEL。来源/查询Hash与有限证据绑定，不把知识正文当系统指令或自动发布答案。
+
+知识尚无完整版本，所以每次授权生成新的nonce引用，沿用current-version策略而每次重新查询当前发布范围；nonce不是知识版本/授权签名。相同策略问题的成功Embedding可以从原子Checkpoint复用，知识正文不能作为授权缓存复用。空范围显式empty-scope，仍核来源/计工具但无Embedding/知识请求，不伪造向量、请求Hash/资源版本或供应商usage。HTTP使用当前工具剩余时间，模型单次时限只能缩小Profile上限；DB仍用既有语句超时，不声称强杀任意同步Python或撤销模型费用。
+
+本地Python3.11.5/JDK25/隔离PG17，来源/知识/模型均为合成样本，无真实供应商/.env：
+
+- 工具先接入时尚无Embedding外层截止参数，`b2-knowledge-tool-predeadline.log`为22过/4失败（新工具的四条模型路径缺该参数，并非旧业务越权漏洞）。补齐截止参数与回归后，`cd ai-service; python -m pytest -q tests/test_knowledge_tools.py tests/test_runtime_embeddings.py`：85项全部通过＝工具26+原Embedding50+新截止9，`b2-knowledge-tool-unit-first.log`。参数/Scope/跨Run/当前凭据拒绝先于对外请求；来源撤权先于MODEL、空范围0模型/知识HTTP、下线后重新查询但向量仅1请求；真实TCP新增外层截止小于Profile的慢正文例。
+- AI普通全量771 passed、246 skipped、1 xfailed，`b2-knowledge-tool-ai-final.log/xml`。新13项PG由专项实跑，原引用正文xfail保留。对应RAG报告24项全部执行通过、gate_passed=true。
+- `python scripts/test-agent-runtime.py --with-java-delivery`的PG部分241项全部通过＝原228+新13，`b2-knowledge-tool-runtime-first.log`。新13含新Worker恢复后文档下线：首次5Steps/2Tools/1Model，恢复总7Steps/4Tools/1Model/1Retry，来源2/向量HTTP1/知识HTTP2，第二结果为空；来源撤权、MODEL=0/TOOL=1/刷新TOOL=3先于下一外部请求阻断；空范围4Steps/2Tools/0Model且无知识请求；模型中取消不存迟到向量；503在原预算1/2分别阻第二模型或成功，按真实ready_at等待；改Profile在来源/模型HTTP前拒绝、仅轮换Key复用向量；有效Hash但坏向量Checkpoint拒绝；知识正文提交丢确认后恢复仍重新查询当前范围而不返回旧片段。该13项的业务HTTP是确定性Stub，真实Java/pgvector由组合夹具单独验证。
+
+剩余/回滚：工具尚未接模型决策Loop、自动来源登记/默认业务路由，不是完整知识Agent闭环；用户级文档ACL、完整知识版本、在途撤权后的最终输出核验/事实支持、通用PII及Trace导出治理仍未完成。历史payload仍受RLS/TTL管理，不能据此宣称已删除所有旧片段。回滚不注册工具，保留来源/发布过滤、预算/正文/迁移；不删除成功Embedding步骤重请求或放宽缓存。无语义准确率、性能、付费Token成本或生产收益成果。
+
+最终`python scripts/test-agent-runtime.py --with-java-delivery`退出0，`b2-knowledge-tool-runtime-first.log`：241项专项与原全部实际Java/SDK/9例工单Loop/真实进程接管/5例发布/核销/许可/回复组合保持。新增7例实际Worker→Registry/两SDK→真实Embedding协议TCP→customer JAR/受限PG全部通过，`.local/verification/runtime-knowledge-tools.json`保存逐案原始计数。正常/下线后恢复各总7Steps/4Tools/1Model/1Retry，2次知识SDK、仅1次Embedding HTTP；下线命中1→0。接管后来源拒绝且无第二知识/模型；MODEL预算0在Embedding前阻断，刷新TOOL预算3在第二知识前阻断；空范围4Steps/2Tools/0Model/0知识请求；503自然重试总8Steps/4Tools/2Models/1Retry、实际Embedding HTTP2。每案仅原访客消息1、无业务回复/回执/新工单。模型选择工具未接入，来源DELIVERED为显式夹具；向量0.25/usage8是合成协议，不能当语义/成本/生产流量数据。
+
+本批无Java/SQL/默认流程变更，本地不重复刚通过85c0b89精确CI的三套默认服务/112项客服PG/六库迁移；当前精确提交CI仍全部执行。只添加现有实际客服JAR中的知识工具用例，无并行Maven/完整默认服务验收。

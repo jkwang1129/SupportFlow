@@ -2,6 +2,7 @@ import asyncio
 import copy
 from dataclasses import replace
 import json
+import time
 
 import httpx
 import pytest
@@ -139,3 +140,49 @@ def test_real_tcp_embedding_route_deadline_and_redirect_without_environment_prox
                 api.embed(source_context(),'query-1',TEXT)
         else:assert api.embed(source_context(),'query-1',TEXT).vector[0]==.25
         assert len(received)==1 and received[0][0]=='/v1/embeddings'
+
+
+@pytest.mark.parametrize('expiry',[True,'later',float('nan'),float('inf')])
+def test_invalid_host_deadline_is_rejected_without_model_reservation(expiry):
+    ctx=source_context()
+    with pytest.raises(ValueError):client(lambda _:pytest.fail('invalid expiry reached HTTP')).embed(ctx,'query-1',TEXT,expires_at=expiry)
+    assert ctx.steps==[]
+
+
+def test_expired_host_deadline_does_not_reserve_or_send_embedding():
+    ctx=source_context()
+    with pytest.raises(TransientFailure,match='^MODEL_TIMEOUT$'):
+        client(lambda _:pytest.fail('expired request reached HTTP')).embed(ctx,'query-1',TEXT,expires_at=time.monotonic()-1)
+    assert ctx.steps==[]
+
+
+def test_deadline_expiring_during_model_reservation_stops_before_http(monkeypatch):
+    from ai.runtime import embeddings
+    clock=[10.0];monkeypatch.setattr(embeddings,'monotonic',lambda:clock[0])
+    ctx=source_context();original=ctx.payload_step
+    def reserve(key,kind,effect,intent,schema,execute):
+        clock[0]=12.0
+        return original(key,kind,effect,intent,schema,execute)
+    ctx.payload_step=reserve
+    with pytest.raises(TransientFailure,match='^MODEL_TIMEOUT$'):
+        client(lambda _:pytest.fail('expired reservation reached HTTP')).embed(ctx,'query-1',TEXT,expires_at=11.0)
+    assert len(ctx.steps)==1 and ctx.steps[0][1]=='MODEL'
+
+
+@pytest.mark.parametrize('remaining,expected',[(1,1),(30,10)])
+def test_per_attempt_host_deadline_only_reduces_network_time_and_not_profile_hash(monkeypatch,remaining,expected):
+    from ai.runtime import embeddings
+    seen=[];monkeypatch.setattr(embeddings,'monotonic',lambda:10.0)
+    async def send(chosen,payload,timeout,**kwargs):seen.append(timeout);return answer()
+    monkeypatch.setattr(embeddings,'_send_embedding_json',send)
+    api=client(lambda _:pytest.fail('patched sender not used'));before=api.profile.definition_hash()
+    api.embed(source_context(),'query-1',TEXT,expires_at=10.0+remaining)
+    assert seen==[expected] and api.profile.definition_hash()==before
+
+
+def test_actual_tcp_embedding_is_bounded_by_host_deadline_below_profile_limit():
+    with local_provider('slow',answer()) as (base,received):
+        api=RuntimeEmbeddingClient(profile(base_url=base,timeout_seconds=3))
+        with pytest.raises(TransientFailure,match='^MODEL_TIMEOUT$'):
+            api.embed(source_context(),'query-1',TEXT,expires_at=time.monotonic()+1)
+        assert len(received)==1
