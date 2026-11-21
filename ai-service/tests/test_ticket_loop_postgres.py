@@ -107,8 +107,9 @@ def test_turn_limit_stops_without_a_silent_additional_model_attempt(store):
     assert result['state']=='FAILED' and result['error_code']=='PLANNER_TURN_LIMIT' and len(models)==1 and artifacts()==[]
 
 
-def test_lost_model_checkpoint_commit_ack_resumes_loop_without_repeating_completed_planning(store):
-    row,loop,http,models,state=prepare(store)
+@pytest.mark.parametrize('canonical_history', [False, True])
+def test_lost_model_checkpoint_commit_ack_resumes_loop_without_repeating_completed_planning(store, canonical_history):
+    row,loop,http,models,state=prepare(store,canonical_history=canonical_history)
     class LostAck:
         once=True
         def __getattr__(self,name):return getattr(store,name)
@@ -120,6 +121,18 @@ def test_lost_model_checkpoint_commit_ack_resumes_loop_without_repeating_complet
     result=worker.run_once('TENANT_A')
     assert result['state']=='SUCCEEDED' and len(models)==2 and len(artifacts())==1
     assert (result['model_calls'],result['tool_calls'],result['step_count'],result['retry_count'])==(2,6,11,1)
+
+
+def test_switching_planner_history_policy_cannot_resume_under_the_old_binding(store):
+    row,loop,http,models,state=prepare(store,model_faults={1:503},canonical_history=True)
+    worker=runner(store,loop)
+    assert worker.run_once('TENANT_A')['state']=='RETRY_WAIT'
+    with admin() as db:
+        db.execute("UPDATE agent_run SET ready_at=clock_timestamp() WHERE run_id=%s",(row['run_id'],))
+    loop.canonical_history = False
+    result=worker.run_once('TENANT_A')
+    assert result['state']=='FAILED' and result['error_code']=='EXECUTION_ERROR'
+    assert len(models)==1 and result['model_calls']==1 and artifacts()==[]
 
 
 def test_cancellation_after_provider_response_does_not_publish_a_late_plan_or_report(store):

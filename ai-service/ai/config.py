@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     runtime_api_enabled: bool = False
     runtime_ticket_actions_enabled: bool = False
     runtime_approval_review_enabled: bool = False
+    runtime_canonical_planner_history: bool = False
     customer_runtime_url: str = 'http://127.0.0.1:9093'
     # 日志级别：DEBUG / INFO / WARNING / ERROR
     log_level: str = "INFO"

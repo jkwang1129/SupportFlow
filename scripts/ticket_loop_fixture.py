@@ -54,7 +54,17 @@ def planner_server(scenarios,connect):
                     with connect('customer_db') as db:
                         if case['mode']=='late_status':db.execute('UPDATE ticket SET status=4 WHERE id=%s',(case['ticket_id'],))
                         else:db.execute('UPDATE ticket SET customer_id=%s WHERE id=%s',(case['customer_id']+1,case['ticket_id']))
-                data={'choices':[{'index':0,'finish_reason':'stop','message':{'role':'assistant','content':json.dumps(action,ensure_ascii=False)}}],
+                content = json.dumps(action, ensure_ascii=False)
+                if case['mode']=='configured_worker':
+                    if turn==0:
+                        content = ' '*4736 + json.dumps(action, ensure_ascii=False, indent=2) + '\n'*8
+                        case['raw_assistant_bytes'] = len(content.encode())
+                    else:
+                        previous = body['messages'][2]['content']
+                        assert json.loads(previous) == query
+                        case['canonical_assistant_bytes'] = len(previous.encode())
+                        assert case['canonical_assistant_bytes'] < case['raw_assistant_bytes']
+                data={'choices':[{'index':0,'finish_reason':'stop','message':{'role':'assistant','content':content}}],
                       'usage':{'prompt_tokens':13,'completion_tokens':7,'total_tokens':20}}
             raw=json.dumps(data,ensure_ascii=False).encode()
             self.send_response(status);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)))
@@ -202,6 +212,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         worker_env.update(PYTHONUTF8='1', PYTHONPATH=str(ROOT/'ai-service'),
                             SUPPORTFLOW_AI_DATABASE_URL=runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'],
                             SUPPORTFLOW_AI_CUSTOMER_RUNTIME_URL=base, SUPPORTFLOW_AI_CUSTOMER_SECRET=secret,
+                            SUPPORTFLOW_AI_RUNTIME_CANONICAL_PLANNER_HISTORY='true',
                             SUPPORTFLOW_AI_QWEN_API_KEY=model_key, SUPPORTFLOW_AI_QWEN_BASE_URL=model_base,
                             SUPPORTFLOW_AI_QWEN_MODEL='fixture-chat')
                         command = [sys.executable, '-m', 'ai.runtime.ticket_worker', '--tenant', tenant, '--provider', 'qwen', '--once']
@@ -251,9 +262,10 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         model_http_calls=scenario['model_http_calls'],model_reservations=result['model_calls'],tool_reservations=result['tool_calls'],steps=result['step_count'],retries=result['retry_count'],
                         reports=len(reports),report_status=reports[0]['status'] if reports else None,actual_ticket_status=fact,source_messages=messages,result_receipts=receipts,tickets=tickets,
                         worker_process_restart=mode=='process_restart',configured_worker_process=mode=='configured_worker',
+                        raw_assistant_bytes=scenario.get('raw_assistant_bytes'), canonical_assistant_bytes=scenario.get('canonical_assistant_bytes'),
                         fixture_lease_seconds=3 if mode=='process_restart' else 30))
             report=ROOT/'.local/verification/runtime-ticket-loop.json';report.parent.mkdir(parents=True,exist_ok=True)
-            report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v2',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
+            report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v3',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
                 source_enrollment='SIGNED_VISITOR_APPEND_FOR_CONFIGURED_WORKER',publication='REPORT_ONLY',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
             print('Actual signed visitor append -> shadow Outbox -> scheduled AI delivery -> scoped worker CLI passed; duplicate message reused; 10 read-loop cases passed with synthetic model TCP and restricted PG; reports only',flush=True)
             from knowledge_tool_fixture import verify_knowledge_tools

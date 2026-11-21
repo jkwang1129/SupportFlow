@@ -24,7 +24,8 @@ QUERY={'action':'tool','call':{'name':'get_ticket_status','version':'ticket-stat
 REPORT={'action':'report','evidence':'tool-0'}
 
 
-def fixture(actions,*,max_turns=4,after_model=None,wrong_source=False,source_input=INPUT,run_id=RUN,model_faults=None):
+def fixture(actions,*,max_turns=4,after_model=None,wrong_source=False,source_input=INPUT,run_id=RUN,model_faults=None,
+            canonical_history=False):
     source=source_envelope();state={'status':2,'owner':True};http=[];models=[];reports=[]
     payload=json.loads(source['data']['payload_json'])
     payload['trusted_source'].update(tenant_code=source_input.tenant,source_event_id=str(source_input.source_event_id),run_id=str(run_id),
@@ -53,7 +54,7 @@ def fixture(actions,*,max_turns=4,after_model=None,wrong_source=False,source_inp
         data['choices'][0]['message']['content']=action if isinstance(action,str) else json.dumps(action)
         return response(data)
     model=RuntimeChatClient(profile(tenant=source_input.tenant),transport=httpx.MockTransport(provider))
-    loop=TicketReadLoop(access,tools,model,max_turns=max_turns)
+    loop=TicketReadLoop(access,tools,model,max_turns=max_turns,canonical_history=canonical_history)
     ctx=source_context();original=ctx.payload_step
     def payload(key,kind,effect,intent,schema,execute):
         value=original(key,kind,effect,intent,schema,execute)
@@ -128,3 +129,17 @@ def test_business_result_must_match_bootstrapped_source_snapshot_even_if_its_own
     loop,ctx,http,models,reports,state=fixture([QUERY,REPORT],wrong_source=True)
     with pytest.raises(PermanentFailure,match='REPORT_EVIDENCE_INVALID'):loop(ctx)
     assert reports==[]
+
+
+def test_canonical_history_preserves_decision_and_report_with_less_duplicated_text():
+    padded = ' '*4736 + json.dumps(QUERY, indent=2) + '\n'*8
+    standard, compact = [fixture([padded, REPORT], canonical_history=mode) for mode in (False, True)]
+    for loop,ctx,_,_,_,_ in (standard, compact):
+        assert loop(ctx)['outcome'] == 'ticket-status-ready'
+    raw, compressed = [entry[3][1]['messages'] for entry in (standard, compact)]
+    assert raw[:2] == compressed[:2] and raw[3:] == compressed[3:]
+    assert raw[2]['content'] == padded and json.loads(compressed[2]['content']) == QUERY
+    assert len(compressed[2]['content'].encode()) < len(padded.encode())
+    facts = ('ticket_no', 'status', 'updated_at', 'text')
+    assert [standard[4][0][key] for key in facts] == [compact[4][0][key] for key in facts]
+    assert len(standard[2]) == len(compact[2])

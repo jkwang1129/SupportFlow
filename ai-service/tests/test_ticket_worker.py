@@ -25,10 +25,17 @@ def test_operator_config_is_bound_to_one_tenant_and_read_capabilities():
     loop = worker.handlers['runtime-v1']
     assert worker.tenant == loop.model.profile.tenant == 'TENANT_A'
     assert worker.approval_mode == 'without_approval'
+    assert not loop.canonical_history
     assert loop.model.profile.model == 'fixture-chat'
     assert 'synthetic-test-qwen-key' not in repr(loop.model.profile)
     assert {v['name'] for v in loop.source_access.registry.catalog()} == {'get_current_message'}
     assert {v['name'] for v in loop.tools.registry.catalog()} == {'get_ticket_status'}
+
+
+def test_canonical_planner_history_is_explicitly_enabled_for_the_read_worker():
+    worker = ticket_worker.build_worker(settings(runtime_canonical_planner_history=True), 'TENANT_A', 'qwen',
+                                        owner='fixture-context-worker')
+    assert worker.handlers['runtime-v1'].canonical_history
 
 
 @pytest.mark.parametrize('changes, tenant, provider', [

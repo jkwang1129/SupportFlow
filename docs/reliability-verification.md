@@ -1200,3 +1200,13 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - AI 普通测试首轮一个既有 TCP 用例超时。定向复跑 106 项通过。普通全量复跑 960 项通过、389 项条件跳过、1 项既有预期失败。RAG 契约 24 项通过。日志、XML 和契约结果在 `.local/implementation/b3-approved-worker-*`。
 
 客服会话发现、工作台、队列隔离分别通过 [CI 44925123084](https://github.com/jkwang1129/SupportFlow/actions/runs/44925123084)、[CI 44926007346](https://github.com/jkwang1129/SupportFlow/actions/runs/44926007346) 和 [CI 44926118341](https://github.com/jkwang1129/SupportFlow/actions/runs/44926118341)。可信提案生成入口仍待交付。本批数据、角色和待审提案来自隔离合成夹具。
+
+## C1 工单规划上下文的确定性压缩（2026-11-22）
+
+照原流程将工具参数和已验证结果写入检查点。新增默认关闭的策略在后续模型请求中将已经校验的工具决定序列化为固定 JSON，保留系统指令、原用户消息、工具参数和证据。策略加入原运行绑定，恢复后保留原预算。设计和回滚见 [ADR-0035](decisions/0035-canonical-planner-history.md)。
+
+- `python -m pytest -q tests/test_ticket_loop.py` 18 项通过。配对的合成输入在两种策略下得到同一份事实报告和相同次数的业务 HTTP 请求。首轮比较误含每个样本随机生成的快照 ID，调整为比较业务事实和证据形状后通过。日志 `c1-canonical-context-unit.log` 和 `c1-canonical-context-unit-final.log`。
+- `PYTEST_ADDOPTS='-k ticket_loop' python scripts/test-agent-runtime.py --with-java-delivery` 定向真实 PostgreSQL 测试 17 项通过。新增覆盖压缩策略在丢持久化确认后的恢复，以及切换策略后阻止沿旧绑定继续。10 项实际工单读取路径通过。独立 Worker 测试中，使用刻意包含大量格式空白的模型夹具，下一轮重复传入的规划文本由 4,907 字节缩为 120 字节。保持 1 份报告、2 次模型调用、5 次工具预留、10 个步骤和 0 次重试。原日志 `c1-canonical-context-runtime.log`、机器报告 `runtime-ticket-loop.json` v3。
+- 该批普通 AI 测试 962 项通过、391 项条件跳过、1 项当时既有预期失败。24 项 RAG 原有契约通过。日志和 XML 位于 `.local/implementation/c1-canonical-context-*`。
+
+字节数测量针对一次合成结构化决定。长对话、真实模型 Token、准确率及生产时延待后续对照。

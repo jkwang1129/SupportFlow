@@ -41,7 +41,8 @@ def build_worker(settings, tenant, provider, *, owner):
     secret = settings.customer_secret.get_secret_value()
     access = ToolExecutor(ToolRegistry([current_message_tool(SourceClient(base, secret))]), frozenset({'session:read'}))
     tools = ToolExecutor(ToolRegistry([ticket_status_tool(TicketClient(base, secret))]), frozenset({'ticket:read'}))
-    loop = TicketReadLoop(access, tools, RuntimeChatClient(profile))
+    loop = TicketReadLoop(access, tools, RuntimeChatClient(profile),
+                          canonical_history=settings.runtime_canonical_planner_history)
     return RuntimeWorker(RuntimeStore(), {'runtime-v1': loop}, owner, tenant=tenant, approval_mode='without_approval')
 
 

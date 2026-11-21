@@ -59,13 +59,17 @@ def decision(content):
 
 
 class TicketReadLoop:
-    def __init__(self,source_access: ToolExecutor,tools: ToolExecutor,model: RuntimeChatClient,*,max_turns=4):
+    def __init__(self,source_access: ToolExecutor,tools: ToolExecutor,model: RuntimeChatClient,*,max_turns=4,
+                 canonical_history=False):
         if not isinstance(source_access,ToolExecutor) or not isinstance(tools,ToolExecutor) or not isinstance(model,RuntimeChatClient):
             raise ValueError('Explicit source, tool and model adapters required')
         if type(max_turns) is not int or not 1<=max_turns<=4:raise ValueError('Invalid planner turn limit')
+        if type(canonical_history) is not bool:
+            raise ValueError('Invalid planner history policy')
         if any((tool['name'],tool['version'])!=('get_ticket_status','ticket-status-v2') for tool in tools.registry.catalog()):
             raise ValueError('Ticket loop requires an explicit context projection for each business tool')
         self.source_access,self.tools,self.model,self.max_turns=source_access,tools,model,max_turns
+        self.canonical_history = canonical_history
 
     def __call__(self,context):
         return dict(self.prepare(context).references)
@@ -76,8 +80,11 @@ class TicketReadLoop:
         source=self.source_access.execute(context,'source-input',ToolCall('get_current_message','source-v1',{}))
         catalog=self.tools.registry.catalog()
         policy=POLICY+_json(catalog)
-        binding=fingerprint(dict(loop=LOOP_VERSION,policy=policy,profile=self.model.profile.definition_hash(),
-                                 source_snapshot=source['snapshot_id'],source_hash=source['payload_hash'],max_turns=self.max_turns))
+        terms = dict(loop=LOOP_VERSION,policy=policy,profile=self.model.profile.definition_hash(),
+                     source_snapshot=source['snapshot_id'],source_hash=source['payload_hash'],max_turns=self.max_turns)
+        if self.canonical_history:
+            terms['history'] = 'canonical-tool-decisions-v1'
+        binding = fingerprint(terms)
         context.step('ticket-loop','INTERNAL','NONE',dict(operation='ticket.agent',version=LOOP_VERSION,
             resource_ref=context.run['principal_ref'],input_ref=source['snapshot_id'],arguments_sha256=binding),lambda:{'outcome':'bound'})
         messages=[dict(role='system',content=policy),dict(role='user',content=_json(dict(kind='untrusted_user_input',text=source['text'])))]
@@ -102,7 +109,9 @@ class TicketReadLoop:
             result=self.tools.execute(context,slot,value)
             observations[slot]={'call':value,'result':result}
             model_value={key:result[key] for key in ('ticket_no','status','updated_at')}
-            messages.extend([dict(role='assistant',content=planned.content),
+            assistant_content = (_json(dict(action='tool',call=dict(name=value.name,version=value.version,arguments=value.arguments)))
+                                 if self.canonical_history else planned.content)
+            messages.extend([dict(role='assistant',content=assistant_content),
                              dict(role='user',content=_json(dict(kind='untrusted_tool_result',slot=slot,name=value.name,value=model_value)))])
         raise PermanentFailure('PLANNER_TURN_LIMIT')
 
