@@ -20,11 +20,12 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field,field_validator
 from pydantic.alias_generators import to_camel
 
 from ..core.trace import require_trace_id
 from ..rag import pipeline, store
+from ..rag.document_scope import document_scope
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,11 @@ class SearchRequest(BaseModel):
     tenant_code: str = Field(min_length=1, max_length=32)
     query: str = Field(min_length=1, max_length=500)
     top_k: int = Field(default=5, ge=1, le=20)
-    doc_ids: list[int] = Field(default_factory=list)
+    doc_ids: list[int] | None = Field(default=None,max_length=200)
+
+    @field_validator('doc_ids',mode='before')
+    @classmethod
+    def valid_document_scope(cls,value):return document_scope(value)
 
 
 def _fail(exc: Exception) -> HTTPException:
@@ -128,7 +133,7 @@ async def search(body: SearchRequest, trace_id: str = Depends(require_trace_id))
             tenant_code=body.tenant_code,
             query=body.query,
             top_k=body.top_k,
-            doc_ids=body.doc_ids or None,
+            doc_ids=body.doc_ids,
         )
     except Exception as exc:  # noqa: BLE001
         raise _fail(exc) from exc

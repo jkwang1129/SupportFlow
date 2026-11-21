@@ -125,11 +125,12 @@ def main():
         )
         if args.with_ai:
             subprocess.run(
-                [sys.executable, "-m", "pytest", "-q", "tests/test_kb_console_status.py"],
+                [sys.executable, "-m", "pytest", "-q", "tests/test_kb_console_status.py", "tests/test_rag_document_scope_postgres.py"],
                 cwd=ROOT / "ai-service", check=True,
                 env={
                     **os.environ,
                     "SUPPORTFLOW_KB_TEST_DSN": f"postgresql://rls_test_kb:{kb_password}@{host}/customer_db",
+                    "SUPPORTFLOW_KB_ADMIN_TEST_DSN": f"postgresql://supportflow:{admin_password}@{host}/customer_db",
                 },
             )
     finally:

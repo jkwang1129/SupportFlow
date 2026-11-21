@@ -13,11 +13,12 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field,field_validator
 from pydantic.alias_generators import to_camel
 
 from ..core.trace import require_trace_id
 from ..rag import graph
+from ..rag.document_scope import document_scope
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,11 @@ class AskRequest(BaseModel):
     tenant_code: str = Field(min_length=1, max_length=32)
     question: str = Field(min_length=1, max_length=500)
     top_k: int = Field(default=5, ge=1, le=20)
-    doc_ids: list[int] = Field(default_factory=list)
+    doc_ids: list[int] | None = Field(default=None,max_length=200)
+
+    @field_validator('doc_ids',mode='before')
+    @classmethod
+    def valid_document_scope(cls,value):return document_scope(value)
 
 
 @router.post("/ask")
@@ -43,7 +48,7 @@ async def ask(body: AskRequest, trace_id: str = Depends(require_trace_id)) -> di
             question=body.question.strip(),
             tenant_code=body.tenant_code,
             top_k=body.top_k,
-            doc_ids=body.doc_ids or None,
+            doc_ids=body.doc_ids,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("知识问答失败 trace=%s：%s", trace_id, exc)

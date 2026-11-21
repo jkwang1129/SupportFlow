@@ -740,3 +740,25 @@ Python3.11.5/隔离PG17/JDK25，模型为合成协议，未使用真实模型或
 实际组合复现`python scripts/test-agent-runtime.py --with-java-delivery`最终退出0，`b1-reconciliation-real-final.log`：214项Python专项、6次角色负面、原全部实际Java交付/来源/工具/九例Loop/五例发布/许可/双向回复与新增两例核销通过。`runtime-reconciliation.json`按场景保留：未转发写且无回执→FAILED/SIDE_EFFECT_UNKNOWN、审计0、后续事件不可领取；真实提交后取消再显式核销→仍FAILED/SIDE_EFFECT_CONFIRMED、审计1、后续事件可领取；两例预算/结束时间/取消标记保持，新业务消息均0、模型HTTP仍2。确认已有提交前实际坐席接管来源也不会重新发消息。该脚本PG全量进程启动早于最后的幂等来源/Step key补强；当前版本补强由上述独立21项最终PG和后续实际组合部分覆盖，精确提交CI仍会重跑完整专项。
 
 最终独立运行`python scripts/test-security-flow.py`退出0，`b1-reconciliation-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整实际服务路径均通过，包含登录/企业授权、知识索引与A/B隔离、访客WS→AI→BOT回复、坐席认领/工单/计费批次、附件权限、五个Java服务readiness故障恢复、六库版本历史及新核销表SELECT/INSERT/无UPDATE/DELETE/TRUNCATE实查。完整服务验收期间未并行运行其他Maven或服务验收。
+
+d8a65ad对应的[CI 44767901532](https://github.com/jkwang1129/SupportFlow/actions/runs/44767901532)两个job全部成功，含精确提交的214项Runtime专项、两例实际业务回执核销和三套完整部署路径。核销批次本地/远端退出条件已完成；仍不代表B1/B2/B3整体完成。
+
+## B2 知识检索前置：文档范围在降级路径保持一致（2026-11-21）
+
+基线d8a65ad。发现向量SQL有doc_ids筛选，但内置/LlamaIndex四条关键词兜底未传范围；问答图/API及独立检索API把[]归成None。新增`rag/document_scope.py`、`test_rag_document_scope.py`、`test_rag_document_scope_postgres.py`、ADR-0015；更新两API、graph/pipeline/llama_engine/store和既有customer-rls测试入口。无SQL/Java/依赖/默认Worker/业务触发修改。
+
+None=保持调用方当前租户范围；[]=空选集，图/检索/存储都短路，无Embedding/数据库/生成且不改写；正int64列表≤200个，拒绝bool/字符串/零负数/超限，按首次出现去重。问答与独立检索API都保留此区别，现有Java调用省略docIds仍走原租户范围。内置与LlamaIndex所有关键词兜底传原doc_ids，SQL参数化ANY与同租户JOIN/RLS、is_deleted条件同时生效；Llama全零向量与内置策略一致退回有范围关键词。该筛选只缩小选择，不授予文档/租户权限；发布/撤权/版本及完整知识工具还未完成。
+
+本地Python3.11.5/隔离PG17/JDK25，Embedding/生成均为合成Stub，无真实供应商或.env：
+
+- 首批39项范围单元/图/API测试在旧代码下33失败、6通过，`b2-knowledge-scope-baseline.log`；修复后连原24项拒答门禁共63项通过，`b2-knowledge-scope-unit-first.log`。覆盖六条关键词退化组合、空范围零I/O、7类非法范围在I/O前拒绝、LangGraph/linear一致、API区分省略/null/空/非空。
+- 追加独立KB检索API九项，旧入口7失败、2通过，`b2-knowledge-scope-kb-baseline.log`；补齐该入口后新增范围测试共48项，随最终全量通过。
+- `cd ai-service; python -m pytest -q --junitxml=../.local/implementation/b2-knowledge-scope-ai-final-v2.xml`：551 passed、211 skipped、1 xfailed，`b2-knowledge-scope-ai-final-v2.log/xml`。KB入口补齐前原始全量542通过/211skip/1xfail保留在`b2-knowledge-scope-ai-final.log/xml`。原引用正文已知xfail未放宽。
+- `python scripts/test-customer-rls.py --with-ai`：103项真实Java PG全部通过；Python11项通过=原4项知识诊断/存储测试+新7项范围PG，`b2-knowledge-scope-pg-final.log`。真实pgvector/关键词SQL证明选中文档仅返回自己、错租户/已删除/空选集无结果、None保留租户范围；两引擎本地/零向量/向量无命中后真实关键词不扩到其他文档。连接为非superuser/非BYPASSRLS且非owner KB身份，产品SQL不用管理员；管理员仅构造隔离语料。
+- 首轮PG的103项Java已通过，Python10过/1失败，夹具全零向量误写1023维而库为1024维；修正夹具，并对两引擎全零输入走关键词加实际mode断言，保留`b2-knowledge-scope-pg-first.log`。未放宽SQL文档/租户筛选或跳过负面测试。
+- 最终JUnit输入`python scripts/report-rag-contract.py --junit .local/implementation/b2-knowledge-scope-ai-final-v2.xml --output .local/verification/rag-contract.json`：24项全通过/无skip、gate_passed=true，`b2-knowledge-scope-gate-final-v2.log`。
+- `python -m unittest discover -s scripts/tests -p 'test_*.py' -v`：Ran22、12通过/10需独立PG条件而skip，`b2-knowledge-scope-scripts-final.log`；不是22项全部执行通过。PG迁移由上批精确CI已验，本批无SQL改动。
+
+知识引用事实支持、发布/下线/版本ACL、知识工具及Embedding预算尚待后续；None的全租户检索仍依赖可信调用方和租户隔离，不把文档选择等同授权。已知原RAG日志/错误响应可能含问题或原异常文本，接知识工具前仍需收敛；没有宣称完整PII保护或生产级知识治理。回滚先停受限文档调用，保留数据和Runtime历史；不能把空列表改为None或在失败时去掉范围作为兜底。无语义质量/性能/Token/费用改进数据。
+
+完整服务首轮`b2-knowledge-scope-services-final.log`三套路径通过（当时独立KB API语义尚未补齐）；补齐KB入口后重新运行`python scripts/test-security-flow.py`最终退出0，`b2-knowledge-scope-services-final-v2.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套均通过。真实Java省略docIds的默认调用、知识索引/检索、访客WS→AI→BOT回复、权限/计费/工单及只读readiness负面恢复保持；未并行Maven或其他服务验收。当前提交CI仍会重跑Runtime专项和六库完整检查，本批本地未无故重跑未改动的214项Runtime/SQL迁移。

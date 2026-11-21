@@ -53,7 +53,7 @@ class RagState(TypedDict, total=False):
     question: str
     tenant_code: str
     top_k: int
-    doc_ids: list[int]
+    doc_ids: list[int] | None
     query: str            # 当前这一轮实际用的检索问法
     hits: list[dict]      # 召回的切片
     mode: str             # 检索口径
@@ -79,11 +79,11 @@ def _step(state: RagState, node: str, detail: str, **extra: Any) -> list[dict]:
 def node_retrieve(state: RagState) -> dict:
     """检索：拿当前问法去知识库捞最相关的切片。"""
     query = state.get("query") or state["question"]
-    result = retriever.retrieve_with_meta(
+    result = {"mode":"empty-scope","results":[]} if state.get('doc_ids')==[] else retriever.retrieve_with_meta(
         query=query,
         tenant_code=state["tenant_code"],
         top_k=state.get("top_k", 5),
-        doc_ids=state.get("doc_ids") or None,
+        doc_ids=state.get("doc_ids"),
     )
     hits = result.get("results") or []
     mode = result.get("mode") or "vector"
@@ -172,7 +172,8 @@ def node_verify(state: RagState) -> dict:
 
 def node_abstain(state: RagState) -> dict:
     """Deterministic policy: exhausted evidence budget cannot enter generation."""
-    reason = "retrieval_unavailable" if state.get("mode") == "error" else "insufficient_evidence"
+    reason = ("empty_document_scope" if state.get('doc_ids')==[] else
+              "retrieval_unavailable" if state.get("mode") == "error" else "insufficient_evidence")
     return {
         "answer": "当前知识库资料不足，无法可靠回答这个问题。请补充问题细节，或联系人工客服处理。",
         "citations": [],
@@ -183,6 +184,7 @@ def node_abstain(state: RagState) -> dict:
 
 
 def _route_after_grade(state: RagState) -> str:
+    if state.get('doc_ids')==[]:return 'abstain'
     if state.get("enough"):
         return "answer"
     if int(state.get("rounds") or 0) < MAX_REWRITE_ROUNDS:
@@ -235,11 +237,13 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
               doc_ids: list[int] | None = None) -> dict:
     """知识问答主入口：编排一条完整的"查资料 → 回答 → 标出处"链路。"""
     global _graph
+    from .document_scope import document_scope
+    doc_ids=document_scope(doc_ids)
     state: RagState = {
         "question": question,
         "tenant_code": tenant_code,
         "top_k": top_k,
-        "doc_ids": doc_ids or [],
+        "doc_ids": doc_ids,
         "query": question,
         "rounds": 0,
         "steps": [],
@@ -272,11 +276,11 @@ async def _linear_flow(state: RagState) -> RagState:
     """没装 langgraph 时的等价实现：步骤、分支判断完全一致，只是写成顺序代码。"""
     state.update(node_retrieve(state))
     state.update(node_grade(state))
-    while not state.get("enough") and int(state.get("rounds") or 0) < MAX_REWRITE_ROUNDS:
+    while _route_after_grade(state)=='rewrite':
         state.update(node_rewrite(state))
         state.update(node_retrieve(state))
         state.update(node_grade(state))
-    if state.get("enough"):
+    if _route_after_grade(state)=='answer':
         state.update(await node_answer(state))
         state.update(node_verify(state))
     else:
