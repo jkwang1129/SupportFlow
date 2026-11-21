@@ -906,3 +906,25 @@ search_knowledge的模型参数只开放query/top_k/doc_ids；Scope为knowledge:
 - `python scripts/test-customer-rls.py --with-ai`112项客服Java PG和19项Python KB全部通过，`b2-ticket-receipts-customer-pg.log`。独立夹具也应用009；新FK/索引不破坏原工单读、来源、消息幂等/认领/回复与知识查询测试。
 
 回滚停用后续新建单调用，保留已提交工单/回执与009历史，不删除表/改旧checksum或恢复无回执盲重试。当前只有存储底座，未验证实际Agent建单、HITL、工单未知写核销或自动调度；新/旧库应停业务备份后按migrate→provision→verify升级，生产恢复实测仍M12。无生产规模、模型质量、性能或业务收益数据。本批未改AI/Runtime，本地不重复刚全绿1dc48d6的771项AI/241项Runtime；精确提交CI全部执行并新增38项存储检查。
+
+45151c6对应的[CI 44876389932](https://github.com/jkwang1129/SupportFlow/actions/runs/44876389932)两个job全部成功，含新增38项回执存储、771项AI/241项Runtime、迁移/95表结构及三套完整服务；回执存储子批次本地/远端退出条件完成。
+
+## B2 建单前置：操作专属的短期写许可（2026-11-21）
+
+基线45151c6。复用AI RuntimeStore的现有精确RESERVED TOOL WRITE查询、Run/Step共享锁、锁后DB时间及5秒内短期许可；内部共用核验过程，公开窄方法authorize_reply/authorize_ticket_create。只接受session.reply/reply-v1、ticket.create/ticket-create-v1，禁止交叉配对/未知操作/版本/额外Scope。action-v1字段/签名顺序不变。新增SUPPORTFLOW_AI_RUNTIME_TICKET_ACTIONS_ENABLED默认false，独立于Runtime入口；仅显式隔离联调服务启用，不注册业务建单API/模型工具。
+
+Java AgentActionPermit.Request增加封闭Operation，原七参数构造器仍默认SESSION_REPLY；两个窄客户端方法在HTTP前校验类型，序列化固定操作/版本，响应MAC也匹配该操作。AgentResultReplies写入口额外检查SESSION_REPLY，防止来源/参数Hash相同且MAC有效的TICKET_CREATE被用于消息。业务事务内仍禁授权网络调用，DB时钟有效期检查不放宽。许可只是执行资格，不代替当前业务资源/来源/正文/幂等回执核验，取消有短暂在途窗口，不能回滚已发生的副作用。
+
+本地Python3.11.5/JDK25/隔离PG17，全部引用/凭据/数据合成，不读.env、不调用供应商：
+
+- `cd ai-service; python -m pytest -q tests/test_runtime_ticket_authority.py tests/test_runtime_authority.py`首轮36项通过＝新13+原23，`b2-ticket-authority-unit-first.log`。开关关闭不查store、显式开启仅调窄方法；操作/版本/Scope伪造先于store拒绝，其他caller拒绝、稳定错误、独立操作签名公式保持。
+- Java定向`AgentActionOperationTest,AgentActionPermitTest,AgentRuntimeClientTest`18项通过＝新3+原8+7，`b2-ticket-authority-java-unit.log`。两种有效MAC许可只各自通过自己的请求验证；互换且其他引用/Hash相同仍拒绝；窄客户端类型错在HTTP前阻断，实际Stub HTTP请求包含固定8个授权引用字段。旧Python签名字面向量93e4...仍原断言通过，没有放宽签名/时效/响应边界。
+- AI普通全量784 passed、262 skipped、1 xfailed，`b2-ticket-authority-ai-final.log/xml`；新16项PG由专项实跑，原引用正文xfail保留；对应RAG报告24项全部执行通过、gate_passed=true。
+- `python scripts/test-customer-rls.py --with-ai`113项Java PG+19项KB Python全部通过，`b2-ticket-authority-customer-pg.log`。新增1项实际受限PG：有效MAC的TICKET_CREATE许可与reply所有引用/参数SHA相同也被40903拒绝，消息/seq/回执/计费/afterCommit事件均不增加。原112项持续通过。
+- `mvn -B -f backend/pom.xml verify`全模块BUILD SUCCESS，`b2-ticket-authority-backend-final.log`。条件PG skip不计通过，实际PG结果如上。
+
+回滚关闭建单授权开关，保留原reply、009存储、Run/Step/预算/历史，不恢复操作不区分的判断；不宣称已完成Agent建单业务/HITL/通用未知写核销。无新的模型质量/性能/费用或生产成果。
+
+`python scripts/test-agent-runtime.py --with-java-delivery`最终退出0，`b2-ticket-authority-runtime-first.log`：257项专项通过＝原241+新16（精确Ticket WRITE/操作版本/主体/参数、取消/过期/非RESERVED拒绝、签名API与预算不变）；旧工单/7例知识工具/真实进程接管/5例发布/核销/回复全部组合保持。Java实际通过受保护AI/受限PG分别领取reply与ticket许可，ticket的同一来源/Hash不能领取reply许可，取消后拒绝新许可；两案终态保留1Step/1Tool/0Model/0Retry，UNKNOWN保持、无业务写。显式合成接收器开启ticket授权，仅为协议资格；默认配置仍关闭，业务API尚不存在。
+
+`python scripts/test-security-flow.py`最终退出0，`b2-ticket-authority-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整实际服务均通过，原知识/访客WS→brain→BOT回复/工单/计费/附件权限、六库Customer009和readiness故障恢复保持。完整服务单独运行，没有并行Maven/服务验收。无SQL改动，不重复刚通过45151c6精确CI的38项存储/迁移/漂移专项；当前精确提交CI继续全跑。

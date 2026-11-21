@@ -14,11 +14,21 @@ import java.util.UUID;
 
 /** Authenticated execution authority, not a replacement for business resource checks. */
 public final class AgentActionPermit {
+    public enum Operation {
+        SESSION_REPLY("session.reply","reply-v1"), TICKET_CREATE("ticket.create","ticket-create-v1");
+        private final String wire,schemaVersion;
+        Operation(String wire,String schemaVersion){this.wire=wire;this.schemaVersion=schemaVersion;}
+        public String wire(){return wire;}
+        public String schemaVersion(){return schemaVersion;}
+    }
     public record Request(String tenant, UUID runId, UUID eventId, String owner, long fence,
-                          UUID snapshotId, String argumentsSha256) {
+                          UUID snapshotId, String argumentsSha256,Operation operation) {
+        public Request(String tenant,UUID runId,UUID eventId,String owner,long fence,UUID snapshotId,String argumentsSha256){
+            this(tenant,runId,eventId,owner,fence,snapshotId,argumentsSha256,Operation.SESSION_REPLY);
+        }
         public Request {
             if (tenant == null || !tenant.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,15}") || tenant.equalsIgnoreCase("PLATFORM")
-                    || runId == null || eventId == null || snapshotId == null || !identifier(owner)
+                    || runId == null || eventId == null || snapshotId == null || operation==null || !identifier(owner)
                     || fence <= 0 || argumentsSha256 == null || !argumentsSha256.matches("[0-9a-f]{64}"))
                 throw new IllegalArgumentException("Invalid action authority reference");
         }
@@ -49,7 +59,7 @@ public final class AgentActionPermit {
     static AgentActionPermit verify(JsonNode root, Request request, String secret, Instant now) {
         if (root == null || !root.isObject() || root.size() != FIELDS.size()) throw invalid();
         root.fieldNames().forEachRemaining(name -> { if (!FIELDS.contains(name)) throw invalid(); });
-        if (!"action-v1".equals(text(root, "version")) || !"session.reply".equals(text(root, "operation"))
+        if (!"action-v1".equals(text(root, "version")) || !request.operation().wire().equals(text(root, "operation"))
                 || !request.tenant().equals(text(root, "tenant_code")) || !request.runId().toString().equals(text(root, "run_id"))
                 || !request.eventId().toString().equals(text(root, "source_event_id")) || !request.owner().equals(text(root, "owner"))
                 || request.fence() != positiveLong(root, "fence") || !request.snapshotId().toString().equals(text(root, "snapshot_id"))
@@ -59,7 +69,7 @@ public final class AgentActionPermit {
         if (!identifier(step) || stepNo > 100 || !signature.matches("[0-9a-f]{64}")) throw invalid();
         String canonical = String.join("\n", "supportflow-agent-action:v1", "action-v1", request.tenant(), request.runId().toString(),
                 request.eventId().toString(), request.owner(), Long.toString(request.fence()), step, Long.toString(stepNo),
-                "session.reply", request.snapshotId().toString(), request.argumentsSha256(), Long.toString(expires));
+                request.operation().wire(), request.snapshotId().toString(), request.argumentsSha256(), Long.toString(expires));
         if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) throw invalid();
         try {
             var mac = Mac.getInstance("HmacSHA256");

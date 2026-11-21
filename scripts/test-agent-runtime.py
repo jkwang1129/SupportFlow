@@ -64,6 +64,7 @@ def main():
         subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/test_runtime_types.py',
                         'tests/test_runtime_store_postgres.py', 'tests/test_runtime_worker_postgres.py',
                         'tests/test_runtime_api_postgres.py', 'tests/test_runtime_authority_postgres.py',
+                        'tests/test_runtime_ticket_authority_postgres.py',
                         'tests/test_runtime_payloads_postgres.py',
                         'tests/test_runtime_worker_payloads_postgres.py',
                         'tests/test_runtime_tools_postgres.py',

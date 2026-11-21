@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     tenant_secret: SecretStr = SecretStr("")
     # Receiver is opt-in until Java delivery/result integration is accepted.
     runtime_api_enabled: bool = False
+    runtime_ticket_actions_enabled: bool = False
     customer_runtime_url: str = 'http://127.0.0.1:9093'
     # 日志级别：DEBUG / INFO / WARNING / ERROR
     log_level: str = "INFO"

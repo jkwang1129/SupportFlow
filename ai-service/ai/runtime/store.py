@@ -236,6 +236,14 @@ class RuntimeStore:
                 (lease_seconds,lease.tenant,lease.run_id)).fetchone()
 
     def authorize_reply(self, tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash):
+        return self._authorize_action(tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,'session.reply','reply-v1')
+
+    def authorize_ticket_create(self, tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash):
+        return self._authorize_action(tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,'ticket.create','ticket-create-v1')
+
+    def _authorize_action(self,tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,operation,version):
+        if (operation,version) not in (('session.reply','reply-v1'),('ticket.create','ticket-create-v1')):
+            raise ValueError('Unsupported action authority operation')
         identifier(owner)
         if type(fence) is not int or fence<1 or not isinstance(arguments_hash,str) or len(arguments_hash)!=64 or any(c not in '0123456789abcdef' for c in arguments_hash):
             raise ValueError('Invalid action authority references')
@@ -246,8 +254,8 @@ class RuntimeStore:
             if (row['state']!='RUNNING' or row['cancel_requested'] or row['owner']!=owner or row['fence']!=fence
                     or row['source_event_id']!=source_event_id or row['runtime_version']!='runtime-v1'):
                 raise ActionDenied('Action is not authorized')
-            expected=dict(operation='session.reply',resource_ref=row['principal_ref'],input_ref=str(snapshot_id),
-                          arguments_sha256=arguments_hash,version='reply-v1')
+            expected=dict(operation=operation,resource_ref=row['principal_ref'],input_ref=str(snapshot_id),
+                          arguments_sha256=arguments_hash,version=version)
             steps=connection.execute("""SELECT step_key,step_no FROM agent_step WHERE tenant_code=%s AND run_id=%s
                  AND fence=%s AND state='RESERVED' AND kind='TOOL' AND effect='WRITE' AND intent_ref=%s
                  ORDER BY step_no LIMIT 2 FOR SHARE""",(tenant,run_id,fence,Jsonb(expected))).fetchall()
@@ -260,7 +268,7 @@ class RuntimeStore:
             if expires<=now: raise ActionDenied('Action authority is too close to expiry')
             step=steps[0]
             return dict(version='action-v1',tenant_code=tenant,run_id=str(run_id),source_event_id=str(source_event_id),
-                        owner=owner,fence=fence,step_key=step['step_key'],step_no=step['step_no'],operation='session.reply',
+                        owner=owner,fence=fence,step_key=step['step_key'],step_no=step['step_no'],operation=operation,
                         snapshot_id=str(snapshot_id),arguments_sha256=arguments_hash,expires_at_ms=int(expires.timestamp()*1000))
 
     def reserve_step(self, lease: Lease, step_key, kind, effect, intent_ref):

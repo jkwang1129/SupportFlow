@@ -49,7 +49,8 @@ public final class AgentResultReplies {
     public Receipt append(AgentActionPermit permit, AgentReplyArguments reply) {
         if (reply==null) throw new IllegalArgumentException("Reply arguments required");
         requireScope(reply.tenant());
-        if (permit == null || !permit.request().tenant().equals(reply.tenant()) || !permit.request().runId().equals(reply.runId())
+        if (permit == null || permit.request().operation()!=AgentActionPermit.Operation.SESSION_REPLY
+                || !permit.request().tenant().equals(reply.tenant()) || !permit.request().runId().equals(reply.runId())
                 || !permit.request().eventId().equals(reply.eventId()) || !permit.request().snapshotId().equals(reply.snapshotId())
                 || !permit.request().argumentsSha256().equals(reply.argumentsSha256())) throw conflict();
         jdbc.queryForObject("SELECT pg_advisory_xact_lock(?)", Object.class, lockKey(reply));

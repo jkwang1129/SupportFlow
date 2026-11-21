@@ -4,7 +4,7 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
 
 from ..config import get_settings
 from ..runtime.store import RuntimeStore
@@ -56,8 +56,14 @@ class ActionRequest(BaseModel):
     fence: StrictInt = Field(gt=0,le=9223372036854775807)
     snapshot_id: StrictStr = Field(min_length=36,max_length=36)
     arguments_sha256: StrictStr = Field(pattern=r'^[0-9a-f]{64}$')
-    operation: Literal['session.reply'] = 'session.reply'
-    version: Literal['reply-v1'] = 'reply-v1'
+    operation: Literal['session.reply','ticket.create'] = 'session.reply'
+    version: Literal['reply-v1','ticket-create-v1'] = 'reply-v1'
+
+    @model_validator(mode='after')
+    def operation_version_pair(self):
+        if (self.operation,self.version) not in (('session.reply','reply-v1'),('ticket.create','ticket-create-v1')):
+            raise ValueError('Unsupported action operation/version pair')
+        return self
 
     @field_validator('source_event_id','snapshot_id')
     @classmethod
@@ -123,8 +129,11 @@ def cancel(run_id: UUID, body: EmptyRequest, request: Request, store=Depends(run
 def authorize(run_id: UUID, body: ActionRequest, request: Request, store=Depends(runtime_store)):
     tenant=request.state.runtime_tenant
     if body.tenant_code!=tenant: raise HTTPException(403,'Runtime tenant mismatch')
+    if body.operation=='ticket.create' and not get_settings().runtime_ticket_actions_enabled:
+        raise HTTPException(503,'Ticket action authority is disabled')
     try:
-        grant=store.authorize_reply(tenant,run_id,body.source_event_id,body.owner,body.fence,body.snapshot_id,body.arguments_sha256)
+        authorize=store.authorize_reply if body.operation=='session.reply' else store.authorize_ticket_create
+        grant=authorize(tenant,run_id,body.source_event_id,body.owner,body.fence,body.snapshot_id,body.arguments_sha256)
         if grant is None: raise HTTPException(404,'Run not found')
         return sign_authority(grant,get_settings().customer_secret.get_secret_value())
     except ActionDenied:

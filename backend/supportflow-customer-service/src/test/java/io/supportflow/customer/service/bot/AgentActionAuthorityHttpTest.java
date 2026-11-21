@@ -14,6 +14,22 @@ import static org.junit.jupiter.api.Assertions.*;
 /** Real Java client -> real AI HTTP authentication/store -> restricted PG17. */
 @EnabledIfEnvironmentVariable(named="SUPPORTFLOW_ACTION_TEST_RUN", matches=".+")
 class AgentActionAuthorityHttpTest {
+    @Test void enabledTicketAuthorityCannotBeUsedForReplyAndCancellationRevokesNewPermits()throws Exception{
+        var endpoint=URI.create(System.getenv("SUPPORTFLOW_RUNTIME_DELIVERY_URL"));
+        var ticket=new AgentActionPermit.Request("AUTHORITY_T",UUID.fromString(System.getenv("SUPPORTFLOW_ACTION_TEST_TICKET_RUN")),
+            UUID.fromString(System.getenv("SUPPORTFLOW_ACTION_TEST_TICKET_EVENT")),"authority-ticket-worker",1,
+            UUID.fromString(System.getenv("SUPPORTFLOW_ACTION_TEST_TICKET_SNAPSHOT")),"a".repeat(64),AgentActionPermit.Operation.TICKET_CREATE);
+        var reply=new AgentActionPermit.Request(ticket.tenant(),ticket.runId(),ticket.eventId(),ticket.owner(),ticket.fence(),ticket.snapshotId(),ticket.argumentsSha256());
+        String secret=System.getenv("SUPPORTFLOW_RUNTIME_CUSTOMER_TEST_SECRET");
+        try(var client=new AgentRuntimeClient(endpoint,secret);var http=HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()){
+            var permit=client.authorizeTicketCreate(ticket);assertEquals(ticket,permit.request());assertEquals("ticket-1",permit.stepKey());
+            assertEquals("AUTHORITY_HTTP_409",assertThrows(AgentRuntimeClient.DeliveryFailure.class,()->client.authorizeReply(reply)).code());
+            assertThrows(IllegalArgumentException.class,()->client.authorizeReply(ticket));
+            var cancel=URI.create(endpoint+"/"+ticket.runId()+"/cancel");
+            assertEquals(200,http.send(AgentRuntimeProtocol.request(cancel,"POST",ticket.tenant(),"{}".getBytes(java.nio.charset.StandardCharsets.UTF_8),secret),HttpResponse.BodyHandlers.ofString()).statusCode());
+            assertEquals("AUTHORITY_HTTP_409",assertThrows(AgentRuntimeClient.DeliveryFailure.class,()->client.authorizeTicketCreate(ticket)).code());
+        }
+    }
     @Test void currentWriteIntentGrantsAuthorityButWrongIdentityOrCancellationCannot() throws Exception {
         var endpoint = URI.create(System.getenv("SUPPORTFLOW_RUNTIME_DELIVERY_URL"));
         assertEquals("127.0.0.1", endpoint.getHost()); assertEquals("http", endpoint.getScheme());

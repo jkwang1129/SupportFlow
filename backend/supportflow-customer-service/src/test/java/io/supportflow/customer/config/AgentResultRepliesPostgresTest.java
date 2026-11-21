@@ -63,6 +63,13 @@ class AgentResultRepliesPostgresTest extends SessionPostgresFixture {
         });
     }
 
+    @Test void validTicketPermitWithSameSourceAndArgumentHashCannotWriteReply(){
+        var ticketPermit=AgentActionPermitFixtures.permit(reply,Instant.now().plusSeconds(4),AgentActionPermit.Operation.TICKET_CREATE);
+        var failure=assertThrows(BizException.class,()->tx(()->replies.append(ticketPermit,reply)));
+        assertEquals(40903,failure.getCode());facts(0,0);
+        verifyNoInteractions(billing,brain);assertEquals(0,committedEvents.get());
+    }
+
     @Test void replyAndReceiptCommitOnceAndReuseOriginalSessionServiceEffects() {
         assertNull(tx(() -> replies.find(reply)));
         var receipt = append(); assertEquals(2, receipt.sequence());

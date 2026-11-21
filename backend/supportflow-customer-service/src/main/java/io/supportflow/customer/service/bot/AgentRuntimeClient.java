@@ -90,14 +90,22 @@ public final class AgentRuntimeClient implements AutoCloseable {
 
     /** Call outside the customer write transaction. Never retries a write or invents a new Run. */
     public AgentActionPermit authorizeReply(AgentActionPermit.Request action) {
-        if (action == null) throw new IllegalArgumentException("Action reference is required");
+        return authorize(action,AgentActionPermit.Operation.SESSION_REPLY);
+    }
+
+    public AgentActionPermit authorizeTicketCreate(AgentActionPermit.Request action) {
+        return authorize(action,AgentActionPermit.Operation.TICKET_CREATE);
+    }
+
+    private AgentActionPermit authorize(AgentActionPermit.Request action,AgentActionPermit.Operation expectedOperation) {
+        if (action == null || action.operation()!=expectedOperation) throw new IllegalArgumentException("Matching action reference is required");
         if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
             throw new IllegalStateException("Action authority must be fetched outside the business transaction");
         final byte[] body;
         try {
             body = mapper.writeValueAsBytes(Map.of("tenant_code", action.tenant(), "source_event_id", action.eventId().toString(),
                     "owner", action.owner(), "fence", action.fence(), "snapshot_id", action.snapshotId().toString(),
-                    "arguments_sha256", action.argumentsSha256(), "operation", "session.reply", "version", "reply-v1"));
+                    "arguments_sha256", action.argumentsSha256(), "operation", action.operation().wire(), "version", action.operation().schemaVersion()));
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_ACTION_REFERENCE"); }
         URI uri = URI.create(endpoint + "/" + action.runId() + "/authorize");
         var response = exchange(AgentRuntimeProtocol.request(uri, "POST", action.tenant(), body, secret), "AUTHORITY");
