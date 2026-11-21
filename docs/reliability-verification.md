@@ -1099,3 +1099,12 @@ cdda89c 的 [CI 44890433299](https://github.com/jkwang1129/SupportFlow/actions/r
 - 实际 AI 服务、Java 客服 JAR 与受限数据库通过 3 条工单审批路径。签名携带错误摘要均返回 409。真实接受后原提案建单一次，来源接管及调度到期均未创建工单。模型调用为 0，均为隔离合成数据。
 
 当前协议的坐席引用由签名客服服务提供，客服服务的已认证用户入口、当前角色及会话重验另行接入。回滚可关闭 `SUPPORTFLOW_AI_RUNTIME_APPROVAL_REVIEW_ENABLED` 并保留审计和任务。见 [ADR-0032](decisions/0032-ticket-approval-review-boundary.md)。
+
+## B3 客服坐席审批决定入口（2026-11-21）
+
+客服服务复用登录过滤器和当前企业角色查询，拒绝缺失、不可读取和普通坐席角色。批准前核对当前来源及快照，拒绝和撤销可在人工接管后收回同租户已交付任务的权限。AI 调用在短事务关闭后执行，只转发固定审批引用和可信坐席 ID。投递端接收已进入 `WAITING_APPROVAL` 的重复确认。详情和回滚见 [ADR-0032](decisions/0032-ticket-approval-review-boundary.md)。
+
+- `python scripts/test-customer-rls.py --with-ai` 在隔离 PostgreSQL 17 下通过 145 项客服和 19 项知识库测试。新增 6 项覆盖跨租户、接管、角色变更、伪造字段、上游失败及 AI 调用期间未持有 JDBC 连接，日志 `b3-java-review-pg.log`。
+- JDK 25 运行 `mvn -B -f backend/pom.xml verify` 通过。新增 4 项 TCP 单元测试，包括精确签名、大整数坐席 ID、拒绝变更的决定响应以及重复投递确认，日志 `b3-java-review-backend.log`。
+- 初次完整 Runtime 联调的既有 `lost_ack` 工单用例已提交且尝试一次查询，但未能确认回执，Run 保留 `SIDE_EFFECT_UNKNOWN`。夹具原先用一秒期限共享模拟丢确认和回执查询。改为确认上游提交后断开测试代理连接，保留正常三秒查询期限。10 项写工具路径复测通过，包含两例只读核销和一例无回执保持阻断。日志 `b3-java-review-runtime.log` 和 `b3-java-review-and-preview-runtime.log`。
+- 以 `PYTEST_ADDOPTS='-k runtime_approval_review'` 执行 `python scripts/test-agent-runtime.py --with-java-delivery`。实际客服 JAR、AI 服务与 PostgreSQL 的 3 条坐席审批用例通过。匿名、普通坐席、错摘要分别返回 401、403、409，消费前重放仍为原审批。批准后建单 1 张、工单事件和回执各 1 条。批准后来源接管或过期各 0 张工单。身份令牌和用户角色响应由隔离夹具生成，调用进入真实登录过滤器和角色客户端；角色夹具首轮缺少标准时间戳而被拒绝，补齐响应后通过。日志 `b3-java-review-api-final.log`、机器报告 `runtime-ticket-approval.json` v3。

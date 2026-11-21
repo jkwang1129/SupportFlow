@@ -1,10 +1,14 @@
 """Approved ticket execution against real Runtime, customer and AI authority services."""
 import asyncio
-import hashlib
+from base64 import urlsafe_b64encode
+from contextlib import contextmanager
 import hmac
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+from threading import Thread
 import time
+from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 import httpx
@@ -23,26 +27,77 @@ def _seed_source(connect, source, run, session_id):
             (source.tenant, source.source_event_id, run, source.message_id, session_id, source.session_no, source.principal_ref, source.trace_id))
 
 
-def _signed_review(client, ai_base, secret, source, run, row):
-    path = f'/api/ai/v1/runtime/runs/{run}/review-ticket-approval'
-    expiry = str(int(time.time()) + 20)
+@contextmanager
+def approval_role_server():
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            request = urlsplit(self.path)
+            tenant = parse_qs(request.query).get('tenantCode', [])
+            if tenant not in (['TC_APPROVAL_0'], ['TC_APPROVAL_1'], ['TC_APPROVAL_2']):
+                self.send_error(404)
+                return
+            roles = {
+                '/api/user/internal/users/123/roles': ['ADMIN'],
+                '/api/user/internal/users/124/roles': ['AGENT'],
+            }
+            if request.path not in roles:
+                self.send_error(404)
+                return
+            raw = json.dumps({'code': 0, 'message': 'OK', 'data': roles[request.path],
+                              'requestId': 'fixture-role', 'timestamp': int(time.time() * 1000)}).encode()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
 
-    def request(digest):
-        payload = json.dumps(dict(approval_id=str(row['approval_id']), source_event_id=str(source.source_event_id),
-            arguments_sha256=digest, reviewer_ref='staff:123', decision='approve'), separators=(',', ':')).encode()
-        canonical = '\n'.join(('supportflow-ai-runtime:v1', 'customer', expiry, 'POST', path, '', source.tenant,
-                                hashlib.sha256(payload).hexdigest()))
-        token = hmac.digest(secret.encode(), canonical.encode(), 'sha256').hex()
-        return client.post(ai_base+path, content=payload,
-                           headers={'X-Tenant-Code': source.tenant, 'X-SupportFlow-AI-Auth': f'runtime:customer:{expiry}:{token}',
-                                    'Content-Type': 'application/json'})
+        def log_message(self, *_):
+            pass
 
-    assert request('0'*64).status_code == 409
-    result = request(row['arguments_sha256'])
-    assert result.status_code == 200 and result.json() == {'approval_id': str(row['approval_id']), 'status': 'APPROVED'}
+    with ThreadingHTTPServer(('127.0.0.1', 0), Handler) as server:
+        thread = Thread(target=server.serve_forever, kwargs={'poll_interval': .05}, daemon=True)
+        thread.start()
+        try:
+            yield f'http://127.0.0.1:{server.server_port}'
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
 
 
-def verify_ticket_approval(connect, base, ai_base, secret, store):
+def _fixture_token(key, tenant, user_id):
+    # The disposable customer JAR uses a random 64-byte key for HS512.
+    def part(value):
+        return urlsafe_b64encode(json.dumps(value).encode()).rstrip(b'=')
+
+    now = int(time.time())
+    claims = {'sub': str(user_id), 'uno': 'FIXTURE', 'name': 'Fixture reviewer',
+              'type': 2, 'tnt': tenant, 'iat': now, 'exp': now + 60}
+    signed = part({'alg': 'HS512'}) + b'.' + part(claims)
+    signature = urlsafe_b64encode(hmac.digest(key.encode(), signed, 'sha512')).rstrip(b'=')
+    return 'Bearer ' + (signed + b'.' + signature).decode()
+
+
+def _staff_review(client, base, key, source, run, row):
+    path = f'/api/customer/agent-approvals/events/{source.source_event_id}/runs/{run}/decisions'
+
+    def request(digest, user_id=None):
+        headers = {'Authorization': _fixture_token(key, source.tenant, user_id)} if user_id is not None else {}
+        return client.post(base+path, headers=headers, json={
+            'approval_id': str(row['approval_id']), 'arguments_sha256': digest, 'decision': 'approve',
+        })
+
+    digest = row['arguments_sha256']
+    assert request(digest).status_code == 401
+    assert request(digest, 124).status_code == 403
+    conflict = request('0'*64, 123)
+    assert conflict.status_code == 409, (conflict.status_code, conflict.json().get('code'))
+    for _ in range(2):
+        result = request(digest, 123)
+        assert result.status_code == 200, (result.status_code, result.json().get('code'))
+        assert result.json()['data'] == {'approval_id': str(row['approval_id']), 'status': 'APPROVED'}
+
+
+def verify_ticket_approval(connect, base, jwt_key, secret, store):
     from ai.runtime.approvals import TicketApprovals
     from ai.runtime.source import SourceClient
     from ai.runtime.ticket_creation import TicketCreationClient
@@ -71,7 +126,7 @@ def verify_ticket_approval(connect, base, ai_base, secret, store):
         assert waiting['state'] == 'WAITING_APPROVAL' and row['snapshot_id'] == snapshot.snapshot_id
         assert waiting['step_count'] == 1 and store.claim_next(tenant, 'must-wait') is None
         with httpx.Client(trust_env=False, follow_redirects=False, timeout=3) as client:
-            _signed_review(client, ai_base, secret, source, run, row)
+            _staff_review(client, base, jwt_key, source, run, row)
         assert approvals.get(tenant, run)['decided_by'] == 'staff:123'
 
         if mode == 'taken_over_after_approval':
@@ -108,6 +163,7 @@ def verify_ticket_approval(connect, base, ai_base, secret, store):
             approval_status=audit['status'], steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=int(receipt is not None), events=events))
     artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v2', mode='SYNTHETIC_SOURCE_REAL_JAVA_AI_PG',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v3', mode='SYNTHETIC_ROLE_SOURCE_REAL_JAVA_AI_PG',
         cases=observations), indent=2)+'\n', encoding='utf-8')
-    print('Actual signed AI ticket review: 3 cases passed; wrong digest rejected, one approved ticket/receipt, zero writes after source takeover or expiry', flush=True)
+    print('Authenticated customer-JAR ticket review: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
+          'duplicate approval preserved, one approved ticket/receipt, zero writes after takeover or expiry', flush=True)

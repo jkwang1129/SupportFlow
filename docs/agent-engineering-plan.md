@@ -20,7 +20,7 @@
 | PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前97表/索引/RLS；customer009、AI007及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
 | PR-8 持久化 Run | 部分实现：持久化Loop/报告发布/进程恢复 | Run/Step/Worker、双向API/SDK；276项Runtime，139项客服PG；实际JAR→AI写许可→业务回复/丢回执及真实Worker退出接管；默认关闭 | 可信调度/自动登记、租户Profile Resolver仍缺。B1进行中 |
 | PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。MCP尚未接入。B2 |
-| PR-10 Checkpoint/HITL | 部分实现：Runtime恢复及审批暂停已核验 | Runtime原子正文/引用/原预算恢复与真实进程接管；单一回复与建单的未知写受控核销；旧LangGraph compile仍无原生checkpointer | 限时审批绑定主体/资源/参数、过期/撤销/审批后重新鉴权、其他未知写仍缺。B3 |
+| PR-10 Checkpoint/HITL | 部分实现：工单审批、恢复与决定入口 | 原子正文和原预算恢复、真实进程接管、限时审批绑定主体/快照/参数、一次性消费、到期/撤销、坐席角色与来源重验、回复及建单未知写核销 | 待接原提案预览、待审任务发现与坐席操作界面；其他写操作需各自回执。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
 | PR-12 RAG | 部分完成：本轮拒答首批已通过 | `rag/graph.py` 增加 abstain；版本化 12 案例 × 两引擎 24 项通过；`services/rag.py#verify_citations` 仍只核编号 | 文档范围/空选集/关键词降级、访客发布就绪策略已回归；未完成事实支持、冲突/版本/ACL 评测，越界引用正文问题仍 xfail；不预设必须混检/重排。A6 首批/C |
 
@@ -30,7 +30,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 
 | 模块 | 当前状态 | 可复用实现/证据 | 必须补齐及依赖 |
 | --- | --- | --- | --- |
-| M01 Reliable Runtime | 部分实现，尚未切换业务触发 | Run/Step/Worker、真实双向桥接、租约/Step许可、原子业务回执；中间产物与Step成功原子存储、Worker跨进程恢复 | 只读Loop/报告发布已通过实际服务组合；单一reply未知写已受控核销，其他未知写/审批/可信触发待补；PR-8/9/10。B |
+| M01 Reliable Runtime | 部分实现，尚未切换业务触发 | Run/Step/Worker、双向桥接、租约/Step许可、原子业务回执；正文与Step成功原子存储、跨进程恢复；回复/建单核销及工单审批 | 只读Loop/报告发布已通过实际服务组合；可信触发、租户策略和审批交互待补，其他写操作需各自的核销适配。B |
 | M02 Context Engineering | 部分实现 | 旧最近12条对话；customer006冻结当前输入/每次重验；AI003步骤正文存储有字节/节点/深度及完整性边界 | Worker已能恢复正文；尚无统一长历史构建器/Token预算/压缩对照；正文存储不代替上下文策略或Checkpoint。B基础/C完善 |
 | M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、来源/工单/知识工具与签名SDK，实际Worker/受限PG核权/刷新/共享Embedding预算；有界工单Loop；宿主报告原子发布与回执核销 | 原子建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE/知识决策Loop、通用未知写与可信MCP仍缺；不重复写业务服务。B |
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权/固定事实报告；操作专属签名许可/参数摘要与回执绑定、有效MAC跨操作拒绝、越权/假引用/假写声明负例 | 已补RAG/KB所测应用日志与已处理错误的内容排除；完整直接/间接注入集、通用PII/秘密保护、限时参数审批/防重放仍缺；无任意代码需求，暂不建Sandbox。A/B |
@@ -74,9 +74,9 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-21，B3 内部审批审查协议）
+## 当前执行位置（2026-11-21，B3 坐席审批入口）
 
-阶段A已完成退出条件，B1/B2/B3仍部分实现，默认Workflow保留，开发分支未合并main。已有Run/Step/Worker/预算/租约fence、Outbox/签名API、正文Checkpoint/真实进程恢复、来源/工单工具、有界Loop/固定报告发布及单一reply未知写核销。无回执仍阻断，HITL/创建工单/可信自动触发未完成。
+阶段 A 已完成退出条件，B1/B2/B3 仍部分实现。现有默认客服流程继续运行。Runtime 已有预算、租约、Outbox、签名 API、正文检查点与进程恢复、有界 Loop 和报告发布。回复与建单支持按回执核销，缺回执继续阻断。工单限时审批已接等待、恢复与决定，可信触发、提案发现和坐席交互待交付。
 
 3d644cb的[CI 44854145977](https://github.com/jkwang1129/SupportFlow/actions/runs/44854145977)两个job全部成功。文档范围/空选集、诊断内容排除和访客发布/索引就绪策略已完成本地/远端验收；该批为Customer008/AI004、94表/1视图/5函数，新增KB列读取不授正文/文档修改。
 
@@ -113,3 +113,5 @@ AI006 已增加 WAITING_APPROVAL 与持久化审批记录。18 项审批存储�
 AI007 将未消费的过期审批加入既有 Worker 发现及领取。77 项审批与 Worker 定向 PostgreSQL 测试、17 项迁移和 97 表结构通过。已暂停任务和审计在升级前后逐字段一致。坐席审查按 ADR-0032 分别接 AI 内部协议和原客服权限。
 
 独立默认关闭的内部审批审查协议通过 15 项新单元、5 项实际 PostgreSQL 用例和三条真实服务审批路径。坐席审查从签名服务收到来源、审批及参数摘要并在锁后重验。下一批接 Java 坐席权限和状态兼容。
+
+1e278f4 的 [CI 44892566490](https://github.com/jkwang1129/SupportFlow/actions/runs/44892566490) 全部通过。客服侧已接登录态、当前管理员或主管角色、短事务核验来源和签名审批决定。受限数据库测试 145 项通过，另有 19 项知识库测试。待审 Run 的重复投递可以确认。坐席需要通过原提案预览取得审批 ID 和摘要，再提交决定。

@@ -21,6 +21,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from local_env import runtime_environment
+from ticket_approval_fixture import approval_role_server, verify_ticket_approval
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -82,10 +83,11 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
     java=Path(os.environ['JAVA_HOME'])/'bin'/('java.exe' if os.name=='nt' else 'java');jar,=(ROOT/'backend/supportflow-customer-service/target').glob('*.jar')
     logs=ROOT/'.local/runtime-loop-service';logs.mkdir(parents=True,exist_ok=True);failed=False
     store=RuntimeStore(lambda:psycopg.connect(runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'],row_factory=dict_row))
-    with (logs/'customer-service.log').open('wb') as log:
+    with approval_role_server() as role_base, (logs/'customer-service.log').open('wb') as log:
         process=subprocess.Popen([str(java),'-Xms32m','-Xmx384m','-jar',str(jar),f'--server.port={port}',
             '--supportflow.bot.runtime-source-enabled=true','--supportflow.bot.runtime-read-tools-enabled=true',
             '--supportflow.bot.runtime-ticket-create-enabled=true',
+            '--supportflow.bot.runtime-approval-review-enabled=true', f'--supportflow.user.internal-base-url={role_base}',
             *[f'--supportflow.ai.{name}-base-url={ai_base}' for name in ('bot','qa','kb','vision','speech')]],
             cwd=ROOT,env=child,stdout=log,stderr=subprocess.STDOUT,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
         try:
@@ -99,6 +101,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     except httpx.HTTPError:pass
                     time.sleep(.25)
                 else:raise RuntimeError('Disposable Loop customer service not ready')
+            verify_ticket_approval(connect,base,child['SUPPORTFLOW_JWT_SECRET'],secret,store)
             observations=[];scenarios={}
             with planner_server(scenarios,connect) as model_base:
                 for index,mode in enumerate(('normal','late_status','owner_revoked','foreign_parameter','phantom_reference','fake_write_claim','model503','turn_limit','process_restart')):
@@ -186,8 +189,6 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             verify_ticket_creation_api(connect,base,secret,store)
             from ticket_write_tool_fixture import verify_ticket_write_tool
             verify_ticket_write_tool(connect,base,secret,store)
-            from ticket_approval_fixture import verify_ticket_approval
-            verify_ticket_approval(connect,base,ai_base,secret,store)
         except BaseException:
             failed=True;raise
         finally:

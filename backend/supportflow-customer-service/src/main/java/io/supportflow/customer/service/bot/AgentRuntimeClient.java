@@ -34,7 +34,7 @@ public final class AgentRuntimeClient implements AutoCloseable {
         public boolean retryable() { return retryable; }
         public String code() { return getMessage(); }
     }
-    private static final Set<String> STATES = Set.of("PENDING", "RUNNING", "RETRY_WAIT", "SUCCEEDED", "FAILED", "CANCELLED");
+    private static final Set<String> STATES = Set.of("PENDING", "RUNNING", "WAITING_APPROVAL", "RETRY_WAIT", "SUCCEEDED", "FAILED", "CANCELLED");
     private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private final HttpClient client;
@@ -97,6 +97,30 @@ public final class AgentRuntimeClient implements AutoCloseable {
         return authorize(action,AgentActionPermit.Operation.TICKET_CREATE);
     }
 
+    public String reviewTicketApproval(AgentApprovalReview review) {
+        if (review == null) throw new IllegalArgumentException("Approval review reference required");
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Approval review must run outside the business transaction");
+        final byte[] body;
+        try {
+            body = mapper.writeValueAsBytes(Map.of("approval_id", review.approvalId().toString(),
+                    "source_event_id", review.eventId().toString(), "arguments_sha256", review.argumentsSha256(),
+                    "reviewer_ref", review.reviewerRef(), "decision", review.decision().wire()));
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_REVIEW"); }
+        URI uri = URI.create(endpoint + "/" + review.runId() + "/review-ticket-approval");
+        var response = exchange(AgentRuntimeProtocol.request(uri, "POST", review.tenant(), body, secret), "APPROVAL_REVIEW");
+        int code = response.statusCode();
+        if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, "APPROVAL_REVIEW_HTTP_" + code);
+        if (!hasPlainJsonBody(response)) throw new DeliveryFailure(false, "INVALID_APPROVAL_REVIEW_RESULT");
+        try {
+            JsonNode result = mapper.readTree(response.body());
+            if (result == null || !result.isObject() || result.size() != 2
+                    || !review.approvalId().toString().equals(text(result, "approval_id"))
+                    || !review.decision().result().equals(text(result, "status"))) throw new IllegalArgumentException();
+            return review.decision().result();
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_REVIEW_RESULT"); }
+    }
+
     private AgentActionPermit authorize(AgentActionPermit.Request action,AgentActionPermit.Operation expectedOperation) {
         if (action == null || action.operation()!=expectedOperation) throw new IllegalArgumentException("Matching action reference is required");
         if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
@@ -111,13 +135,17 @@ public final class AgentRuntimeClient implements AutoCloseable {
         var response = exchange(AgentRuntimeProtocol.request(uri, "POST", action.tenant(), body, secret), "AUTHORITY");
         int code = response.statusCode();
         if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, "AUTHORITY_HTTP_" + code);
-        var contentTypes = response.headers().allValues("Content-Type");
-        var encodings = response.headers().allValues("Content-Encoding");
-        if (contentTypes.size() != 1 || !contentTypes.getFirst().split(";", 2)[0].trim().equalsIgnoreCase("application/json")
-                || encodings.size() > 1 || !encodings.isEmpty() && !encodings.getFirst().equalsIgnoreCase("identity"))
+        if (!hasPlainJsonBody(response))
             throw new DeliveryFailure(false, "INVALID_ACTION_PERMIT");
         try { return AgentActionPermit.verify(mapper.readTree(response.body()), action, secret, Instant.now()); }
         catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_ACTION_PERMIT"); }
+    }
+
+    private static boolean hasPlainJsonBody(HttpResponse<byte[]> response) {
+        var contentTypes = response.headers().allValues("Content-Type");
+        var encodings = response.headers().allValues("Content-Encoding");
+        return contentTypes.size() == 1 && contentTypes.getFirst().split(";", 2)[0].trim().equalsIgnoreCase("application/json")
+                && (encodings.isEmpty() || encodings.size() == 1 && encodings.getFirst().equalsIgnoreCase("identity"));
     }
 
     private HttpResponse<byte[]> exchange(HttpRequest request, String operation) {

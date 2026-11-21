@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import json
 from pathlib import Path
-from threading import Event,Thread
+from threading import Thread
 from uuid import uuid4
 
 import httpx
@@ -14,7 +14,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 @contextmanager
 def ticket_proxy(base,mode,on_commit):
-    evidence=dict(sources=0,posts=0,gets=0,committed=False);stop=Event()
+    evidence=dict(sources=0,posts=0,gets=0,committed=False)
     class Handler(BaseHTTPRequestHandler):
         protocol_version='HTTP/1.1'
         def log_message(self,*_):pass
@@ -35,15 +35,18 @@ def ticket_proxy(base,mode,on_commit):
                 if ticket and method=='POST' and status==200:
                     evidence['committed']=True
                     if mode=='cancel_after_commit':on_commit()
+                    if mode in ('lost_ack','receipt_budget2'):
+                        # Confirm the upstream commit before dropping the downstream acknowledgement.
+                        self.close_connection=True
+                        return
             self.send_response(status);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)))
             self.send_header('Connection','close');self.end_headers();self.close_connection=True
-            if ticket and method=='POST' and status==200 and mode in ('lost_ack','receipt_budget2'):stop.wait(5)
             try:self.wfile.write(raw)
             except (BrokenPipeError,ConnectionResetError,ConnectionAbortedError):pass
     server=ThreadingHTTPServer(('127.0.0.1',0),Handler);server.daemon_threads=True
     thread=Thread(target=lambda:server.serve_forever(poll_interval=.02),daemon=True);thread.start()
     try:yield f'http://127.0.0.1:{server.server_port}',evidence
-    finally:stop.set();server.shutdown();server.server_close();thread.join(timeout=3)
+    finally:server.shutdown();server.server_close();thread.join(timeout=3)
 
 
 class LostStepAck:
@@ -82,7 +85,7 @@ def verify_ticket_write_tool(connect,base,secret,store):
             if mode=='source_takeover':db.execute('UPDATE session SET agent_id=99 WHERE id=%s',(session_id,))
         with ticket_proxy(base,mode,lambda:store.cancel(tenant,run)) as (proxy,io):
             source_client=SourceClient(proxy,secret,deadline=3)
-            write_client=TicketCreationClient(proxy,secret,deadline=1 if mode in ('lost_ack','receipt_budget2') else 3)
+            write_client=TicketCreationClient(proxy,secret,deadline=3)
             executor=ToolExecutor(ToolRegistry([ticket_create_tool(source_client,write_client,timeout_seconds=5)]),frozenset() if mode=='scope_denied' else frozenset({'ticket:create'}))
             proposal=ToolCall('create_ticket','ticket-create-v1',dict(title='SYNTHETIC PRIVATE WRITE TITLE',content='synthetic original body\n原文 '))
             if mode=='bad_parameters':proposal.arguments['customer_id']=customer_id
