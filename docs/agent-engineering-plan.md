@@ -17,7 +17,7 @@
 | PR-4 消息幂等 | 本轮已实现且真实 PG 验证通过 | `SessionService#appendMessage`、两个 Mapper；`SessionMessagePostgresTest` 7 项 | 原 25P02、回滚计费问题已复现后修复；含关闭竞争、跨租户和软删除键。持久化计量/任务仍在 PR-6/8。A2 完成 |
 | PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
-| PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前96表/索引/RLS；customer009、AI005及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
+| PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前97表/索引/RLS；customer009、AI006及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
 | PR-8 持久化 Run | 部分实现：持久化Loop/报告发布/进程恢复 | Run/Step/Worker、双向API/SDK；276项Runtime，139项客服PG；实际JAR→AI写许可→业务回复/丢回执及真实Worker退出接管；默认关闭 | 可信调度/自动登记、租户Profile Resolver仍缺。B1进行中 |
 | PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。MCP尚未接入。B2 |
 | PR-10 Checkpoint/HITL | 部分实现：Runtime执行恢复已核验，HITL未实现 | Runtime原子正文/引用/原预算恢复与真实进程接管；单一回复与建单的未知写受控核销；旧LangGraph compile仍无原生checkpointer | 限时审批绑定主体/资源/参数、过期/撤销/审批后重新鉴权、其他未知写仍缺。B3 |
@@ -74,7 +74,7 @@ A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批�
 6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
 7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
 
-## 当前执行位置（2026-11-21，B3 工单终态核销）
+## 当前执行位置（2026-11-21，B3 限时审批存储）
 
 阶段A已完成退出条件，B1/B2/B3仍部分实现，默认Workflow保留，开发分支未合并main。已有Run/Step/Worker/预算/租约fence、Outbox/签名API、正文Checkpoint/真实进程恢复、来源/工单工具、有界Loop/固定报告发布及单一reply未知写核销。无回执仍阻断，HITL/创建工单/可信自动触发未完成。
 
@@ -103,3 +103,5 @@ b703d4f 的 [CI 44883937143](https://github.com/jkwang1129/SupportFlow/actions/r
 
 
 工单终态核销已通过本地验收。可信宿主读取匹配的历史回执后，持久化审计、解除同会话任务阻断，保留失败状态、取消标记、历史完成时间及预算。65 项定向数据库用例和真实服务 10 例通过，其中两例各用一次 GET 确认既成工单，缺回执仍阻断。下一阶段实施 ADR-0030 的限时审批，先接 AI006 等待状态和审批数据，再接恢复、审批消费及权限。
+
+AI006 已增加 WAITING_APPROVAL 与持久化审批记录。18 项审批存储、17 项迁移、97 表契约和三套完整服务通过。下一批接暂停、决定和按原检查点恢复，随后将审批消费、当前来源核权和业务写许可绑定。验收详见 ADR-0030。

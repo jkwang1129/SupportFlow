@@ -7,6 +7,205 @@
         "supportflow_agent_due_tenants(p_limit integer)": "CREATE OR REPLACE FUNCTION public.supportflow_agent_due_tenants(p_limit integer)\n RETURNS TABLE(tenant_code character varying)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n SELECT r.tenant_code FROM public.agent_run r\n WHERE ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())\n    OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))\n AND NOT EXISTS(SELECT 1 FROM public.agent_run earlier WHERE earlier.tenant_code=r.tenant_code AND earlier.session_no=r.session_no\n    AND earlier.run_id<>r.run_id AND (earlier.state='RUNNING' OR\n       (earlier.event_seq<r.event_seq AND (earlier.state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR earlier.error_code='SIDE_EFFECT_UNKNOWN'))))\n GROUP BY r.tenant_code ORDER BY min(r.created_at),r.tenant_code\n LIMIT greatest(1,least(coalesce(p_limit,32),100))\n$function$\n"
       },
       "tables": {
+        "agent_approval": {
+          "columns": {
+            "approval_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "arguments_sha256": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "closed_at": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "timestamp with time zone"
+            },
+            "closed_by": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "character varying(64)"
+            },
+            "consumed_at": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "timestamp with time zone"
+            },
+            "consumed_step_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "integer"
+            },
+            "decided_at": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "timestamp with time zone"
+            },
+            "decided_by": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "character varying(64)"
+            },
+            "expires_at": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "operation": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(32)"
+            },
+            "principal_ref": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(96)"
+            },
+            "purpose": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(32)"
+            },
+            "requested_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "run_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "schema_version": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(32)"
+            },
+            "snapshot_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "status": {
+              "default": "'PENDING'::character varying",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "tool_name": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(48)"
+            }
+          },
+          "constraints": {
+            "agent_approval_arguments_sha256_check": "CHECK ((arguments_sha256 ~ '^[0-9a-f]{64}$'::text))",
+            "agent_approval_check": "CHECK (((expires_at > requested_at) AND (expires_at <= (requested_at + '01:00:00'::interval))))",
+            "agent_approval_check1": "CHECK (((decided_at >= requested_at) AND (decided_at < expires_at)))",
+            "agent_approval_check10": "CHECK ((((status)::text <> 'PENDING'::text) OR (decided_at IS NULL)))",
+            "agent_approval_check2": "CHECK ((closed_at >= COALESCE(decided_at, requested_at)))",
+            "agent_approval_check3": "CHECK (((consumed_at >= decided_at) AND (consumed_at < expires_at)))",
+            "agent_approval_check4": "CHECK (((decided_by IS NULL) = (decided_at IS NULL)))",
+            "agent_approval_check5": "CHECK (((closed_by IS NULL) = (closed_at IS NULL)))",
+            "agent_approval_check6": "CHECK (((consumed_step_no IS NULL) = (consumed_at IS NULL)))",
+            "agent_approval_check7": "CHECK ((((status)::text = 'CONSUMED'::text) = (consumed_at IS NOT NULL)))",
+            "agent_approval_check8": "CHECK ((((status)::text = ANY ((ARRAY['REVOKED'::character varying, 'EXPIRED'::character varying, 'CANCELLED'::character varying])::text[])) = (closed_at IS NOT NULL)))",
+            "agent_approval_check9": "CHECK ((((status)::text <> ALL ((ARRAY['APPROVED'::character varying, 'DENIED'::character varying, 'REVOKED'::character varying, 'CONSUMED'::character varying])::text[])) OR (decided_at IS NOT NULL)))",
+            "agent_approval_closed_by_check": "CHECK (((closed_by)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$'::text))",
+            "agent_approval_consumed_step_no_check": "CHECK (((consumed_step_no >= 1) AND (consumed_step_no <= 100)))",
+            "agent_approval_decided_by_check": "CHECK (((decided_by)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$'::text))",
+            "agent_approval_operation_check": "CHECK (((operation)::text = 'ticket.create'::text))",
+            "agent_approval_pkey": "PRIMARY KEY (tenant_code, run_id)",
+            "agent_approval_principal_ref_check": "CHECK (((principal_ref)::text ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]{0,95}$'::text))",
+            "agent_approval_purpose_check": "CHECK (((purpose)::text = 'customer-support-ticket'::text))",
+            "agent_approval_schema_version_check": "CHECK (((schema_version)::text = 'ticket-create-v1'::text))",
+            "agent_approval_status_check": "CHECK (((status)::text = ANY ((ARRAY['PENDING'::character varying, 'APPROVED'::character varying, 'DENIED'::character varying, 'REVOKED'::character varying, 'EXPIRED'::character varying, 'CANCELLED'::character varying, 'CONSUMED'::character varying])::text[])))",
+            "agent_approval_tenant_code_approval_id_key": "UNIQUE (tenant_code, approval_id)",
+            "agent_approval_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
+            "agent_approval_tenant_code_run_id_consumed_step_no_fkey": "FOREIGN KEY (tenant_code, run_id, consumed_step_no) REFERENCES agent_step(tenant_code, run_id, step_no)",
+            "agent_approval_tenant_code_run_id_fkey": "FOREIGN KEY (tenant_code, run_id) REFERENCES agent_run(tenant_code, run_id)",
+            "agent_approval_tool_name_check": "CHECK (((tool_name)::text = 'create_ticket'::text))"
+          },
+          "indexes": {
+            "agent_approval_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_approval_pkey ON public.agent_approval USING btree (tenant_code, run_id)",
+              "valid": true
+            },
+            "agent_approval_tenant_code_approval_id_key": {
+              "definition": "CREATE UNIQUE INDEX agent_approval_tenant_code_approval_id_key ON public.agent_approval USING btree (tenant_code, approval_id)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_approval_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_approval_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "agent_payload": {
           "columns": {
             "created_at": {
@@ -505,6 +704,7 @@
             }
           },
           "constraints": {
+            "agent_run_approval_has_no_lease": "CHECK ((((state)::text <> 'WAITING_APPROVAL'::text) OR ((owner IS NULL) AND (lease_until IS NULL))))",
             "agent_run_attempt_check": "CHECK ((attempt >= 0))",
             "agent_run_check": "CHECK (((step_count >= 0) AND (step_count <= max_steps)))",
             "agent_run_check1": "CHECK (((model_calls >= 0) AND (model_calls <= max_model_calls)))",
@@ -519,7 +719,7 @@
             "agent_run_max_tool_calls_check": "CHECK (((max_tool_calls >= 0) AND (max_tool_calls <= 100)))",
             "agent_run_message_id_check": "CHECK ((message_id > 0))",
             "agent_run_pkey": "PRIMARY KEY (tenant_code, run_id)",
-            "agent_run_state_check": "CHECK (((state)::text = ANY ((ARRAY['PENDING'::character varying, 'RUNNING'::character varying, 'RETRY_WAIT'::character varying, 'SUCCEEDED'::character varying, 'FAILED'::character varying, 'CANCELLED'::character varying])::text[])))",
+            "agent_run_state_check": "CHECK (((state)::text = ANY ((ARRAY['PENDING'::character varying, 'RUNNING'::character varying, 'WAITING_APPROVAL'::character varying, 'RETRY_WAIT'::character varying, 'SUCCEEDED'::character varying, 'FAILED'::character varying, 'CANCELLED'::character varying])::text[])))",
             "agent_run_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
             "agent_run_tenant_code_session_no_event_seq_key": "UNIQUE (tenant_code, session_no, event_seq)",
             "agent_run_tenant_code_source_event_id_key": "UNIQUE (tenant_code, source_event_id)"
@@ -13584,6 +13784,10 @@
       {
         "checksum": "37d6da9e61da0525523763c14d8c9b9cd840124a0479f700519e643dbfd7aa85",
         "version": "005"
+      },
+      {
+        "checksum": "9e4fc45f3cffdef0eb8ccea0798fbca265d611c4bbd0e826ea29caaa03de26e4",
+        "version": "006"
       }
     ],
     "billing_db": [

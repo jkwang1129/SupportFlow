@@ -77,14 +77,17 @@ def main():
                         'tests/test_reconciliation_postgres.py',
                         'tests/test_ticket_reconciliation_postgres.py',
                         'tests/test_ticket_reconciliation_storage_postgres.py',
+                        'tests/test_approval_storage_postgres.py',
                         f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)
         with connect('ai_db') as connection:
             audit_rows = connection.execute('SELECT * FROM agent_ticket_reconciliation ORDER BY tenant_code,run_id').fetchall()
+            approval_rows = connection.execute('SELECT * FROM agent_approval ORDER BY tenant_code,run_id').fetchall()
         subprocess.run(command, env=provision_env, input=provisioning,
                        text=True, check=True, stdout=subprocess.DEVNULL)
         with connect('ai_db') as connection:
             assert connection.execute('SELECT * FROM agent_ticket_reconciliation ORDER BY tenant_code,run_id').fetchall() == audit_rows
+            assert connection.execute('SELECT * FROM agent_approval ORDER BY tenant_code,run_id').fetchall() == approval_rows
             privileges = connection.execute("""SELECT has_table_privilege('supportflow_ai','agent_ticket_reconciliation','SELECT'),
                 has_table_privilege('supportflow_ai','agent_ticket_reconciliation','INSERT'),
                 has_table_privilege('supportflow_ai','agent_ticket_reconciliation','UPDATE'),
@@ -93,7 +96,13 @@ def main():
                 has_table_privilege('supportflow_customer','agent_ticket_reconciliation','SELECT'),
                 has_table_privilege('supportflow_kb','agent_ticket_reconciliation','SELECT')""").fetchone()
             assert privileges == (True, True, False, False, False, False, False)
+            approval_permissions = connection.execute("""SELECT has_table_privilege('supportflow_ai','agent_approval','UPDATE'),
+                has_table_privilege('supportflow_ai','agent_approval','DELETE'),has_table_privilege('supportflow_ai','agent_approval','TRUNCATE'),
+                has_column_privilege('supportflow_ai','agent_approval','status','UPDATE'),
+                has_column_privilege('supportflow_ai','agent_approval','arguments_sha256','UPDATE')""").fetchone()
+            assert approval_permissions == (False, False, False, True, False)
         print(f'Ticket audit reprovision: {len(audit_rows)} rows preserved; AI SELECT/INSERT only, customer and KB SELECT denied', flush=True)
+        print(f'Approval reprovision: {len(approval_rows)} rows preserved; only decision columns are writable', flush=True)
         if args.with_java_delivery:
             from runtime_delivery_fixture import verify_delivery
             verify_delivery(connect, environment, passwords, test_env)

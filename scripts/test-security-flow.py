@@ -53,7 +53,7 @@ if __name__ == '__main__':
                     command = ['docker','exec',project+'-postgres-1','psql','-U','supportflow','-d',database+'_db','-XqAt','-c']
                     history = subprocess.check_output([*command,
                         f"SELECT count(*),bool_and(length(checksum)=64),has_table_privilege('supportflow_{database}','supportflow_schema_history','SELECT'),has_table_privilege('supportflow_{database}','supportflow_schema_history','INSERT'),has_table_privilege('supportflow_{database}','supportflow_schema_history','UPDATE'),has_table_privilege('supportflow_{database}','supportflow_schema_history','DELETE') FROM supportflow_schema_history"],text=True).strip().split('|')
-                    assert history == ['5' if database=='ai' else '1','t','t','f','f','f'], (database,history)
+                    assert history == ['6' if database=='ai' else '1','t','t','f','f','f'], (database,history)
                     if database=='ai':
                         payload_privileges=subprocess.check_output([*command,
                             "SELECT has_table_privilege('supportflow_ai','agent_payload','SELECT'),has_table_privilege('supportflow_ai','agent_payload','INSERT'),has_table_privilege('supportflow_ai','agent_payload','UPDATE'),has_table_privilege('supportflow_ai','agent_payload','DELETE'),has_table_privilege('supportflow_ai','agent_payload','TRUNCATE')"],text=True).strip().split('|')
@@ -64,6 +64,9 @@ if __name__ == '__main__':
                         ticket_reconciliation_privileges=subprocess.check_output([*command,
                             "SELECT has_table_privilege('supportflow_ai','agent_ticket_reconciliation','SELECT'),has_table_privilege('supportflow_ai','agent_ticket_reconciliation','INSERT'),has_table_privilege('supportflow_ai','agent_ticket_reconciliation','UPDATE'),has_table_privilege('supportflow_ai','agent_ticket_reconciliation','DELETE'),has_table_privilege('supportflow_ai','agent_ticket_reconciliation','TRUNCATE')"],text=True).strip().split('|')
                         assert ticket_reconciliation_privileges==['t','t','f','f','f'],ticket_reconciliation_privileges
+                        approval_permissions=subprocess.check_output([*command,
+                            "SELECT has_table_privilege('supportflow_ai','agent_approval','UPDATE'),has_table_privilege('supportflow_ai','agent_approval','DELETE'),has_table_privilege('supportflow_ai','agent_approval','TRUNCATE'),has_column_privilege('supportflow_ai','agent_approval','status','UPDATE'),has_column_privilege('supportflow_ai','agent_approval','arguments_sha256','UPDATE')"],text=True).strip().split('|')
+                        assert approval_permissions==['f','f','f','t','f'],approval_permissions
                 print('Six database migration histories verified; baseline history receipts are read-only for runtime roles', flush=True)
                 print('Observed five restricted Java database identities; mandatory platform audit receipts matched', flush=True)
                 print(label + ': full security flow passed', flush=True)

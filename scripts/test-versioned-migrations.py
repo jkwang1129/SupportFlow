@@ -76,27 +76,37 @@ def existing_ticket(connection):
     return read
 
 
-def existing_reply_reconciliation(url):
+def existing_reconciliation(url, *, ticket=False):
     from psycopg.rows import dict_row
-    from ai.runtime.reconciliation import ReplyRecoveryCandidate
+    from ai.runtime.reconciliation import ReplyRecoveryCandidate, TicketRecoveryCandidate
     from ai.runtime.result import ReplyReceipt
     from ai.runtime.store import RuntimeStore
+    from ai.runtime.ticket_creation import TicketCreationReceipt
     from ai.runtime.types import Lease, RunInput
 
     store = RuntimeStore(lambda: psycopg.connect(url, row_factory=dict_row))
-    source = RunInput('REPLY_UP', uuid4(), 'REPLY_UPGRADE', 1, 774002, 'visitor-session:774001', 'reply-upgrade')
+    label = 'TICKET' if ticket else 'REPLY'
+    source = RunInput(label+'_UP', uuid4(), label+'_UPGRADE', 1, 774002, 'visitor-session:774001', label.lower()+'-upgrade')
     run = store.enqueue(source)['run_id']
     lease = Lease.from_run(store.claim_next(source.tenant, 'upgrade-worker'))
     snapshot = uuid4()
     digest = 'a' * 64
-    store.reserve_step(lease, 'old-reply', 'TOOL', 'WRITE', dict(operation='session.reply', version='reply-v1',
+    candidate_type = TicketRecoveryCandidate if ticket else ReplyRecoveryCandidate
+    store.reserve_step(lease, 'old-write', 'TOOL', 'WRITE', dict(operation=candidate_type.operation, version=candidate_type.version,
         resource_ref=source.principal_ref, input_ref=str(snapshot), arguments_sha256=digest))
     held = store.cancel(source.tenant, run)
-    candidate = ReplyRecoveryCandidate.from_rows(held, store.steps(source.tenant, run))
-    store.confirm_reply_commit(candidate, ReplyReceipt(run, source.source_event_id, snapshot, digest, 774003, 'M_UPGRADE', 2), 'upgrade-operator')
+    candidate = candidate_type.from_rows(held, store.steps(source.tenant, run))
+    if ticket:
+        receipt = TicketCreationReceipt(source.tenant, run, source.source_event_id, snapshot, digest, 774004, 'TK_UPGRADE')
+        store.confirm_ticket_commit(candidate, receipt, 'upgrade-operator')
+        read_audit = store.ticket_reconciliation
+    else:
+        receipt = ReplyReceipt(run, source.source_event_id, snapshot, digest, 774003, 'M_UPGRADE', 2)
+        store.confirm_reply_commit(candidate, receipt, 'upgrade-operator')
+        read_audit = store.reply_reconciliation
 
     def read():
-        return store.get(source.tenant, run), store.steps(source.tenant, run), store.reply_reconciliation(source.tenant, run)
+        return store.get(source.tenant, run), store.steps(source.tenant, run), read_audit(source.tenant, run)
     return read
 
 
@@ -139,7 +149,7 @@ def main():
                     assert upgrade008['applied']==['008'] and read()==before and read_kb()==before_kb
                     read_ticket=existing_ticket(connection);before_ticket=read_ticket()
                 if database=='ai_db':
-                    assert [m.version for m in plan]==['001','002','003','004','005']
+                    assert [m.version for m in plan]==['001','002','003','004','005','006']
                     applied=run_plan(connection,plan[:2])["applied"]
                     read_ai=existing_ai_step(dsn(database));before_ai=read_ai()
                     applied+=run_plan(connection,plan[:3])['applied']
@@ -150,7 +160,12 @@ def main():
                     assert read_ai()==before_ai and read_body()==before_body
                     assert connection.execute('SELECT count(*) FROM agent_reply_reconciliation').fetchone()==(0,)
                     print('AI 003 -> 004 upgrade preserved exact leased/reserved/committed Runs, Steps, body/hash/expiry and budgets; reconciliation table empty',flush=True)
-                    read_reply=existing_reply_reconciliation(dsn(database));before_reply=read_reply()
+                    read_reply=existing_reconciliation(dsn(database));before_reply=read_reply()
+                    applied+=run_plan(connection,plan[:5])['applied']
+                    assert read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply
+                    assert connection.execute('SELECT count(*) FROM agent_ticket_reconciliation').fetchone()==(0,)
+                    print('AI 004 -> 005 preserved exact Runtime Run/Step, payload and confirmed reply audit; ticket audit table initially empty',flush=True)
+                    read_ticket_audit=existing_reconciliation(dsn(database),ticket=True);before_ticket_audit=read_ticket_audit()
                 result=run_plan(connection,plan)
                 assert applied+result["applied"]==[migration.version for migration in plan]
                 if database=='customer_db':
@@ -171,9 +186,9 @@ def main():
                     print('007 -> 008 preserved existing business/source/draft/chunk data; granted only index_status SELECT; 3 unsafe capability states rejected',flush=True)
                     print('008 -> 009 preserved every existing ticket/source/message/knowledge field; immutable ticket receipt initially empty; old global ticket PK retained',flush=True)
                 if database=='ai_db':
-                    assert result['applied']==['005'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply
-                    assert connection.execute('SELECT count(*) FROM agent_ticket_reconciliation').fetchone()==(0,)
-                    print('AI 004 -> 005 preserved exact Runtime Run/Step, payload and confirmed reply audit; ticket audit table initially empty',flush=True)
+                    assert result['applied']==['006'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
+                    assert connection.execute('SELECT count(*) FROM agent_approval').fetchone()==(0,)
+                    print('AI 005 -> 006 preserved exact Runtime rows, payload and both reconciliation ledgers; approval table initially empty',flush=True)
                 assert run_plan(connection,plan)["applied"]==[]
                 run_plan(connection,plan,verify=True)
         runtime_password=secrets.token_hex(24)

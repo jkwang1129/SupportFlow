@@ -1036,3 +1036,16 @@ b703d4f 的 [CI 44883937143](https://github.com/jkwang1129/SupportFlow/actions/r
 - `runtime-ticket-write-tool.json` v2 的 10 例实际 Worker → Java → AI → 受限 PostgreSQL 组合通过。写后取消与工具预算耗尽各确认一张已有工单，每案只增加一次 GET，原账本和客户侧工单、事件与业务回执各 1 条，后续同会话任务恢复领取。缺失回执一案继续阻断，未追加审计。三例均保留原预算和任务失败历史，所有场景使用合成数据。
 
 回滚时停用可信宿主工单核销调用，保留 AI005、工单回执、原步骤和审计历史。确认能力目前限单写任务，后续接限时审批、恢复后执行业务及操作界面。设计见 [ADR-0029](decisions/0029-terminal-ticket-reconciliation.md)。
+
+8ffc3cd 的 [CI 44889426859](https://github.com/jkwang1129/SupportFlow/actions/runs/44889426859) 前后端任务均通过。
+
+## B3 限时审批存储（2026-11-21）
+
+基于 3316818 新增 AI006 和 `agent_approval`。WAITING_APPROVAL 任务必须释放持有者和租约。审批记录绑定任务、主体、来源、工具版本、用途和参数摘要，受限角色仅可修改决定、关闭和消费字段。测试涵盖等待态的会话顺序、独立会话继续领取、跨租户和错误外键、缺失决定、批准时钟、原条款不可改、事务回滚以及只读 Readiness 对权限漂移的拒绝。
+
+- 设置 `PYTEST_ADDOPTS='-k approval_storage'` 后执行 `python scripts/test-agent-runtime.py`。真实 PostgreSQL 17 中 18 项审批存储通过，320 项未纳入本次定向运行。重复配置账号后 1 条完整审批记录逐字段一致。原始日志 `b3-approval-storage-first.log`。
+- `python scripts/test-versioned-migrations.py` 通过 17 项迁移测试。第一次执行时版本已加入清单，审查后的结构文件尚未替换，CLI verify 按预期拒绝不一致文件。替换后重跑通过，AI005 → AI006 前后旧任务、步骤、正文、回复核销和工单核销记录一致。原始日志 `b3-approval-upgrade.log` 和 `b3-approval-upgrade-final.log`。
+- `python scripts/test-schema-drift.py` 通过 97 表、1 视图、5 受控函数和 17 项漂移检查。对比候选快照仅增加审批表、等待态的两个任务约束变化和 AI006 版本。`b3-approval-drift.log`。
+- `python scripts/test-database-init.py` 验证六库 CLI 初始化、重复拒绝和故障回滚。`python scripts/test-security-flow.py` 通过默认新库、历史库升级和 CLI 初始化三套完整服务，核实 AI006 历史和审批列权限。`b3-approval-init.log`、`b3-approval-services.log`。
+
+本批交付数据库契约和部署检查。暂停、决定、恢复与一次性消费分开验证。回滚时保留 AI006 和审计数据，待应用启用后需先处理仍在审批中的任务。设计与适用边界见 [ADR-0030](decisions/0030-durable-approval-boundary.md)。
