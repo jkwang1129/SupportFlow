@@ -58,6 +58,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * 工单中心：会话转工单 → 分派/认领 → 回复 → 解决 → 关闭，外加两段 SLA 计时。
@@ -566,6 +567,17 @@ public class TicketService {
      */
     @Transactional
     public TicketVO createFromChannel(String tenantCode, String channelName, ChannelTicketCommand command) {
+        return createChannelTicket(tenantCode,channelName,command,"channel");
+    }
+
+    /** Internal caller must independently validate current source/permit/receipt transaction. */
+    @Transactional
+    public TicketVO createForAgent(String tenantCode,String actorName,ChannelTicketCommand command,UUID runId){
+        if(runId==null)throw new IllegalArgumentException("Agent Run is required");
+        return createChannelTicket(tenantCode,actorName,command,"agent-run:"+runId);
+    }
+
+    private TicketVO createChannelTicket(String tenantCode,String channelName,ChannelTicketCommand command,String creatorRef){
         int priority = normalizePriority(command.priority());
         int category = normalizeCategory(command.category());
         int[] sla = resolveSla(tenantCode, priority);
@@ -597,9 +609,9 @@ public class TicketService {
                 .slaAlerted(false)
                 .createTime(now)
                 .updateTime(now)
-                .creator("channel")
+                .creator(creatorRef)
                 .creatorName(channelName)
-                .editor("channel")
+                .editor(creatorRef)
                 .deleted(false)
                 .build();
         ticketMapper.insert(ticket);

@@ -928,3 +928,21 @@ Java AgentActionPermit.Request增加封闭Operation，原七参数构造器仍�
 `python scripts/test-agent-runtime.py --with-java-delivery`最终退出0，`b2-ticket-authority-runtime-first.log`：257项专项通过＝原241+新16（精确Ticket WRITE/操作版本/主体/参数、取消/过期/非RESERVED拒绝、签名API与预算不变）；旧工单/7例知识工具/真实进程接管/5例发布/核销/回复全部组合保持。Java实际通过受保护AI/受限PG分别领取reply与ticket许可，ticket的同一来源/Hash不能领取reply许可，取消后拒绝新许可；两案终态保留1Step/1Tool/0Model/0Retry，UNKNOWN保持、无业务写。显式合成接收器开启ticket授权，仅为协议资格；默认配置仍关闭，业务API尚不存在。
 
 `python scripts/test-security-flow.py`最终退出0，`b2-ticket-authority-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整实际服务均通过，原知识/访客WS→brain→BOT回复/工单/计费/附件权限、六库Customer009和readiness故障恢复保持。完整服务单独运行，没有并行Maven/服务验收。无SQL改动，不重复刚通过45151c6精确CI的38项存储/迁移/漂移专项；当前精确提交CI继续全跑。
+
+610ad79对应的[CI 44878260746](https://github.com/jkwang1129/SupportFlow/actions/runs/44878260746)两个job全部成功；操作专属许可子批次本地/远端退出条件完成。
+
+## B2 原子Agent建单业务子批次（2026-11-21）
+
+基线610ad79。新增AgentTicketArguments/AgentTicketCreations、参数单元/真实业务PG测试及ADR-0024；TicketService旧渠道创建体抽为共同内部方法，旧creator/editor仍channel，Agent窄方法使用agent-run:{runId}。实际业务继续负责编号、SLA、事件、客户统计/动态及原可选标签。未另写SQL创建工单，未伪造LoginUser，未注册API/SDK/模型WRITE工具。
+
+可信tenant/event/run/snapshot与原文SHA绑定固定ticket-create-v1策略；客户/会话来自当前来源，模型不可覆盖。当前受限事务先锁tenant/run，再核现有回执、来源、客户UPDATE锁和TICKET_CREATE许可DB时间；实际TicketService创建后核工单全文/Run标记/客户会话/固定类别优先级/无指派，再插不可变回执；最后重验来源TTL/Hash与许可，失败整笔回滚。只读回执只确认过去的创建事实，接管/终态后可核对，不返回正文/当前状态也不授新执行资格。授权HTTP不在本业务边界内；下一批API须在事务外调用。
+
+本地Python3.11.5/JDK25/隔离PG17，仅合成数据/许可、实际受限customer角色、真实TicketService/MyBatis/CustomerDynamics；可选网络依赖Stub，无.env/付费模型：
+
+- 定向Java单元AgentTicketArgumentsTest,AgentActionOperationTest,AgentReplyArgumentsTest共11项通过，其中新4项，`b2-ticket-business-unit-first.log`。验证精确摘要、Unicode/UTF-8边界、空/PLATFORM/缺引用及缺租户/事务先于DB/业务调用拒绝。
+- `python scripts/test-customer-rls.py --with-ai`首轮旧113项通过、新13项setup错误，`b2-ticket-business-pg-first.log`；夹具误用不存在的SLA status列，按真实is_enabled/is_deleted修正，未放宽业务代码。第二轮126项Java PG+19项KB通过，`b2-ticket-business-pg-second.log`。再补3项实际结果篡改/错误快照/最大Unicode原文用例，最终129项Java PG（新16）+19项KB全部通过，`b2-ticket-business-pg-final.log`。
+- 新16项含实际SLA7/21分钟、1工单/1事件/1回执/客户工单数3→4及1客户动态；8路同Run只执行一次；匿名来源无虚构客户；旧渠道creator=channel；改参数/错误快照/有效MAC但SESSION_REPLY操作拒绝；当前来源接管/关闭/内容修改、删除/跨租户客户拒绝。回执INSERT权限失败、业务后结果篡改、业务后快照过期、业务后真实许可过期均无残留工单/事件/回执/客户统计增量；晚过期用例故意等约4秒，不是性能数据。回执在接管后仍仅确认过去事实，跨租户/错event不可见。
+- `mvn -B -f backend/pom.xml verify`全模块BUILD SUCCESS，`b2-ticket-business-backend-final.log`。默认跳过的PG不计通过，实际结果如上。
+- `python scripts/test-security-flow.py`退出0，`b2-ticket-business-services-final.log`：FRESH DEFAULT、LEGACY UPGRADE、FRESH CLI INIT三套完整实际服务全部通过；原知识检索/访客WS→brain→BOT回复/工单/计费/附件权限及六库历史、readiness故障恢复保持。验收单独运行，未并行Maven或其他服务验收。
+
+边界/回滚：尚无Agent建单API/SDK/模型工具、HITL、自动触发或工单未知写核销；可选标签沿用旧best-effort，不承诺所有标签刷新必成。客户UPDATE锁避免本路径先SHARE再升级，但不声称与所有旧业务混用无死锁；锁等待2秒有界。8路样本仅验证幂等，不代表吞吐、P95或生产规模。回滚停用新窄方法入口，保留原渠道共用业务、Customer009及已提交工单/回执/预算/历史；不删表或恢复盲重试。无语义准确率/付费Token成本/生产客户或收益成果。本批无AI/SQL改动，本地不重复刚通过610ad79精确CI的784项AI/257项Runtime/38项存储迁移专项，远端精确提交CI继续全跑。

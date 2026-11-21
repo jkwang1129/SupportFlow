@@ -41,6 +41,7 @@ abstract class SessionPostgresFixture {
     protected static final AtomicInteger IDS = new AtomicInteger(7_100_000);
     protected HikariDataSource pool;
     protected JdbcTemplate jdbc;
+    protected SqlSessionTemplate sql;
     protected TransactionTemplate transaction;
     protected SessionService service;
     protected SessionMapper sessions;
@@ -74,7 +75,7 @@ abstract class SessionPostgresFixture {
         factory.setPlugins(new MybatisPlusConfig().mybatisPlusInterceptor());
         factory.setMapperLocations(new ClassPathResource("mapper/SessionMapper.xml"),
                 new ClassPathResource("mapper/SessionMessageMapper.xml"), new ClassPathResource("mapper/SessionEventMapper.xml"));
-        var sql = new SqlSessionTemplate(factory.getObject());
+        sql = new SqlSessionTemplate(factory.getObject());
         realSessions = sql.getMapper(SessionMapper.class);
         sessions = mock(SessionMapper.class, delegatesTo(realSessions));
         realMessages = sql.getMapper(SessionMessageMapper.class);
