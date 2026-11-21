@@ -1,8 +1,13 @@
 """Approved ticket execution against real Runtime, customer and AI authority services."""
 import asyncio
+import hashlib
+import hmac
 import json
 from pathlib import Path
+import time
 from uuid import uuid4
+
+import httpx
 
 
 def _seed_source(connect, source, run, session_id):
@@ -18,7 +23,26 @@ def _seed_source(connect, source, run, session_id):
             (source.tenant, source.source_event_id, run, source.message_id, session_id, source.session_no, source.principal_ref, source.trace_id))
 
 
-def verify_ticket_approval(connect, base, secret, store):
+def _signed_review(client, ai_base, secret, source, run, row):
+    path = f'/api/ai/v1/runtime/runs/{run}/review-ticket-approval'
+    expiry = str(int(time.time()) + 20)
+
+    def request(digest):
+        payload = json.dumps(dict(approval_id=str(row['approval_id']), source_event_id=str(source.source_event_id),
+            arguments_sha256=digest, reviewer_ref='staff:123', decision='approve'), separators=(',', ':')).encode()
+        canonical = '\n'.join(('supportflow-ai-runtime:v1', 'customer', expiry, 'POST', path, '', source.tenant,
+                                hashlib.sha256(payload).hexdigest()))
+        token = hmac.digest(secret.encode(), canonical.encode(), 'sha256').hex()
+        return client.post(ai_base+path, content=payload,
+                           headers={'X-Tenant-Code': source.tenant, 'X-SupportFlow-AI-Auth': f'runtime:customer:{expiry}:{token}',
+                                    'Content-Type': 'application/json'})
+
+    assert request('0'*64).status_code == 409
+    result = request(row['arguments_sha256'])
+    assert result.status_code == 200 and result.json() == {'approval_id': str(row['approval_id']), 'status': 'APPROVED'}
+
+
+def verify_ticket_approval(connect, base, ai_base, secret, store):
     from ai.runtime.approvals import TicketApprovals
     from ai.runtime.source import SourceClient
     from ai.runtime.ticket_creation import TicketCreationClient
@@ -46,7 +70,9 @@ def verify_ticket_approval(connect, base, secret, store):
         row = approvals.get(tenant, run)
         assert waiting['state'] == 'WAITING_APPROVAL' and row['snapshot_id'] == snapshot.snapshot_id
         assert waiting['step_count'] == 1 and store.claim_next(tenant, 'must-wait') is None
-        assert approvals.decide(tenant, run, row['approval_id'], 'fixture:reviewer', approve=True)['status'] == 'APPROVED'
+        with httpx.Client(trust_env=False, follow_redirects=False, timeout=3) as client:
+            _signed_review(client, ai_base, secret, source, run, row)
+        assert approvals.get(tenant, run)['decided_by'] == 'staff:123'
 
         if mode == 'taken_over_after_approval':
             with connect('customer_db') as db:
@@ -84,4 +110,4 @@ def verify_ticket_approval(connect, base, secret, store):
     artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
     artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v2', mode='SYNTHETIC_SOURCE_REAL_JAVA_AI_PG',
         cases=observations), indent=2)+'\n', encoding='utf-8')
-    print('Actual ticket approval: 3 cases passed; one approved ticket/receipt, zero writes after source takeover or expiry', flush=True)
+    print('Actual signed AI ticket review: 3 cases passed; wrong digest rejected, one approved ticket/receipt, zero writes after source takeover or expiry', flush=True)

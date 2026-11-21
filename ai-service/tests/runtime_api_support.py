@@ -34,9 +34,10 @@ def signed(method, path=PATH, body=b'', *, tenant='TENANT_A', caller='customer',
             'X-Tenant-Code': tenant, 'Content-Type': 'application/json'}
 
 
-def build_app(monkeypatch, *, store=None, enabled=True, ready=True,ticket_enabled=None):
+def build_app(monkeypatch, *, store=None, enabled=True, ready=True,ticket_enabled=None,approval_enabled=False):
     ticket_setting={} if ticket_enabled is None else dict(runtime_ticket_actions_enabled=ticket_enabled)
     settings = Settings(_env_file=None, runtime_api_enabled=enabled, enforce_runtime_db_roles=False,
+                        runtime_approval_review_enabled=approval_enabled,
                         **ticket_setting,
                         **{f'{caller}_secret': key for caller, key in KEYS.items()})
     monkeypatch.setattr(main, 'get_settings', lambda: settings)

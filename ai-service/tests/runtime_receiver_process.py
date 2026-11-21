@@ -8,6 +8,7 @@ from ai.config import Settings
 settings = Settings(
     _env_file=None, runtime_api_enabled=True, enforce_runtime_db_roles=True,
     runtime_ticket_actions_enabled=True,  # Explicit synthetic authority qualification only.
+    runtime_approval_review_enabled=True,
     database_url=os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'],
     kb_database_url=os.environ['SUPPORTFLOW_DELIVERY_TEST_KB_DSN'],
     customer_secret=os.environ['SUPPORTFLOW_RUNTIME_CUSTOMER_TEST_SECRET'],

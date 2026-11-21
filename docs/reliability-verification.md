@@ -1088,3 +1088,14 @@ cdda89c 的 [CI 44890433299](https://github.com/jkwang1129/SupportFlow/actions/r
 83bb132 的 [CI 44891384398](https://github.com/jkwang1129/SupportFlow/actions/runs/44891384398) 通过 Runtime 联调，迁移测试因旧库夹具调用当前建单预留方法而失败，错误为 AI005 中找不到审批表。当前批修正了夹具，17 项本地迁移测试和旧库完整服务通过。该失败运行记录继续保留。
 
 回滚可停用 Worker 到期调度，保留 AI007、历史审批和回执，由可信宿主显式处理仍到期的任务。真实业务评测使用隔离合成样本。坐席审查入口按 ADR-0032 另行交付。
+
+## B3 签名内部审批审查协议（2026-11-21）
+
+基于 a0e8043。AI 新增独立默认关闭的 `review-ticket-approval`。仅接受已按原方法、路径、正文与租户签名验证的客服服务。租户来自认证上下文，审查人引用限制为 staff 加正 int64 ID，审批 ID、来源事件、已审摘要和操作均用闭合协议。持有 Run/审批锁后再次核对签名请求与原提案。返回审批 ID 和决定状态。撤销或正向决定进入已过期窗口时，以审计后的过期状态返回冲突。
+
+- 定向 `python -m pytest -q tests/test_runtime_approval_review.py tests/test_runtime_api.py tests/test_runtime_ticket_authority.py` 66 项通过，含新 15 项。`b3-approval-review-unit-first.log`。
+- `PYTEST_ADDOPTS='-k runtime_approval_review' python scripts/test-agent-runtime.py --with-java-delivery` 的真实 PostgreSQL 部分 5 项全部通过。跨租户、错事件、错审批、错摘要均拒绝，原记录逐字段一致。重复批准保留原坐席，撤销与到期记录决定和关闭者。`b3-approval-review-runtime.log`。
+- AI 普通测试 938 项通过、378 项条件跳过、1 项既有预期失败。24 项 RAG 契约通过。`b3-approval-review-ai.log` 和 XML。
+- 实际 AI 服务、Java 客服 JAR 与受限数据库通过 3 条工单审批路径。签名携带错误摘要均返回 409。真实接受后原提案建单一次，来源接管及调度到期均未创建工单。模型调用为 0，均为隔离合成数据。
+
+当前协议的坐席引用由签名客服服务提供，客服服务的已认证用户入口、当前角色及会话重验另行接入。回滚可关闭 `SUPPORTFLOW_AI_RUNTIME_APPROVAL_REVIEW_ENABLED` 并保留审计和任务。见 [ADR-0032](decisions/0032-ticket-approval-review-boundary.md)。

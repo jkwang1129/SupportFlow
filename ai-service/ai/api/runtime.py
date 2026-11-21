@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
 
 from ..config import get_settings
+from ..runtime.approvals import TicketApprovals
 from ..runtime.store import RuntimeStore
 from ..runtime.types import RunInput, Limits, RuntimeConflict, QueueFull, identifier, tenant_code, ActionDenied
 from ..runtime.authority import sign as sign_authority
@@ -46,6 +47,29 @@ class RunRequest(BaseModel):
 
 class EmptyRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
+
+
+class TicketApprovalReviewRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    approval_id: StrictStr = Field(min_length=36, max_length=36)
+    source_event_id: StrictStr = Field(min_length=36, max_length=36)
+    arguments_sha256: StrictStr = Field(pattern=r'^[0-9a-f]{64}$')
+    reviewer_ref: StrictStr = Field(pattern=r'^staff:[1-9][0-9]{0,18}$')
+    decision: Literal['approve','deny','revoke']
+
+    @field_validator('approval_id', 'source_event_id')
+    @classmethod
+    def canonical_uuid(cls, value):
+        if str(UUID(value)) != value:
+            raise ValueError('Canonical review UUID required')
+        return value
+
+    @field_validator('reviewer_ref')
+    @classmethod
+    def reviewer_id_range(cls, value):
+        if int(value.removeprefix('staff:')) > 9223372036854775807:
+            raise ValueError('Reviewer ID exceeds the allowed range')
+        return value
 
 
 class ActionRequest(BaseModel):
@@ -140,3 +164,27 @@ def authorize(run_id: UUID, body: ActionRequest, request: Request, store=Depends
         raise HTTPException(409,'Runtime action is not authorized') from None
     except psycopg.Error:
         raise HTTPException(503,'Runtime authority unavailable') from None
+
+
+@router.post('/{run_id}/review-ticket-approval')
+def review_ticket_approval(run_id: UUID, body: TicketApprovalReviewRequest, request: Request, store=Depends(runtime_store)):
+    if not get_settings().runtime_approval_review_enabled:
+        raise HTTPException(503, 'Runtime approval review is disabled')
+    # The customer service signs the reviewer identity after its own role and session checks.
+    tenant = request.state.runtime_tenant
+    approvals = TicketApprovals(store)
+    approval_id = UUID(body.approval_id)
+    expected = UUID(body.source_event_id), body.arguments_sha256
+    try:
+        if body.decision == 'revoke':
+            row = approvals.revoke(tenant, run_id, approval_id, body.reviewer_ref, expected=expected)
+        else:
+            row = approvals.decide(tenant, run_id, approval_id, body.reviewer_ref,
+                                   approve=body.decision == 'approve', expected=expected)
+    except RuntimeConflict:
+        raise HTTPException(409, 'Approval decision conflicts with the current proposal') from None
+    except psycopg.Error:
+        raise HTTPException(503, 'Approval persistence unavailable') from None
+    if row['status'] == 'EXPIRED':
+        raise HTTPException(409, 'Approval has expired')
+    return {'approval_id': row['approval_id'], 'status': row['status']}

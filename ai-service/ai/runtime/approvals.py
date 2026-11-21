@@ -78,13 +78,13 @@ class TicketApprovals:
             return connection.execute('SELECT * FROM agent_approval WHERE tenant_code=%s AND run_id=%s',
                                       (tenant, UUID(str(run_id)))).fetchone()
 
-    def decide(self, tenant, run_id, approval_id, reviewer, *, approve):
+    def decide(self, tenant, run_id, approval_id, reviewer, *, approve, expected=None):
         if type(approve) is not bool:
             raise ValueError('Approval decision must be explicit')
         identifier(reviewer)
         target = 'APPROVED' if approve else 'DENIED'
         with self.store._scope(tenant) as connection:
-            run, row = self._locked(connection, tenant, run_id, approval_id)
+            run, row = self._locked(connection, tenant, run_id, approval_id, expected)
             if row['status'] == 'DENIED' and not approve:
                 return row
             now = self._clock(connection)
@@ -162,15 +162,18 @@ class TicketApprovals:
             raise RuntimeConflict('Approved write tool does not match')
         return executor.execute(context, 'approved-ticket-create', call)
 
-    def revoke(self, tenant, run_id, approval_id, reviewer):
+    def revoke(self, tenant, run_id, approval_id, reviewer, *, expected=None):
         identifier(reviewer)
         with self.store._scope(tenant) as connection:
-            run, row = self._locked(connection, tenant, run_id, approval_id)
+            run, row = self._locked(connection, tenant, run_id, approval_id, expected)
             if row['status'] == 'REVOKED':
                 return row
             if row['status'] != 'APPROVED' or run['state'] not in ('PENDING', 'RETRY_WAIT', 'RUNNING'):
                 raise RuntimeConflict('Only a live approved request can be revoked')
-            return self._close(connection, run, row, 'REVOKED', reviewer, self._clock(connection))
+            now = self._clock(connection)
+            if row['expires_at'] <= now:
+                return self._close(connection, run, row, 'EXPIRED', 'system:approval-expiry', now)
+            return self._close(connection, run, row, 'REVOKED', reviewer, now)
 
     def expire(self, tenant, run_id, approval_id):
         with self.store._scope(tenant) as connection:
@@ -207,13 +210,15 @@ class TicketApprovals:
         return connection.execute('SELECT * FROM agent_approval WHERE tenant_code=%s AND run_id=%s FOR UPDATE',
                                   (tenant, run_id)).fetchone()
 
-    def _locked(self, connection, tenant, run_id, approval_id):
+    def _locked(self, connection, tenant, run_id, approval_id, expected=None):
         run_id, approval_id = UUID(str(run_id)), UUID(str(approval_id))
         run = connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR UPDATE',
                                  (tenant, run_id)).fetchone()
         row = None if run is None else self._approval(connection, tenant, run_id)
         if row is None or row['approval_id'] != approval_id or row['principal_ref'] != run['principal_ref']:
             raise RuntimeConflict('Approval is unavailable')
+        if expected is not None and expected != (run['source_event_id'], row['arguments_sha256']):
+            raise RuntimeConflict('Reviewed proposal does not match the approval')
         return run, row
 
     @staticmethod

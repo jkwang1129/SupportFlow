@@ -187,7 +187,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             from ticket_write_tool_fixture import verify_ticket_write_tool
             verify_ticket_write_tool(connect,base,secret,store)
             from ticket_approval_fixture import verify_ticket_approval
-            verify_ticket_approval(connect,base,secret,store)
+            verify_ticket_approval(connect,base,ai_base,secret,store)
         except BaseException:
             failed=True;raise
         finally:
