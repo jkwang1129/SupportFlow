@@ -185,6 +185,9 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         row = approvals.get(tenant, run)
         assert waiting['state'] == 'WAITING_APPROVAL' and row['snapshot_id'] == snapshot.snapshot_id
         assert (waiting['step_count'], waiting['tool_calls'], waiting['model_calls']) == (4, 2, 0)
+        waiting_trace = store.trace_snapshot(tenant, run)
+        assert waiting_trace['run']['trace_id'] == source.trace_id
+        assert waiting_trace['run']['state'] == 'WAITING_APPROVAL'
         assert store.claim_next(tenant, 'must-wait') is None
         assert not any(step['effect'] == 'WRITE' for step in store.steps(tenant, run))
         assert asyncio.run(tickets.receipt(source, run)) is None
@@ -220,6 +223,10 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         repeated = _run_ticket_worker(tenant, base, secret, runtime_dsn, authority_enabled=True)
         assert repeated.returncode == 0 and store.get(tenant, run) == result
         assert store.get(tenant, other['run_id']) == other
+        final_trace = store.trace_snapshot(tenant, run)
+        assert final_trace['run']['trace_id'] == waiting_trace['run']['trace_id']
+        assert final_trace['run']['state'] == result['state'] and len(final_trace['steps']) == result['step_count']
+        assert store.trace_snapshot('LP_FOREIGN', run) is None
         audit = approvals.get(tenant, run)
         writes = [step for step in store.steps(tenant, run) if step['effect'] == 'WRITE']
         receipt = asyncio.run(tickets.receipt(source, run, expected_snapshot_id=snapshot.snapshot_id, expected_hash=row['arguments_sha256']))
@@ -241,11 +248,12 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             assert audit['consumed_step_no'] is None
         observations.append(dict(case=mode, source_enrollment='SIGNED_VISITOR_APPEND' if signed_admission else 'SYNTHETIC_STORED_EVENT',
             waiting_state=waiting['state'], before_review_writes=0, final_state=result['state'], error_code=result['error_code'],
+            trace_id=final_trace['run']['trace_id'],
             approval_status=audit['status'], progress_checks=2 if signed_admission else 0,
             steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=int(receipt is not None), events=events))
     artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v9', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v10', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
     print('Signed visitor append -> Outbox -> proposal worker -> authenticated staff review -> approval-only worker: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
           'duplicate approval preserved, one approved ticket/receipt, zero writes after takeover or expiry', flush=True)

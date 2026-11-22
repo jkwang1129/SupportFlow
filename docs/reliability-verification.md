@@ -1360,3 +1360,9 @@ Java 在提交机器人接待任务时记录原请求号，在任务范围内绑
 
 - 新回环 HTTP 回归在旧实现复现两个有效请求号均丢失。修复后四个合成会话的真实 HTTP 请求全部到达，两个合法编号保持原值，缺失和无效编号分别使用独立的新值，调用线程退出后无绑定残留。日志 `d4-brain-trace-baseline.log`、`d4-brain-trace-backend-verify.log`。
 - JDK 25 下 `mvn -B -f backend/pom.xml verify` 成功，145 项通过、173 项数据库条件跳过。机器人并发、会话中断和附近日志契约继续通过。
+
+## D5 工单链路的持久化请求关联验收（2026-11-22）
+
+在既有工单验收夹具中为原签名请求和重发请求发送不同编号。两个 HTTP 响应分别回显本次编号，业务消息保持幂等，Java Outbox 和 Python Run 保留首次编号。查询及审批用例额外读取有步骤、无业务正文的租户限定 Trace；审批暂停与终态持有同一个编号。这批只修改验收，回退夹具即可。
+
+- 在隔离 PostgreSQL 17 设置 `PYTEST_ADDOPTS='-k "runtime_trace or ticket_loop or runtime_approval_review"'`，执行 `python scripts/test-agent-runtime.py --with-java-delivery`。41 项定向数据库测试通过。随后真实 Java、Python 和数据库的 10 条查询路径与 3 条审批路径通过，13 条均校验 Trace 与步骤数，外租户不可读取。查询中 5 条成功、5 条为预期业务或工具失败；审批中 1 条写入、接管及过期 2 条零写入。签名 HTTP 到 Outbox/Run 的来源关联覆盖其中两条；其他路径使用合成来源事件。原日志 `d5-durable-trace-runtime.log`，报告 `runtime-ticket-loop.json` v5、`runtime-ticket-approval.json` v10。

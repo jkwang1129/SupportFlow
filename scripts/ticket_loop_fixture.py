@@ -99,24 +99,30 @@ def _send_shadow_message(connect, base, secret, store, session_no, text):
     canonical = '\n'.join(('supportflow-customer:v1', 'REALTIME', expires, 'POST', path, '', SHADOW_TENANT))
     signature = hmac.digest(secret.encode(), canonical.encode(), 'sha256').hex()
     headers = {'X-Tenant-Code': SHADOW_TENANT, 'X-SupportFlow-Customer-Auth': f'{expires}:{signature}'}
+    original_trace = f'fixture-origin-{uuid4().hex}'
+    duplicate_trace = f'fixture-duplicate-{uuid4().hex}'
     with httpx.Client(trust_env=False, timeout=3, follow_redirects=False) as client:
         assert client.post(base+path, json=payload).status_code == 401
-        original = client.post(base+path, json=payload, headers=headers)
+        original = client.post(base+path, json=payload, headers=headers | {'X-Request-Id': original_trace})
         assert original.status_code == 200 and original.json()['code'] == 0
+        assert original.headers['X-Request-Id'] == original_trace
         message = original.json()['data']
-        duplicate = client.post(base+path, json=payload, headers=headers)
+        duplicate = client.post(base+path, json=payload, headers=headers | {'X-Request-Id': duplicate_trace})
         assert duplicate.status_code == 200 and duplicate.json()['data']['msgId'] == message['msgId']
+        assert duplicate.headers['X-Request-Id'] == duplicate_trace
     deadline = time.monotonic() + 12
     while time.monotonic() < deadline:
         with connect('customer_db') as db:
-            rows = db.execute("""SELECT message_id,run_id,state,event_id FROM agent_event_outbox
+            rows = db.execute("""SELECT message_id,run_id,state,event_id,trace_id FROM agent_event_outbox
                 WHERE tenant_code=%s AND session_no=%s""", (SHADOW_TENANT, session_no)).fetchall()
         assert len(rows) == 1
-        message_id, run_id, state, event_id = rows[0]
+        message_id, run_id, state, event_id, stored_trace = rows[0]
+        assert stored_trace == original_trace
         if state == 'DELIVERED':
             row = store.get(SHADOW_TENANT, run_id)
             assert row['state'] == 'PENDING' and row['source_event_id'] == event_id
             assert row['message_id'] == message_id == int(message['msgId']) and row['event_seq'] == 1
+            assert row['trace_id'] == original_trace
             return RunInput.from_run(row), run_id
         time.sleep(.05)
     raise AssertionError('Shadow message did not reach the Runtime through the scheduled dispatcher')
@@ -272,6 +278,10 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     assert result['state']==('SUCCEEDED' if expected[0] is None else 'FAILED') and result['error_code']==expected[0]
                     assert (result['model_calls'],result['tool_calls'],result['step_count'],result['retry_count'])==expected[1:]
                     assert scenario['model_http_calls']==result['model_calls']
+                    trace = store.trace_snapshot(tenant, run)
+                    assert trace['run']['trace_id'] == source.trace_id
+                    assert trace['run']['state'] == result['state'] and len(trace['steps']) == result['step_count']
+                    assert store.trace_snapshot('LP_FOREIGN', run) is None
                     with connect('ai_db') as db:
                         reports=[json.loads(row[0]) for row in db.execute("SELECT payload_json FROM agent_payload WHERE tenant_code=%s AND run_id=%s AND payload_schema='working-state-v1'",(tenant,run)).fetchall()]
                     with connect('customer_db') as db:
@@ -289,11 +299,12 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         model_http_calls=scenario['model_http_calls'],model_reservations=result['model_calls'],tool_reservations=result['tool_calls'],steps=result['step_count'],retries=result['retry_count'],
                         reports=len(reports),report_status=reports[0]['status'] if reports else None,actual_ticket_status=fact,source_messages=messages,result_receipts=receipts,tickets=tickets,
                         worker_process_restart=mode=='process_restart',configured_worker_process=mode=='configured_worker',
+                        trace_id=trace['run']['trace_id'],
                         raw_assistant_bytes=scenario.get('raw_assistant_bytes'), canonical_assistant_bytes=scenario.get('canonical_assistant_bytes'),
                         mcp_calls=mcp_runs.count(run),
                         fixture_lease_seconds=3 if mode=='process_restart' else 30))
             report=ROOT/'.local/verification/runtime-ticket-loop.json';report.parent.mkdir(parents=True,exist_ok=True)
-            report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v4',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
+            report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v5',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
                 source_enrollment='SIGNED_VISITOR_APPEND_FOR_CONFIGURED_WORKER',publication='REPORT_ONLY',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
             print('Actual signed visitor append -> shadow Outbox -> scheduled AI delivery -> scoped worker CLI -> bounded MCP SSE/Java ticket read passed; 10 read-loop cases passed with synthetic model TCP and restricted PG',flush=True)
             verify_ticket_approval(connect, base, child['SUPPORTFLOW_JWT_SECRET'], secret, store,
