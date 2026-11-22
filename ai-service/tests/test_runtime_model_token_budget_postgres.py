@@ -19,12 +19,12 @@ from test_runtime_store_postgres import acquire, admin, request, store
 pytestmark = pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'), reason='requires disposable runtime PostgreSQL')
 
 
-def configure(tenant, limit, allowance):
+def configure(tenant, limit, allowance, *, monthly=None):
     with admin() as connection:
-        connection.execute('''INSERT INTO agent_model_quota(tenant_code,max_active_steps,daily_token_limit,tokens_per_attempt)
-            VALUES(%s,8,%s,%s) ON CONFLICT (tenant_code) DO UPDATE SET
-            daily_token_limit=EXCLUDED.daily_token_limit,tokens_per_attempt=EXCLUDED.tokens_per_attempt''',
-            (tenant, limit, allowance))
+        connection.execute('''INSERT INTO agent_model_quota(tenant_code,max_active_steps,daily_token_limit,tokens_per_attempt,monthly_token_limit)
+            VALUES(%s,8,%s,%s,%s) ON CONFLICT (tenant_code) DO UPDATE SET daily_token_limit=EXCLUDED.daily_token_limit,
+            tokens_per_attempt=EXCLUDED.tokens_per_attempt,monthly_token_limit=EXCLUDED.monthly_token_limit''',
+            (tenant, limit, allowance, monthly))
 
 
 def worker(store, provider, owner='token-worker', *, tenant='TENANT_A', barrier=None):
@@ -62,9 +62,10 @@ def assert_days_match_sources(connection):
     assert day_totals(connection) == source
 
 
-def test_daily_allowance_is_reserved_across_workers_and_settled_by_durable_usage(store):
-    configure('TENANT_A', 16, 12)
-    configure('TENANT_B', 12, 12)
+@pytest.mark.parametrize('period', ['day', 'month'])
+def test_token_allowance_is_reserved_across_workers_and_settled_by_durable_usage(store, period):
+    for tenant, limit in [('TENANT_A', 16), ('TENANT_B', 12)]:
+        configure(tenant, limit if period == 'day' else None, 12, monthly=limit if period == 'month' else None)
     contenders = {enqueue(store, 'first'), enqueue(store, 'second')}
     other = enqueue(store, 'other', 'TENANT_B')
     barrier, entered, release = Barrier(2), Event(), Event()
@@ -200,6 +201,49 @@ def test_token_day_tracks_receipt_rollback_and_duplicate_with_original_budget_da
     with store._scope('TENANT_A') as connection:
         assert day_totals(connection) == [old_day | {'charged_tokens': 4}]
         assert_days_match_sources(connection)
+
+
+def test_monthly_quota_counts_this_utc_month_and_excludes_the_previous_month(store):
+    archive = enqueue(store, 'last-month')
+    assert worker(store, lambda _: usage(35, 5)).run_once('TENANT_A')['state'] == 'SUCCEEDED'
+    pending = enqueue(store, 'this-month')
+    lease = acquire(store)
+    store.reserve_step(lease, 'model', 'MODEL', 'NONE', {'operation': 'model.chat'})
+    store.complete_step(lease, 'model', 'UNKNOWN', {'outcome': 'timeout'})
+    store.fail(lease, 'MODEL_TIMEOUT')
+    with admin() as connection:
+        month = connection.execute("SELECT date_trunc('month',clock_timestamp() AT TIME ZONE 'UTC')::date AS start_day").fetchone()['start_day']
+        connection.execute("INSERT INTO agent_model_token_reservation VALUES ('TENANT_A',%s,1,%s::date-1,3)", (archive, month))
+        connection.execute("INSERT INTO agent_model_token_reservation VALUES ('TENANT_A',%s,1,%s,4)", (pending, month))
+    configure('TENANT_A', 100, 12, monthly=16)
+    admitted = enqueue(store, 'fits')
+    assert worker(store, lambda _: usage(9, 3)).run_once('TENANT_A')['run_id'] == admitted
+    assert store.get('TENANT_A', admitted)['state'] == 'SUCCEEDED'
+    rejected = enqueue(store, 'over-month')
+    result = worker(store, lambda _: pytest.fail('exhausted month reached provider')).run_once('TENANT_A')
+    assert (result['run_id'], result['error_code'], result['model_calls'], result['retry_count']) == (
+        rejected, 'MODEL_TOKEN_QUOTA_EXCEEDED', 0, 0)
+    with admin() as connection:
+        rows = day_totals(connection)
+        assert sum(row['charged_tokens'] for row in rows if row['budget_day'] >= month) == 16
+        assert sum(row['charged_tokens'] for row in rows if row['budget_day'] < month) == 40
+        assert_days_match_sources(connection)
+
+
+@pytest.mark.parametrize(('daily', 'monthly'), [(0, 100), (100, 0)])
+def test_daily_and_monthly_limits_both_apply(store, daily, monthly):
+    configure('TENANT_A', daily, 12, monthly=monthly)
+    run = enqueue(store, 'zero-quota')
+    result = worker(store, lambda _: pytest.fail('zero quota reached provider')).run_once('TENANT_A')
+    assert (result['run_id'], result['error_code'], result['model_calls']) == (run, 'MODEL_TOKEN_QUOTA_EXCEEDED', 0)
+    with admin() as connection:
+        assert day_totals(connection) == []
+
+
+@pytest.mark.parametrize(('daily', 'allowance', 'monthly'), [(None, None, 1), (None, 1, None), (1, 1, -1)])
+def test_invalid_monthly_quota_configuration_is_rejected(store, daily, allowance, monthly):
+    with pytest.raises(psycopg.errors.CheckViolation):
+        configure('TENANT_A', daily, allowance, monthly=monthly)
 
 
 def test_budget_rows_are_tenant_scoped_append_only_and_readiness_rejects_column_writes(store, monkeypatch):

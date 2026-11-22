@@ -137,3 +137,7 @@ ReplyReconciler为显式可信宿主控制面，无公开路由/自动轮询/模
 ## AI 012 模型 Token 日汇总
 
 012 从预留与回执回填 UTC 日汇总，并在追加原始记录时同步更新。回填和安装触发器持有两张来源表的写入锁，安排在低写入时段。配置角色后以 `verify` 和 Runtime 就绪检查核对新表、函数与触发器。应用版本回退时保留本迁移。详见 [ADR-0048](../../../docs/decisions/0048-model-token-day-accounting.md)。
+
+## AI 013 租户模型月度 Token 额度
+
+013 扩展额度配置，保留现有日度策略和账目。升级后月度策略初始留空。先完成迁移与权限核验，再升级处理目标租户的全部 Worker，最后配置预算。回退应用前先停用月度策略。详见 [ADR-0049](../../../docs/decisions/0049-tenant-monthly-model-token-quota.md)。

@@ -1442,3 +1442,11 @@ AI 012 回填历史明细，在预留或回执写入时同步维护租户的 UTC
 - `PYTEST_ADDOPTS='-k "runtime_model_token_budget or runtime_model_quota or runtime_model_usage or knowledge_tools_postgres"' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 通过 42 项。覆盖在途预留、未知用量、实际用量超过预留、原日期结算、回滚后重提、重复回执、禁用触发器、外租户读取和直接改账权限。测试逐日期比对原始记录与汇总。原日志 `e9a-token-days-pg.log`。
 - `python scripts/test-versioned-migrations.py` 的 17 项通过。AI 011 → 012 保留原预留和回执，两个 UTC 日回填为 17 和 12 Token。初始化与结构漂移检查覆盖六库 101 张应用表，六库恢复比对两条日汇总及原始记录。原日志 `e9a-token-days-upgrade.log`、`e9a-token-days-init.log`、`e9a-token-days-drift.log`、`e9a-token-days-restore.log`。
 - 普通 AI 测试 1,052 项通过、447 项按环境条件跳过。供应商输出为测试替身。原日志 `e9a-token-days-ai.log`。
+
+## E9 第二批日度与月度模型 Token 额度（2026-11-22）
+
+AI 013 支持独立配置月度额度或同时执行日度和月度上限。Runtime 在同一租户锁内读取该租户从 UTC 月初到当天的日汇总。原预留与用量回执继续保存。启用和回退见 [ADR-0049](decisions/0049-tenant-monthly-model-token-quota.md)。
+
+- E9 第一批的定向命令在 PostgreSQL 17 通过 49 项。包含月度仅配置下的 Worker 并发竞争、另租户继续、当月累计、忽略往月、两个额度各自拒绝和无效策略拒绝。测试中当月保留 4 个未知 Token 后，新调用结算 12 个 Token 达到月度额度 16，后续调用在触达供应商前结束。原日志 `e9b-token-month-pg.log`。
+- AI 012 → 013 保留原日额度、明细和汇总，月额初始留空。六库恢复比对两条日月策略、两条日汇总及对应原始记录。普通 AI 测试 1,052 项通过、454 项按环境条件跳过。原日志 `e9b-token-month-upgrade.log`、`e9b-token-month-restore.log` 和 `e9b-token-month-ai.log`。
+- 同一隔离 PostgreSQL 实例放入 50,000 条合成预留和 25,000 条合成回执，回填对齐为 425,000 Token。每组预热 10 次、采样 60 次。原日明细与新日汇总交替执行，日额度检查 P50 从 38.58 ms 降到 4.31 ms，P95 从 45.11 ms 降到 5.84 ms。月度只读样本含一个日期，P95 为 6.38 ms。测量覆盖单连接的额度检查，受控环境、复现脚本和原始样本保存在 `.local/implementation/e9b-token-month-probe.py` 与 `.json`。

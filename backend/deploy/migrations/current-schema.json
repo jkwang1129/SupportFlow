@@ -227,6 +227,13 @@
               "not_null": true,
               "type": "integer"
             },
+            "monthly_token_limit": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "bigint"
+            },
             "tenant_code": {
               "default": null,
               "generated": "",
@@ -243,10 +250,10 @@
             }
           },
           "constraints": {
-            "agent_model_quota_daily_tokens": "CHECK ((((daily_token_limit IS NULL) AND (tokens_per_attempt IS NULL)) OR ((daily_token_limit IS NOT NULL) AND ((daily_token_limit >= 0) AND (daily_token_limit <= '1000000000000'::bigint)) AND (tokens_per_attempt IS NOT NULL) AND ((tokens_per_attempt >= 1) AND (tokens_per_attempt <= 1000000)))))",
             "agent_model_quota_max_active_steps_check": "CHECK (((max_active_steps >= 0) AND (max_active_steps <= 100)))",
             "agent_model_quota_pkey": "PRIMARY KEY (tenant_code)",
-            "agent_model_quota_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))"
+            "agent_model_quota_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
+            "agent_model_quota_token_limits": "CHECK ((((daily_token_limit IS NULL) AND (monthly_token_limit IS NULL) AND (tokens_per_attempt IS NULL)) OR (((daily_token_limit IS NOT NULL) OR (monthly_token_limit IS NOT NULL)) AND ((daily_token_limit IS NULL) OR ((daily_token_limit >= 0) AND (daily_token_limit <= '1000000000000'::bigint))) AND ((monthly_token_limit IS NULL) OR ((monthly_token_limit >= 0) AND (monthly_token_limit <= '1000000000000'::bigint))) AND (tokens_per_attempt IS NOT NULL) AND ((tokens_per_attempt >= 1) AND (tokens_per_attempt <= 1000000)))))"
           },
           "indexes": {
             "agent_model_quota_pkey": {
@@ -14145,6 +14152,10 @@
       {
         "checksum": "227578448ffc608d48f5c57b66450f9637b310e99ea8eb2ca812b164dbb0da32",
         "version": "012"
+      },
+      {
+        "checksum": "e5244a9757291790b3cf254d586fc97ed5cd53b28d54a3ffc466bb0dd9e851e5",
+        "version": "013"
       }
     ],
     "billing_db": [

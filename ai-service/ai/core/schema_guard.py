@@ -36,6 +36,7 @@ MODEL_USAGE_SOURCE = 'backend/deploy/migrations/sql/ai_db_009_agent_model_usage.
 MODEL_QUOTA_SOURCE = 'backend/deploy/migrations/sql/ai_db_010_agent_model_quota.sql'
 MODEL_TOKEN_BUDGET_SOURCE = 'backend/deploy/migrations/sql/ai_db_011_agent_model_token_budget.sql'
 MODEL_TOKEN_DAY_SOURCE = 'backend/deploy/migrations/sql/ai_db_012_agent_model_token_days.sql'
+MODEL_MONTHLY_QUOTA_SOURCE = 'backend/deploy/migrations/sql/ai_db_013_agent_model_monthly_quota.sql'
 MODEL_TOKEN_POLICY_COLUMNS = ('daily_token_limit', 'tokens_per_attempt')
 RUNTIME_COLUMNS = {
     'agent_run': ('tenant_code run_id source_event_id session_no event_seq message_id principal_ref trace_id runtime_version input_hash '
@@ -44,7 +45,7 @@ RUNTIME_COLUMNS = {
     'agent_step': ('tenant_code run_id step_no step_key kind effect intent_hash intent_ref state fence result_ref created_at completed_at').split(),
     'agent_payload': ('tenant_code payload_id run_id step_no fence payload_schema payload_json payload_hash created_at expires_at').split(),
     'agent_model_usage': ('tenant_code run_id step_no fence intent_hash payload_id payload_hash input_tokens chat_output_tokens recorded_at').split(),
-    'agent_model_quota': ('tenant_code', 'max_active_steps', *MODEL_TOKEN_POLICY_COLUMNS),
+    'agent_model_quota': ('tenant_code', 'max_active_steps', *MODEL_TOKEN_POLICY_COLUMNS, 'monthly_token_limit'),
     'agent_model_token_reservation': ('tenant_code', 'run_id', 'step_no', 'budget_day', 'reserved_tokens'),
     'agent_model_token_day': ('tenant_code', 'budget_day', 'charged_tokens'),
     'agent_reply_reconciliation': ('tenant_code run_id step_no observed_fence source_event_id snapshot_id arguments_sha256 intent_hash '
@@ -59,6 +60,8 @@ RUNTIME_COLUMNS = {
 def _runtime_source(table, column=None):
     if table == 'agent_model_quota' and column in MODEL_TOKEN_POLICY_COLUMNS:
         return MODEL_TOKEN_BUDGET_SOURCE
+    if table == 'agent_model_quota' and column == 'monthly_token_limit':
+        return MODEL_MONTHLY_QUOTA_SOURCE
     return {'agent_payload': PAYLOAD_SOURCE, 'agent_reply_reconciliation': RECONCILIATION_SOURCE,
             'agent_ticket_reconciliation': TICKET_RECONCILIATION_SOURCE, 'agent_approval': APPROVAL_SOURCE,
             'agent_model_usage': MODEL_USAGE_SOURCE, 'agent_model_quota': MODEL_QUOTA_SOURCE,

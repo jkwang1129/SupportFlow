@@ -402,7 +402,7 @@ class RuntimeStore:
     def _check_model_capacity(connection, tenant):
         # Lock before reading both active steps and the daily Token ledger.
         RuntimeStore._lock_model_budget(connection, tenant)
-        quota = connection.execute('''SELECT max_active_steps,daily_token_limit,tokens_per_attempt
+        quota = connection.execute('''SELECT max_active_steps,daily_token_limit,monthly_token_limit,tokens_per_attempt
             FROM agent_model_quota WHERE tenant_code=%s''', (tenant,)).fetchone()
         if quota is None:
             return None
@@ -412,16 +412,20 @@ class RuntimeStore:
             ) AS active_steps""", (tenant, limit)).fetchone()['count']
         if active >= limit:
             raise ModelCapacityBusy('Tenant model capacity is full')
-        if quota['daily_token_limit'] is None:
+        daily_limit, monthly_limit = quota['daily_token_limit'], quota['monthly_token_limit']
+        if daily_limit is None and monthly_limit is None:
             return None
         budget_day = connection.execute("SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date AS day").fetchone()['day']
-        charged = connection.execute('''SELECT coalesce(sum(coalesce(
-            u.input_tokens::numeric + coalesce(u.chat_output_tokens,0),r.reserved_tokens)),0) AS tokens
-            FROM agent_model_token_reservation r LEFT JOIN agent_model_usage u USING(tenant_code,run_id,step_no)
-            WHERE r.tenant_code=%s AND r.budget_day=%s''', (tenant, budget_day)).fetchone()['tokens']
+        first_day = budget_day if monthly_limit is None else budget_day.replace(day=1)
+        totals = connection.execute('''SELECT coalesce(max(charged_tokens) FILTER (WHERE budget_day=%s),0) AS today,
+            coalesce(sum(charged_tokens),0) AS month_to_date
+            FROM agent_model_token_day WHERE tenant_code=%s AND budget_day BETWEEN %s AND %s''',
+            (budget_day, tenant, first_day, budget_day)).fetchone()
         allowance = quota['tokens_per_attempt']
-        if charged + allowance > quota['daily_token_limit']:
+        if daily_limit is not None and totals['today'] + allowance > daily_limit:
             raise ModelTokenQuotaExceeded('Tenant daily model Token allowance is exhausted')
+        if monthly_limit is not None and totals['month_to_date'] + allowance > monthly_limit:
+            raise ModelTokenQuotaExceeded('Tenant monthly model Token allowance is exhausted')
         return budget_day, allowance
 
     def reserve_step(self, lease: Lease, step_key, kind, effect, intent_ref):

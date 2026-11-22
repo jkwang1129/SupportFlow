@@ -72,8 +72,8 @@ def seed(connect):
             database.execute('''INSERT INTO agent_model_usage(tenant_code,run_id,step_no,fence,intent_hash,payload_id,payload_hash,
                 input_tokens,chat_output_tokens) VALUES(%s,%s,1,1,%s,%s,repeat('c',64),%s,7)''',
                 (tenant, run_id, intent_hash, payload_id, 12+index))
-            database.execute('''INSERT INTO agent_model_quota(tenant_code,max_active_steps,daily_token_limit,tokens_per_attempt)
-                VALUES(%s,%s,100,25)''', (tenant, index))
+            database.execute('''INSERT INTO agent_model_quota(tenant_code,max_active_steps,daily_token_limit,tokens_per_attempt,monthly_token_limit)
+                VALUES(%s,%s,100,25,1000)''', (tenant, index))
             database.execute('''INSERT INTO agent_model_token_reservation(tenant_code,run_id,step_no,budget_day,reserved_tokens)
                 VALUES(%s,%s,1,(clock_timestamp() AT TIME ZONE 'UTC')::date,25)''', (tenant, run_id))
 
@@ -90,7 +90,7 @@ def projection(connect):
     assert len(outbox) == len(runs) == 2
     assert [row[:4] for row in outbox] == [row[:4] for row in runs]
     assert len(usages) == 2
-    assert quotas == [('RESTORE_A', 1, 100, 25), ('RESTORE_B', 2, 100, 25)]
+    assert quotas == [('RESTORE_A', 1, 100, 25, 1000), ('RESTORE_B', 2, 100, 25, 1000)]
     assert len(token_reservations) == 2
     assert token_days == [('RESTORE_A', token_reservations[0][3], 20), ('RESTORE_B', token_reservations[1][3], 21)]
     return outbox, runs, usages, quotas, token_reservations, token_days
