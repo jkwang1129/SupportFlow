@@ -65,6 +65,13 @@ def main():
             "ALTER TABLE public.session ALTER COLUMN last_msg_seq DROP DEFAULT",
             "ALTER TABLE public.session ALTER COLUMN last_msg_seq DROP NOT NULL",
             "ALTER INDEX public.idx_session_tenant_status_time RENAME TO schema_fault_index",
+            """DROP INDEX public.agent_event_outbox_pending;
+               CREATE INDEX agent_event_outbox_pending ON public.agent_event_outbox (tenant_code,ready_at,event_seq)
+               WHERE state::text = ANY (ARRAY[('PENDING'::character varying)::text, ('HELD'::character varying)::text])""",
+            """ALTER TABLE public.agent_event_outbox DROP CONSTRAINT agent_event_outbox_state_check;
+               ALTER TABLE public.agent_event_outbox ADD CONSTRAINT agent_event_outbox_state_check
+               CHECK (state::text = ANY (ARRAY[('PENDING'::character varying)::text, ('SENDING'::character varying)::text,
+                                             ('DELIVERED'::character varying)::text, ('WRONG'::character varying)::text]))""",
             "ALTER TABLE public.session DROP CONSTRAINT uk_tenant_session_no",
             "ALTER TABLE public.session NO FORCE ROW LEVEL SECURITY",
             "ALTER TABLE public.session DISABLE ROW LEVEL SECURITY",

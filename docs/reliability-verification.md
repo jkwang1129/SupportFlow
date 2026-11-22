@@ -1273,3 +1273,13 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - 普通 AI 测试 1,005 项通过、411 项条件跳过。拒答 24 项及引用 10 项门禁通过。原始记录在 `.local/implementation/d3-*`。
 
 该集衡量故障状态和预算，语义准确率、工具真实重演及生产流量数据另行验收。
+
+## E2 六库逻辑归档恢复演练（2026-11-22）
+
+`python scripts/test-database-restore.py` 在两个独立 PostgreSQL 17 集群之间运行六个 `pg_dump -Fc` 和对应的 `pg_restore`。角色定义排除密码，使用原授予者恢复并在目标重配服务凭据。演练环境、权限与回滚见 [ADR-0039](decisions/0039-disposable-postgres-restore.md)。
+
+- 六库的迁移历史和 97 张应用表通过严格核验。包括六张迁移历史表在内，103 张表的行数逐表一致，总计 77 行。客服 Outbox 到 AI Run 的两组跨库引用完全相同，两个受限账号分别验证空租户、双租户和 `PLATFORM` 读取范围及禁止 TRUNCATE。无效归档被拒绝，目标无预先存在的应用库。原报告 `database-restore-drill.json`，日志 `e2-database-restore-verified.log`。
+- 首轮使用不同名管理员时，原角色授予者无法重放。修正后，恢复版本又将部分字符串数组的类型转换拆到各元素，严格门禁首次拒绝。精确处理该变体后，`python scripts/test-schema-drift.py` 的 16 个 SQL 变更及 3 个元数据异常仍被拦截，包括更换索引谓词或约束中的枚举值。诊断 `e2-restore-diagnostic.log`、`e2-restore-schema-diagnostic.log`，最终日志 `e2-post-restore-schema-drift.log`。
+- MCP、模型用量两笔早期 CI 访问旧回复发布夹具时因新增参数失败。兼容修复的 [CI 44972572733](https://github.com/jkwang1129/SupportFlow/actions/runs/44972572733) 通过。本地真实组合复跑也通过 5 条回复发布路径、单独的回复核销及端到端回执用例。日志 `b3-explicit-proposal-runtime.log`。
+
+演练在业务停写的逻辑恢复口径下进行。生产 RPO/RTO、WAL、线上服务切换、知识附件和对象存储待另行实测。

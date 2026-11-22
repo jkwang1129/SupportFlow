@@ -1,11 +1,32 @@
 """Read-only verification of all registered application schema objects against reviewed desired state."""
 import json
 from pathlib import Path
+import re
 
 from schema_contract import capture_baseline
 
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "backend/deploy/migrations/current-schema.json"
+
+# PostgreSQL 17 can move the cast in a deparsed string-enum comparison
+# from the whole array to each literal on pg_dump/pg_restore round trips.
+_ENUM_ARRAY = re.compile(
+    r"(?P<operator>\b(?:ANY|ALL)) \(\(ARRAY\["
+    r"(?P<literals>'[A-Za-z0-9_-]+'::character varying(?:, '[A-Za-z0-9_-]+'::character varying)*)"
+    r"\]\)::text\[\]\)|'(?:[^']|'')*'"
+)
+
+
+def _restored_definition(required):
+    def cast_elements(match):
+        if match['operator'] is None:
+            return match[0]  # Keep unrelated SQL string literals opaque.
+        elements = ', '.join(f'({literal})::text' for literal in match['literals'].split(', '))
+        return f"{match['operator']} (ARRAY[{elements}])"
+
+    if isinstance(required, dict):
+        return required | {'definition': _ENUM_ARRAY.sub(cast_elements, required['definition'])}
+    return _ENUM_ARRAY.sub(cast_elements, required)
 
 
 class SchemaDriftError(RuntimeError):
@@ -54,7 +75,7 @@ def capture_schema(connection):
 
 
 def assert_schema(actual, expected):
-    """Exact registered public schema, excluding migration history and extension functions.
+    """Verify the registered public schema, excluding migration history and extension functions.
 
     Unreviewed policies/objects must not silently become the desired state. A
     deliberate schema change requires a new migration and reviewed current
@@ -72,8 +93,10 @@ def assert_schema(actual, expected):
             if set(observed[group]) != set(contract[group]):
                 raise SchemaDriftError(f"Schema {group} set drift: {table}")
             for name, required in contract[group].items():
-                if observed[group].get(name) != required:
-                    raise SchemaDriftError(f"Schema {group} drift: {table}.{name}")
+                found = observed[group][name]
+                if found == required or group in ('indexes', 'constraints') and found == _restored_definition(required):
+                    continue
+                raise SchemaDriftError(f"Schema {group} drift: {table}.{name}")
         for flag in ("enabled", "forced"):
             if observed["rls"][flag] != contract["rls"][flag]:
                 raise SchemaDriftError(f"Schema RLS {flag} drift: {table}")

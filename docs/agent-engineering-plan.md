@@ -41,7 +41,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M09 Streaming/交互 | 部分实现 | `supportflow-realtime-service` WebSocket、消息 seq/ACK/补拉、机器人 typing | 缺持久化 Run 事件、审批/取消/恢复展示；优先复用 WebSocket。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
 | M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、`llm_usage.py` 实际 usage 与价格估算、计费日聚合；运营 `TenantCostBudget`、`ObservabilityService#costGuard/evaluate` 和客服 `CostGuardClient` 已有月预算告警/降级/暂停 | 复用既有预算配置；当前闸门缓存 60 秒且读取失败放行，不能当硬额度。已有跨Worker租约/fencing、Run调用/步骤/重试计数预算和租户积压上限；仍缺Token/费用并发预留结算和跨进程租户配额/公平性；计费去重 A4，运行预算随 M01，完整隔离压测 E。费用估算不是账单。B/E |
-| M12 Production Operations | 部分实现 | Compose 依赖、启动脚本、GitHub CI、新旧库/服务隔离验收、凭据分发与升级文档 | 本地六库init/migrate/verify和schema readiness已验；生产部署、备份恢复实测、Runbook/SLO告警与旧任务兼容仍缺；本地演示不能称生产运营。A5/E |
+| M12 Production Operations | 部分实现，六库备份恢复已本地演练 | Compose、CI、新旧库验收、迁移清单、受限凭据、两个 PostgreSQL 17 集群的六库恢复 | 生产部署、跨库一致性策略、WAL、对象存储恢复和 SLO 演练待验收。A5/E |
 
 ## 分阶段计划与退出条件
 
@@ -151,3 +151,5 @@ E1 的 M08/M11 可按租户核查单个 Run 的已观测 Chat 和 Embedding Toke
 B3 已打通明确访客请求、提案暂停、坐席审核和独立 Worker 按原快照建单的本地链路。启用及回滚见 [ADR-0038](decisions/0038-explicit-ticket-proposal.md)。自然语言触发、访客提交入口及业务默认切换仍需独立验收。
 
 D3 将取消、模型超时、工具拒绝和写确认丢失的实际 Run 元数据与版本化基线纳入同一离线门禁。步骤独立复核预算计数，遗漏用例直接失败。当前基线覆盖工程故障和副作用约束，RAG 语义质量及模型交互还需各自评测。
+
+E2 完成 PostgreSQL 17 独立集群六库恢复，校验迁移历史、当前表结构、Outbox 与 Run 关联和受限账号范围。CI 已接演练步骤。环境和边界见 [ADR-0039](decisions/0039-disposable-postgres-restore.md)。

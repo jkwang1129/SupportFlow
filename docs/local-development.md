@@ -142,7 +142,7 @@ python scripts/upgrade-runtime-security.py
 
 `python scripts/upgrade-runtime-security.py` 现通过版本化 Runner 安装已登记的客服/计费增量，再独立配置运行角色并验证。结构历史与 checksum 位于各库 supportflow_schema_history；运行账号只能读取本库历史。仅检查：`python scripts/db-migrate.py verify`。该命令不会执行 DDL，并核对 current-schema.json 中的实际结构/索引/RLS。已应用脚本变更、历史缺口或并发迁移会拒绝继续，不能删除历史绕过。
 
-清单、事务/多库失败语义和未覆盖项见 [迁移说明](../backend/deploy/migrations/README.md)。统一 init/migrate/verify 及本地新建/升级/结构与账号验收已具备，生产部署与备份恢复另归阶段 E。
+清单、事务/多库失败语义和未覆盖项见 [迁移说明](../backend/deploy/migrations/README.md)。本地新建、升级和结构验收可按当前清单复现。运行 `python scripts/test-database-restore.py` 可在两个独立 PostgreSQL 17 测试集群演练六库备份和恢复，使用合成数据与临时服务凭据。生产恢复环境与限制见 [六库恢复决策](decisions/0039-disposable-postgres-restore.md)。
 
 ## Java 存活与就绪
 
