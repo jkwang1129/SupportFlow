@@ -410,12 +410,12 @@ async def analyze_with_llm(question: str, history: list[dict[str, str]],
         data = await call_chat(chosen, payload, settings.llm_timeout,
                                scene="客服大脑", tenant_code=tenant_code)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("客服大脑模型调用失败，退回规则判断 tenant=%s error=%s", tenant_code, exc)
+        logger.warning("客服大脑模型调用失败，退回规则判断 tenant=%s errorType=%s", tenant_code, type(exc).__name__)
         return None
     content = message_content(data)
     parsed = parse_json_object(content)
-    logger.info("客服大脑分析出参 trace=%s provider=%s content=%s",
-                get_trace_id() or "-", chosen["provider"], (content or "")[:500])
+    logger.info("客服大脑分析完成 trace=%s provider=%s parsed=%s",
+                get_trace_id() or "-", chosen["provider"], parsed is not None)
     return parsed
 
 
@@ -688,8 +688,8 @@ def load_dialogue(tenant_code: str, session_no: str) -> dict[str, Any]:
                 (tenant_code, session_no),
             ).fetchone()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("读取多轮对话状态失败 tenant=%s session=%s error=%s",
-                       tenant_code, session_no, exc)
+        logger.warning("读取多轮对话状态失败 tenant=%s session=%s errorType=%s",
+                       tenant_code, session_no, type(exc).__name__)
         return initial
     if not row:
         return initial
@@ -741,8 +741,8 @@ def save_dialogue(tenant_code: str, session_no: str, state: dict[str, Any]) -> N
             conn.commit()
     except Exception as exc:  # noqa: BLE001
         # 状态写不进去不能影响这次回复：最坏也就是"多轮记忆"退化成单轮
-        logger.warning("保存多轮对话状态失败 tenant=%s session=%s error=%s",
-                       tenant_code, session_no, exc)
+        logger.warning("保存多轮对话状态失败 tenant=%s session=%s errorType=%s",
+                       tenant_code, session_no, type(exc).__name__)
 
 
 def list_dialogues(tenant_code: str, limit: int = 50) -> list[dict[str, Any]]:

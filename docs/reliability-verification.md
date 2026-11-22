@@ -1339,3 +1339,10 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 从最近的非空客户问题确定当前回合，向意图分析传递该问题之前的整段原历史。此调整沿用两种上下文预算策略。回滚可回退接口的历史截取，无配置或数据库迁移。
 
 从 `ai-service` 运行 `python -m pytest -q tests/test_internal_auth.py tests/test_brain_analysis_context.py`，17 项通过、1 项真实库用例条件跳过。四个新增签名 HTTP 请求覆盖末尾客户问题、后续坐席回复、尾部空白客户消息和无有效问题，检查原问题不会重复作为当前历史而早轮相同询问仍可传入。日志 `c6-brain-turn-boundary.log`。
+
+## M04 Python 客服大脑日志的内容边界（2026-11-22）
+
+请求及编排诊断仅保留计数、解析状态、Trace 和错误类型。客户问题、识别槽位、模型正文、低证据回复、转人工原因和已捕获异常消息从所测日志中移除。处理失败沿用统一 HTTP 500 响应。实际业务输出、转人工提示和槽位状态继续由原路径消费。回退这一批只影响 Python 日志表现，不涉及数据迁移。
+
+- `python -m pytest -q tests/test_internal_auth.py tests/test_brain_analysis_context.py` 从 AI 服务目录运行，20 项通过、1 项真实库条件跳过。新增三项覆盖签名 HTTP 异常、正常编排中的私密文本和槽位、本地数据库及模型异常。初次测试断言低证据回复未附带现有转人工提示，并错对了统一 500 外层文案，按既有合同修正断言后通过。日志 `m04-brain-log-scope-unit-final.log`。
+- 普通 AI 带 JUnit 全量 1,041 项通过、424 项条件跳过。三类 RAG 门禁共 54 项通过。日志 `m04-brain-log-scope-ai.log`，报告 `m04-brain-log-scope-contract.json`。所测内容来自合成输入。Java 接待、附件处理、基础设施和审计留存需各自核对。

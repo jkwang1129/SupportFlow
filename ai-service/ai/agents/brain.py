@@ -77,12 +77,6 @@ class BrainState(TypedDict, total=False):
     steps: list[dict]
 
 
-def _indent_question(question: str, limit: int = 400) -> str:
-    """问题可能带图片上下文（多行），压成一行并截断，日志才不会被刷乱"""
-    text = " / ".join(line.strip() for line in (question or "").splitlines() if line.strip())
-    return text[:limit] + ("…" if len(text) > limit else "")
-
-
 def _step(state: BrainState, node: str, detail: str, **extra: Any) -> list[dict]:
     steps = list(state.get("steps") or [])
     steps.append({"node": node, "detail": detail, **extra})
@@ -169,14 +163,9 @@ async def node_recognize(state: BrainState) -> dict:
     # 模型也抽了槽位就并进来（规则没覆盖到的格式它能补上）
     slots = svc.merge_slots(slots, (model_result or {}).get("slots"))
     turn_count = int(dialogue.get("turn_count") or 0) + 1
-    logger.info("客服大脑意图 tenant=%s session=%s 意图=%s 置信度=%.2f 来源=%s 槽位=%s",
+    logger.info("客服大脑意图 tenant=%s session=%s 意图=%s 置信度=%.2f 来源=%s slotCount=%d questionChars=%d",
                 state["tenant_code"], state.get("session_no") or "-",
-                (intent or {}).get("name") or "其他", confidence, source, slots)
-    # 把这一轮真正收到的问题打出来：客户发图片时，这里会看到"[客户发来一张图片] 判读：… 图中文字：…"，
-    # 是"图里的内容有没有进大脑"的直接证据
-    logger.info("客服大脑输入 tenant=%s session=%s 内容=%s",
-                state["tenant_code"], state.get("session_no") or "-",
-                _indent_question(state["question"]))
+                (intent or {}).get("name") or "其他", confidence, source, len(slots), len(state["question"]))
     return {
         "setting": setting,
         "intents": intents,
@@ -312,9 +301,9 @@ def node_answer(state: BrainState) -> dict:
                   else int(state.get("unresolved_rounds") or 0) + 1)
     if admitted or suggests_human:
         logger.warning(
-            "机器人回答里承认没有依据 tenant=%s session=%s 轮次=%d 建议转人工=%s 回答=%s",
+            "机器人回答里承认没有依据 tenant=%s session=%s 轮次=%d 建议转人工=%s replyChars=%d",
             state["tenant_code"], state.get("session_no") or "-", unresolved,
-            suggests_human, reply[:80])
+            suggests_human, len(reply))
 
     result = {
         "reply": reply,
@@ -407,8 +396,8 @@ def node_escalate(state: BrainState) -> dict:
     else:
         reply = str(setting.get("transfer_message")
                     or svc.DEFAULT_SETTING["transfer_message"]).strip()
-    logger.info("客服大脑转人工 tenant=%s session=%s 原因=%s 来源=%s 第%s次要求",
-                state["tenant_code"], state.get("session_no") or "-", reason, source,
+    logger.info("客服大脑转人工 tenant=%s session=%s reasonChars=%d 来源=%s 第%s次要求",
+                state["tenant_code"], state.get("session_no") or "-", len(reason), source,
                 "二" if already else "一")
     return {
         "reply": reply,

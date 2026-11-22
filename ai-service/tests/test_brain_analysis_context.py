@@ -12,6 +12,7 @@ from psycopg.rows import dict_row
 import pytest
 
 from ai.core.llm_chat import call_chat
+from ai.agents import brain as brain_agent
 from ai.services import brain
 
 
@@ -118,3 +119,41 @@ def test_brain_analysis_context_restores_same_session_slot_and_excludes_foreign_
     assert restored['slots'] == {}
     assert analyze('之前的订单呢？', [], restored['slots'])
     assert json.loads(captured[-1][1]['messages'][1]['content'])['remembered_slots'] == {}
+
+
+def test_brain_diagnostics_record_metadata_without_request_response_or_slots(model, monkeypatch, caplog):
+    caplog.set_level('INFO')
+    question, slot = 'PRIVATE_FIXTURE_QUESTION', 'ORDER-FIXTURE-A'
+    model_reason, reply = 'PRIVATE_FIXTURE_PROVIDER', '资料里没有提到 PRIVATE_FIXTURE_REPLY'
+    monkeypatch.setattr(brain, 'load_setting', lambda _: brain.DEFAULT_SETTING)
+    monkeypatch.setattr(brain, 'load_intents', lambda _: [])
+    monkeypatch.setattr(brain, 'load_dialogue', lambda *_: {'slots': {'order_no': slot}})
+    monkeypatch.setattr(brain, 'match_intent_by_version', lambda *_: None)
+
+    async def completion(*_, **__):
+        return {'choices': [{'message': {'content': json.dumps({'reason': model_reason})}}]}
+
+    monkeypatch.setattr(brain, 'call_chat', completion)
+    state = {'tenant_code': 'CTXT_A', 'session_no': 'fixture-session', 'question': question}
+    observed = asyncio.run(brain_agent.node_recognize(state))
+    answer = brain_agent.node_answer(state | observed | {'reply': reply, 'enough': False})
+    assert observed['slots']['order_no'] == slot and observed['model_result']['reason'] == model_reason
+    assert answer['reply'].startswith(reply)
+    assert all(name in caplog.text for name in ('slotCount=1', 'parsed=True', 'replyChars='))
+    assert all(secret not in caplog.text for secret in (question, slot, model_reason, 'PRIVATE_FIXTURE_REPLY'))
+
+
+def test_brain_database_and_model_errors_hide_untrusted_exception_details(model, monkeypatch, caplog):
+    def database_failure():
+        raise RuntimeError('PRIVATE_FIXTURE_DB_ERROR')
+
+    async def model_failure(*_, **__):
+        raise RuntimeError('PRIVATE_FIXTURE_MODEL_ERROR')
+
+    monkeypatch.setattr(brain, 'connect', database_failure)
+    monkeypatch.setattr(brain, 'call_chat', model_failure)
+    assert brain.load_dialogue('CTXT_A', 'S1')['slots'] == {}
+    brain.save_dialogue('CTXT_A', 'S1', {'slots': {'order_no': 'ORDER-FIXTURE'}})
+    assert analyze('之前的订单呢？', []) is None
+    assert caplog.text.count('errorType=RuntimeError') == 3
+    assert 'PRIVATE_FIXTURE' not in caplog.text

@@ -58,8 +58,8 @@ async def brain(body: BrainRequest, trace_id: str = Depends(require_trace_id)) -
         raise HTTPException(status_code=400, detail="没有可处理的客户消息")
 
     started = time.perf_counter()
-    logger.info("收到客服大脑请求 trace=%s tenant=%s session=%s 历史=%d 问题=%s",
-                trace_id, body.tenant_code, body.session_id or "-", len(history), question[:60])
+    logger.info("收到客服大脑请求 trace=%s tenant=%s session=%s historyCount=%d questionChars=%d",
+                trace_id, body.tenant_code, body.session_id or "-", len(history), len(question))
     try:
         result = await brain_agent.think(
             question=question,
@@ -69,12 +69,12 @@ async def brain(body: BrainRequest, trace_id: str = Depends(require_trace_id)) -
             top_k=body.top_k,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.exception("客服大脑处理失败 trace=%s：%s", trace_id, exc)
-        raise HTTPException(status_code=500, detail=f"客服大脑处理失败：{exc}") from exc
-    logger.info("客服大脑完成 trace=%s 意图=%s 置信度=%.2f 情绪=%s 转人工=%s 原因=%s cost=%dms",
+        logger.warning("客服大脑处理失败 trace=%s errorType=%s", trace_id, type(exc).__name__)
+        raise HTTPException(status_code=500, detail="客服大脑暂时无法处理请求") from None
+    logger.info("客服大脑完成 trace=%s 意图=%s 置信度=%.2f 情绪=%s 转人工=%s reasonChars=%d cost=%dms",
                 trace_id, result.get("intent"), float(result.get("confidence") or 0),
                 result.get("emotion"), result.get("need_human"),
-                result.get("transfer_reason") or "-",
+                len(result.get("transfer_reason") or ""),
                 int((time.perf_counter() - started) * 1000))
     return result
 

@@ -158,6 +158,20 @@ def test_brain_without_a_nonblank_customer_question_rejects_before_analysis(clie
     assert response.status_code == 400
 
 
+def test_brain_handled_failure_hides_customer_text_and_internal_details(client, monkeypatch, caplog):
+    async def unavailable(**_):
+        raise RuntimeError('PRIVATE_BRAIN_EXCEPTION')
+
+    monkeypatch.setattr(brain.brain_agent, 'think', unavailable)
+    caplog.set_level('INFO')
+    response = client.post(BRAIN, json={'tenant_code': 'TENANT_A', 'messages': [
+        {'role': 'user', 'content': 'PRIVATE_BRAIN_QUESTION'}],
+    }, headers=signed('POST', BRAIN))
+    assert response.status_code == 500 and response.json() == {'detail': 'AI 服务暂不可用'}
+    assert 'errorType=RuntimeError' in caplog.text and 'questionChars=' in caplog.text
+    assert 'PRIVATE_BRAIN' not in caplog.text and 'PRIVATE_BRAIN' not in response.text
+
+
 def test_processing_errors_do_not_expose_internal_exception_text(client, monkeypatch):
     def unavailable(**_kwargs):
         raise RuntimeError("PRIVATE UPSTREAM DETAILS")
