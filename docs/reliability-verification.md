@@ -1263,3 +1263,13 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - `PYTEST_ADDOPTS='-k "ticket_loop or runtime_approval_review or runtime_model_usage or runtime_trace"' python scripts/test-agent-runtime.py --with-java-delivery` 的 49 项 PostgreSQL 定向测试通过，含 7 新用例。覆盖参数原文、未开启、普通消息、无效标题正文、检查点提交确认丢失、改路由后拒绝恢复。日志 `b3-explicit-proposal-runtime.log`。
 - 客服 JAR、受限 PostgreSQL 与独立 Python 进程的 3 条审批链路通过。用合成已入库访客消息及受控测试角色验收。待批时 4 步、2 个工具预留、0 模型、0 WRITE。通过人工审核 API 后创建工单、事件和回执各 1 条，重复执行未新增。接管或审批过期两案没有写入。机器报告 `runtime-ticket-approval.json` v7。
 - 普通 AI 测试 1,002 项通过、410 项条件跳过。日志 `b3-explicit-proposal-ai.log`。新提案未扩展原模型决策协议、工具注册或访客页面。旧签名访客消息登记到 Worker 已在独立工单查询路径验证。
+
+## D3 固定故障轨迹回归集（2026-11-22）
+
+版本化基线在 `ai-service/tests/fixtures/runtime-trace-baseline.json`。从 AI 服务目录执行 `python -m ai.runtime.trace_replay --suite ../.local/verification/runtime-trace-suite.json --expect tests/fixtures/runtime-trace-baseline.json`。按用例 ID 对齐实际导出轨迹与基线，漏样本、额外样本、计数和状态不符均阻断门禁。步骤计数从轨迹独立复核，拒绝重复 JSON 字段。仍可用原 `--trace` 核查单次执行。回滚时回退离线命令扩展和基线测试，无运行期部署或迁移要求。
+
+- `python -m pytest -q tests/test_runtime_trace_replay.py` 14 项通过。新增覆盖模型和工具预留计数不符、删除或替换样本、缺失基线与重复用例字段。
+- `PYTEST_ADDOPTS='-k runtime_trace' python scripts/test-agent-runtime.py` 真实 PostgreSQL 17 的 4 项测试通过。回放集的 4 个实际任务全部匹配。合成故障分别得到发出前取消、模型超时后等待重试、工具失败及 1 个未知写入。原始轨迹和报告为 `runtime-trace-suite.json`、`runtime-trace-suite-result.json`，日志 `d3-replay-suite-pg.log`。CI 的现有持久化测试会执行该门禁。
+- 普通 AI 测试 1,005 项通过、411 项条件跳过。拒答 24 项及引用 10 项门禁通过。原始记录在 `.local/implementation/d3-*`。
+
+该集衡量故障状态和预算，语义准确率、工具真实重演及生产流量数据另行验收。

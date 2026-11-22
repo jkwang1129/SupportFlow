@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from ai.runtime.trace_replay import main, replay
+from ai.runtime.trace_replay import compare_suite, main, replay
 
 
 def sample(state, error=None, *steps):
@@ -60,3 +60,32 @@ def test_cli_reports_exact_baseline_diff_and_rejects_oversize(tmp_path, capsys):
     source.write_bytes(b' '*65537)
     assert main(args) == 2
     assert capsys.readouterr().err.strip() == 'Invalid Runtime trace or expectation'
+
+
+def test_independent_step_totals_cannot_be_hidden_by_a_matching_baseline():
+    trace = sample('SUCCEEDED', None, ('READ', 'SUCCEEDED'))
+    trace['steps'][0].update(kind='MODEL', effect='NONE')
+    assert replay(trace)['issues'] == ['MODEL_COUNT_MISMATCH', 'TOOL_COUNT_MISMATCH']
+
+
+def test_suite_fails_when_expected_cases_are_missing_or_replaced():
+    trace = sample('SUCCEEDED', None, ('READ', 'SUCCEEDED'))
+    expected = {'state': 'SUCCEEDED'}
+    baseline = {'schema_version': 'runtime-trace-baseline-v1', 'cases': {'normal': expected, 'lost-ack': expected}}
+    suite = {'schema_version': 'runtime-trace-suite-v1', 'cases': {'normal': trace, 'extra': trace}}
+    outcome = compare_suite(suite, baseline)
+    assert outcome['cases']['normal']['passed'] is True
+    assert outcome['missing_cases'] == ['lost-ack'] and outcome['unexpected_cases'] == ['extra']
+    assert outcome['passed'] is False
+
+
+def test_suite_requires_a_baseline_and_rejects_duplicate_case_labels(tmp_path, capsys):
+    suite = tmp_path/'suite.json'
+    baseline = tmp_path/'baseline.json'
+    suite.write_text('{"schema_version":"runtime-trace-suite-v1","cases":{"normal":{},"normal":{}}}', encoding='utf-8')
+    baseline.write_text(json.dumps({'schema_version': 'runtime-trace-baseline-v1', 'cases': {'normal': {'state': 'SUCCEEDED'}}}),
+                        encoding='utf-8')
+    args = ['--suite', str(suite)]
+    assert main(args) == 2
+    assert main(args+['--expect', str(baseline)]) == 2
+    assert capsys.readouterr().out == ''

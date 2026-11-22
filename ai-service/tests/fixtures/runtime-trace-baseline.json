@@ -1,0 +1,21 @@
+{
+  "schema_version": "runtime-trace-baseline-v1",
+  "cases": {
+    "cancelled-before-dispatch": {
+      "state": "CANCELLED", "error_code": "CANCELLED_BY_USER", "step_count": 0,
+      "model_calls": 0, "tool_calls": 0, "retry_count": 0, "successful_writes": 0, "unknown_writes": 0
+    },
+    "model-timeout": {
+      "state": "RETRY_WAIT", "error_code": "FIXTURE_MODEL_TIMEOUT", "step_count": 1,
+      "model_calls": 1, "tool_calls": 0, "retry_count": 1, "successful_writes": 0, "unknown_writes": 0
+    },
+    "tool-denied": {
+      "state": "FAILED", "error_code": "FIXTURE_TOOL_DENIED", "step_count": 1,
+      "model_calls": 0, "tool_calls": 1, "retry_count": 0, "successful_writes": 0, "unknown_writes": 0
+    },
+    "write-ack-lost": {
+      "state": "FAILED", "error_code": "SIDE_EFFECT_UNKNOWN", "step_count": 1,
+      "model_calls": 0, "tool_calls": 1, "retry_count": 0, "successful_writes": 0, "unknown_writes": 1
+    }
+  }
+}

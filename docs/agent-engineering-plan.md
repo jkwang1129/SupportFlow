@@ -21,7 +21,7 @@
 | PR-8 持久化 Run | 部分实现：单租户可信登记、投递与只读 Loop 实际连通 | Run/Step/Worker、事务 Outbox、签名 API、固定运营 Profile、真实进程接管及受控回复回执；默认关闭的影子入口 | 待扩展租户策略管理、自动批准执行宿主及业务回复切换策略。B1 试点已验 |
 | PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。已接固定工单只读 MCP 客户端。B2 |
 | PR-10 Checkpoint/HITL | 工单链路已实现并本地验收，其他写操作分批 | 原子检查点和原预算恢复、访客显式提案、限时审批、一次性消费、坐席角色与来源重验、回复及建单未知写核销 | 自然语言提案和访客交互待评测；其他写操作需各自回执。B3 |
-| PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
+| PR-11 Eval/Replay/Trace | 部分实现，已接版本化离线故障门禁 | 原小样本、图轨迹、Runtime 元数据导出、单条及多案例基线回放 | 待完善跨服务 Trace、复演和真实语义质量门禁。A/D |
 | PR-12 RAG | 部分完成：证据不足、越界引用拒答 | `rag/graph.py` 的 24 项拒答与 10 项引用契约；线性及 LangGraph；文档范围、空选集、知识发布就绪过滤 | 待验证引用对事实的支持、冲突、过期及 ACL 评测，按基线选择检索改进。A6/C |
 
 Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src/main/java/io/supportflow/`；Mapper XML 位于对应服务 `src/main/resources/mapper`。
@@ -36,7 +36,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权/固定事实报告；操作专属签名许可/参数摘要与回执绑定、有效MAC跨操作拒绝、越权/假引用/假写声明负例 | 已补RAG/KB所测应用日志与已处理错误的内容排除；完整直接/间接注入集、通用PII/秘密保护、限时参数审批/防重放仍缺；无任意代码需求，暂不建Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，证据不足及越界引用拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号与租户过滤；实际引用契约进入 CI | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
 | M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime373项（含工单核销与审批测试）、客服PG139项、38项回执存储、实际只读Loop/进程恢复/五例发布/两例核销/七例知识工具和操作许可有机器证据 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
-| M07 Trace/Observability | 部分实现，Runtime 可导出受限轨迹 | Java `TraceContext`、Python 图步骤、模型调用量、既有运营 Trace 与告警；Runtime Run 和步骤的版本化元数据导出 | 待接统一查询、审批与工具可观测字段、离线评测与重演。A/B/D |
+| M07 Trace/Observability | 部分实现，Runtime 可导出并离线复核受限轨迹 | Java `TraceContext`、Python 图步骤、模型调用量、既有运营 Trace 与告警、版本化 Runtime 元数据及固定故障基线 | 待接统一查询、跨服务链路与受控模型及工具重演。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界Chat/查询Embedding与Runtime适配 | core.llm_chat单次HTTP/稳定错误/正文边界；显式租户ChatProfile、Prompt/请求Hash、MODEL原子正文/usage及预算恢复；实际协议TCP故障/进程验收；llm_gateway.py仍旧Mock占位 | 视觉/旧RAG同步Embedding、租户选择/Prompt发布/供应商权限和usage/Token金额结算治理仍缺；不造第二入口。E |
 | M09 Streaming/交互 | 部分实现 | `supportflow-realtime-service` WebSocket、消息 seq/ACK/补拉、机器人 typing | 缺持久化 Run 事件、审批/取消/恢复展示；优先复用 WebSocket。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
@@ -149,3 +149,5 @@ B2 的 PR-9/M03 已增加可选 MCP 工单只读客户端。固定工具仍复�
 E1 的 M08/M11 可按租户核查单个 Run 的已观测 Chat 和 Embedding Token 与未知用量次数。复用原子检查点与模型预留，无新增写入。合计首先用于评测和故障排查。金额对账、租户并发配额和账本保留单独验收。见 [ADR-0037](decisions/0037-runtime-observed-model-usage.md)。
 
 B3 已打通明确访客请求、提案暂停、坐席审核和独立 Worker 按原快照建单的本地链路。启用及回滚见 [ADR-0038](decisions/0038-explicit-ticket-proposal.md)。自然语言触发、访客提交入口及业务默认切换仍需独立验收。
+
+D3 将取消、模型超时、工具拒绝和写确认丢失的实际 Run 元数据与版本化基线纳入同一离线门禁。步骤独立复核预算计数，遗漏用例直接失败。当前基线覆盖工程故障和副作用约束，RAG 语义质量及模型交互还需各自评测。

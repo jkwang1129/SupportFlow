@@ -10,7 +10,7 @@ import pytest
 from ai.runtime.types import RuntimeConflict
 from ai.runtime.trace_export import _metadata
 from ai.runtime.trace_replay import replay
-from ai.runtime.worker import RuntimeWorker, TransientFailure
+from ai.runtime.worker import PermanentFailure, RuntimeWorker, TransientFailure
 from test_runtime_store_postgres import admin, request, store
 
 pytestmark = pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'), reason='requires disposable runtime PostgreSQL')
@@ -81,3 +81,45 @@ def test_replay_real_unknown_write_trace_and_detect_a_changed_outcome(store):
     report = {'schema_version': 1, 'mode': 'SYNTHETIC_FAULT_REAL_POSTGRES',
               'trace': trace, 'replay': result, 'altered_outcome_replay': changed}
     output.write_text(json.dumps(report, default=_metadata, indent=2)+'\n', encoding='utf-8')
+
+
+def test_runtime_trace_suite_runs_a_fixed_postgres_fault_matrix(store):
+    traces = {}
+    tenant = 'TENANT_A'
+    scenarios = {
+        'cancelled-before-dispatch': None,
+        'tool-denied': ('TOOL', 'READ', PermanentFailure('FIXTURE_TOOL_DENIED')),
+        'write-ack-lost': ('TOOL', 'WRITE', TransientFailure('FIXTURE_WRITE_ACK_LOST')),
+        'model-timeout': ('MODEL', 'NONE', TransientFailure('FIXTURE_MODEL_TIMEOUT', delay_seconds=30)),
+    }
+    for case, spec in scenarios.items():
+        source = request(tenant, session=case)
+        run_id = store.enqueue(source)['run_id']
+        if spec is None:
+            store.cancel(tenant, run_id)
+        else:
+            kind, effect, failure = spec
+
+            def fault():
+                raise failure
+
+            def handler(context):
+                return context.step('fixture-fault', kind, effect, {'operation': 'fixture.fault'}, fault)
+
+            row = RuntimeWorker(store, {'runtime-v1': handler}, 'fixture-fault-worker').run_once(tenant)
+            assert row['run_id'] == run_id
+        traces[case] = store.trace_snapshot(tenant, run_id)
+
+    test_root = Path(__file__).resolve().parent
+    directory = test_root.parents[1]/'.local/verification'
+    directory.mkdir(parents=True, exist_ok=True)
+    baseline = test_root/'fixtures/runtime-trace-baseline.json'
+    trace_file = directory/'runtime-trace-suite.json'
+    suite = {'schema_version': 'runtime-trace-suite-v1', 'cases': traces}
+    trace_file.write_text(json.dumps(suite, default=_metadata, indent=2)+'\n', encoding='utf-8')
+    command = [sys.executable, '-m', 'ai.runtime.trace_replay', '--suite', str(trace_file), '--expect', str(baseline)]
+    output = subprocess.run(command, cwd=test_root.parent, capture_output=True, text=True, encoding='utf-8', timeout=10)
+    assert output.returncode == 0 and output.stderr == ''
+    result = json.loads(output.stdout)
+    assert set(result['cases']) == set(scenarios) and result['passed'] is True
+    (directory/'runtime-trace-suite-result.json').write_text(json.dumps(result, indent=2)+'\n', encoding='utf-8')
