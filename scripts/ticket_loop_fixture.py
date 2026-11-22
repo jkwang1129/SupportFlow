@@ -31,13 +31,13 @@ SHADOW_TENANT = 'LP_J'
 
 
 @contextmanager
-def planner_server(scenarios,connect,mcp_secret,mcp_call):
+def planner_server(scenarios,connect,*,mcp_secret=None,mcp_call=None):
     class Handler(BaseHTTPRequestHandler):
         protocol_version='HTTP/1.1'
         def do_POST(self):
             authorization = self.headers.get('Authorization','')
             length=int(self.headers.get('Content-Length','0'))
-            if self.path=='/mcp' and authorization=='Bearer '+mcp_secret and 0<length<=2048:
+            if self.path=='/mcp' and mcp_call is not None and authorization=='Bearer '+mcp_secret and 0<length<=2048:
                 request = json.loads(self.rfile.read(length))
                 assert self.headers['Mcp-Method'] == request['method'] == 'tools/call'
                 assert self.headers['Mcp-Name'] == request['params']['name'] == 'get_ticket_status'
@@ -179,7 +179,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                 mcp_runs.append(row['run_id'])
                 return value.result() | {'tenant_code': SHADOW_TENANT}
 
-            with planner_server(scenarios,connect,mcp_key,mcp_read) as model_base:
+            with planner_server(scenarios,connect,mcp_secret=mcp_key,mcp_call=mcp_read) as model_base:
                 for index,mode in enumerate(('normal','late_status','owner_revoked','foreign_parameter','phantom_reference','fake_write_claim','model503','turn_limit','process_restart','configured_worker')):
                     tenant='LP_'+chr(ord('A')+index);session_id=15_900_001+index*10;message_id=session_id+1;customer_id=session_id+2;ticket_id=session_id+3
                     ticket_no='LOOP_'+tenant;source=RunInput(tenant,uuid4(),'LOOP_JAR_'+str(index),1,message_id,'visitor-session:'+str(session_id),'loop-'+str(index))
