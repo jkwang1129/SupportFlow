@@ -1411,3 +1411,10 @@ AI 009 为模型步骤保存独立的 Token 回执。回执与原检查点原子
 - 合成模型超时后重新执行，3 次预留中 2 次已知，合计 21 个输入 Token、7 个 Chat 输出 Token。删除两种模型的原检查点后，原 CLI 查询结果相同。故障测试在事务内观察到回执和成功状态后注入失败，提交后无回执和正文，只保留 1 次未知预留。原报告 `runtime-model-usage.json`。
 - `python scripts/test-versioned-migrations.py` 的 17 项通过，AI 008 → 009 保留原任务和检查点。`python scripts/test-schema-drift.py` 与 `python scripts/test-database-init.py` 验证六库 98 张应用表。`python scripts/test-database-restore.py` 恢复两条模拟回执并逐字段比对。原日志 `e5-model-usage-migrate.log`、`e5-model-usage-schema.log`、`e5-model-usage-init.log`、`e5-model-usage-restore.log`。
 - 普通 AI 测试 1,045 项通过、433 项条件跳过。RAG 三组门禁共 54 项通过。日志 `e5-model-usage-ai.log`。
+
+## E6 版本化价目快照与单任务费用估算（2026-11-22）
+
+为 `trace_export --run RUN_UUID --model-usage` 附加 `--price-book prices.json`，用同租户快照和精确 Profile 摘要匹配费率。使用定点算术并附上价目版本与 SHA-256。部分匹配返回已计价金额和缺口，完全缺少费率时为 `null`。旧调用方式兼容。回滚停用该选项即可。输入格式、边界与复现命令见 [ADR-0045](decisions/0045-versioned-runtime-cost-estimates.md)。
+
+- `PYTEST_ADDOPTS='-k "runtime_model_usage or runtime_trace"' python scripts/test-agent-runtime.py` 在实际 PostgreSQL 17 通过 21 项。合成模型 3 次尝试中 1 次超时。清理正文后，若仅有 Chat 费率，已知部分估算为 `0.000027000000` CNY，1 次缺费率、1 次缺用量。补齐 Embedding 费率后为 `0.000051000000` CNY，仍有 1 次缺用量。换成无匹配费率得到 `null`。外租户价目被拒绝。原报告 `runtime-cost-estimate.json`、日志 `e6-runtime-price-book-pg.log`。
+- 普通 AI 测试 1,052 项通过、434 项条件跳过，含 7 项新价目解析和精度验证。三组 RAG 门禁 54 项通过。日志 `e6-runtime-price-book-ai.log`。金额来自合成快照和实际执行过的合成供应商用量，适用于计算契约验证。

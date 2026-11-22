@@ -1,6 +1,7 @@
 """Extract and verify provider usage evidence for a durable model step."""
 from .payloads import decode
 from .types import RuntimeConflict, fingerprint
+from .usage_pricing import format_amount
 
 MODEL_OPERATIONS = ('model.chat', 'model.embedding')
 
@@ -63,21 +64,27 @@ def _step_usage(step):
     return durable
 
 
-def summarize(run, steps):
+def summarize(run, steps, *, price_book=None):
     attempts = run['model_calls']
     if attempts != len(steps) or len(steps) > 100:
         raise RuntimeConflict('Runtime model reservations are inconsistent')
     inputs, outputs = [], []
+    priced_attempts = priced_picos = 0
     try:
         for step in steps:
             tokens_in, tokens_out = _step_usage(step)
             if tokens_in is not None:
                 inputs.append(tokens_in)
+                if price_book is not None:
+                    amount = price_book.estimate_picos(step['intent_ref']['input_ref'], tokens_in, tokens_out)
+                    if amount is not None:
+                        priced_attempts += 1
+                        priced_picos += amount
             if tokens_out is not None:
                 outputs.append(tokens_out)
     except (ValueError, TypeError, KeyError, RecursionError):
         raise RuntimeConflict('Runtime model usage checkpoint is invalid') from None
-    return {
+    report = {
         'schema_version': 'runtime-model-usage-v1',
         'run_id': str(run['run_id']),
         'model_attempts_reserved': attempts,
@@ -86,3 +93,15 @@ def summarize(run, steps):
         'observed_input_tokens': sum(inputs) if inputs else None,
         'observed_chat_output_tokens': sum(outputs) if outputs else None,
     }
+    if price_book is not None:
+        report['cost_estimate'] = {
+            'schema_version': 'runtime-cost-estimate-v1',
+            'price_book_version': price_book.version,
+            'price_book_sha256': price_book.digest,
+            'currency': price_book.currency,
+            'observed_priced_amount': format_amount(priced_picos) if priced_attempts else None,
+            'priced_attempts': priced_attempts,
+            'observed_attempts_without_rate': len(inputs) - priced_attempts,
+            'attempts_without_observed_usage': attempts - len(inputs),
+        }
+    return report

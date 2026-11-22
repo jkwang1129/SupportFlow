@@ -1,5 +1,6 @@
 """Observe usage committed through the real Runtime and restricted PostgreSQL role."""
 import json
+from hashlib import sha256
 import os
 from pathlib import Path
 import subprocess
@@ -27,12 +28,12 @@ def _runner(store, handler):
     return RuntimeWorker(store, {'runtime-v1': handler}, 'usage-test-worker')
 
 
-def _export(tenant, run_id, directory):
+def _export(tenant, run_id, directory, *options):
     env = {key: os.environ[key] for key in ('PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP') if key in os.environ}
     env.update(PYTHONUTF8='1', PYTHONPATH=str(Path(__file__).resolve().parents[1]),
                SUPPORTFLOW_AI_DATABASE_URL=os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'])
     return subprocess.run([sys.executable, '-m', 'ai.runtime.trace_export', '--tenant', tenant,
-                           '--run', str(run_id), '--model-usage'], cwd=directory, env=env,
+                           '--run', str(run_id), '--model-usage', *options], cwd=directory, env=env,
                           capture_output=True, text=True, encoding='utf-8', timeout=10)
 
 
@@ -217,3 +218,74 @@ def test_runtime_model_usage_receipts_are_scoped_and_immutable(store):
                           'TRUNCATE agent_model_usage', 'ALTER TABLE agent_model_usage NO FORCE ROW LEVEL SECURITY'):
             with pytest.raises(psycopg.errors.InsufficientPrivilege), connection.transaction():
                 connection.execute(statement)
+
+
+def test_runtime_model_usage_estimates_only_observed_steps_with_an_exact_tenant_tariff(store, tmp_path):
+    source = request()
+    run_id = store.enqueue(source, Limits(max_model_calls=3))['run_id']
+    chat_configuration, embedding_configuration = profile(), embedding_profile()
+    provider_calls = []
+
+    def chat_server(_):
+        provider_calls.append('chat')
+        if len(provider_calls) == 1:
+            raise httpx.ReadTimeout('synthetic pricing fixture timeout')
+        return response(answer())
+
+    def embedding_server(_):
+        provider_calls.append('embedding')
+        return response(embedding_answer())
+
+    chat = RuntimeChatClient(chat_configuration, transport=httpx.MockTransport(chat_server))
+    embedding = RuntimeEmbeddingClient(embedding_configuration, transport=httpx.MockTransport(embedding_server))
+
+    def handler(context):
+        chat.complete(context, 'plan', MESSAGES)
+        embedding.embed(context, 'lookup', TEXT)
+        return {'outcome': 'verified'}
+
+    runner = _runner(store, handler)
+    assert runner.run_once(source.tenant)['state'] == 'RETRY_WAIT'
+    with admin() as connection:
+        connection.execute('UPDATE agent_run SET ready_at=clock_timestamp() WHERE run_id=%s', (run_id,))
+    finished = runner.run_once(source.tenant)
+    assert finished['state'] == 'SUCCEEDED'
+    with admin() as connection:
+        connection.execute('DELETE FROM agent_payload WHERE run_id=%s', (run_id,))
+
+    path = tmp_path/'prices.json'
+    chat_rate = {'input_micros_per_million': 1_000_000, 'output_micros_per_million': 2_000_000}
+    book = {'schema_version': 'runtime-price-book-v1', 'tenant': source.tenant, 'version': 'synthetic-price-v1',
+            'currency': 'CNY', 'rates': {chat_configuration.definition_hash(): chat_rate}}
+
+    def report():
+        raw = json.dumps(book).encode()
+        path.write_bytes(raw)
+        result = _export(source.tenant, run_id, tmp_path, '--price-book', str(path))
+        assert result.returncode == 0 and not result.stderr
+        usage = json.loads(result.stdout)
+        estimate = usage.pop('cost_estimate')
+        assert usage == store.model_usage(source.tenant, run_id)
+        assert estimate['price_book_sha256'] == sha256(raw).hexdigest()
+        assert estimate['price_book_version'] == book['version'] and estimate['currency'] == 'CNY'
+        assert estimate['attempts_without_observed_usage'] == 1
+        return estimate
+
+    partial = report()
+    assert (partial['priced_attempts'], partial['observed_attempts_without_rate'], partial['observed_priced_amount']) == (1, 1, '0.000027000000')
+    book['rates'][embedding_configuration.definition_hash()] = {'input_micros_per_million': 3_000_000}
+    complete = report()
+    assert (complete['priced_attempts'], complete['observed_attempts_without_rate'], complete['observed_priced_amount']) == (2, 0, '0.000051000000')
+    book['rates'] = {'c'*64: chat_rate}
+    unpriced = report()
+    assert (unpriced['priced_attempts'], unpriced['observed_attempts_without_rate'], unpriced['observed_priced_amount']) == (0, 2, None)
+
+    book['tenant'] = 'TENANT_B'
+    path.write_text(json.dumps(book), encoding='utf-8')
+    denied = _export(source.tenant, run_id, tmp_path, '--price-book', str(path))
+    assert denied.returncode == 1 and not denied.stdout and str(path) not in denied.stderr
+    assert store.get(source.tenant, run_id) == finished and provider_calls == ['chat', 'chat', 'embedding']
+    artifact = Path(__file__).resolve().parents[2]/'.local/verification/runtime-cost-estimate.json'
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(json.dumps({'mode': 'SYNTHETIC_RATES_SYNTHETIC_PROVIDER_REAL_POSTGRES',
+        'partial_rates': partial, 'rates_for_all_observations': complete, 'unmatched_rates': unpriced}, indent=2)+'\n', encoding='utf-8')

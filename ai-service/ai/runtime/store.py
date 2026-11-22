@@ -101,8 +101,10 @@ class RuntimeStore:
                 raise RuntimeConflict('Runtime trace steps are inconsistent')
             return {'schema_version': 'runtime-trace-v1', 'run': run, 'steps': steps}
 
-    def model_usage(self, tenant, run_id):
+    def model_usage(self, tenant, run_id, *, price_book=None):
         """Observe model attempts without calling the provider or altering accounting state."""
+        if price_book is not None and price_book.tenant != tenant:
+            raise ValueError('Price book targets another tenant')
         run_id = UUID(str(run_id))
         with self._scope(tenant) as connection:
             run = connection.execute("""SELECT run_id,model_calls FROM agent_run
@@ -119,7 +121,7 @@ class RuntimeStore:
                 LEFT JOIN agent_model_usage u ON u.tenant_code=s.tenant_code AND u.run_id=s.run_id AND u.step_no=s.step_no
                 WHERE s.tenant_code=%s AND s.run_id=%s AND s.kind='MODEL' ORDER BY s.step_no LIMIT 101""",
                 (tenant, run_id)).fetchall()
-        return summarize_model_usage(run, steps)
+        return summarize_model_usage(run, steps, price_book=price_book)
 
     @staticmethod
     def _confirmed_reconciliation(connection, run, operation, version, audit_table):
