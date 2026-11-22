@@ -1319,3 +1319,9 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 
 - `python scripts/test-customer-rls.py --with-ai` 的 159 项客服及 30 项知识库测试通过，新增 11 项 PostgreSQL 用例。在签名租户上下文中用实际数据库读取原文，生成期间模拟下线、索引失败、软删除及原切片内容替换。线性与 LangGraph 共 8 条变更路径全部拒答，2 条原文保持路径正常通过。额外验证租户和显式文档范围。原日志 `c4-rag-publication-pg.log`。
 - 普通 AI 测试 1,029 项通过、422 项条件跳过，其中新增数据库复核异常和日志脱敏测试。拒答 24 项、引用 10 项和配对原文 20 项门禁均通过。报告 `c4-rag-publication-contract.json`。模型是合成替身，额外数据库读取的生产延迟及整个知识生命周期仍待实测。
+
+## E4 双租户积压与并发回归（2026-11-22）
+
+`PYTEST_ADDOPTS='-k other_tenant_progresses' python scripts/test-agent-runtime.py` 在 PostgreSQL 17 通过新增剧本。A 达到 12 项积压，4 个各自领取不同任务的 Worker 被合成模型暂挂。此时新增 A 请求被拒，重复事件仍返回原 Run。为 B 单独配置的 Worker 在这段时间完成了 3 项任务，结果和预算独立。释放 A 后四个任务各消耗一次模型预留，A 保留 8 项待处理。该批只加入测试，回滚可独立回退断言，无运行期变更。
+
+原始 `runtime-tenant-burst.json` 的单次记录中，B 三项任务从登记到完成合计 1,142.568 毫秒。该时间包含本地测试进程、数据库及合成处理，用于诊断这次实验。共享 Worker 池公平性、模型配额和生产吞吐仍未覆盖。日志 `e4-runtime-tenant-burst.log`。

@@ -1,16 +1,18 @@
 """Durable worker faults and real process death, with no paid model or business effects."""
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
-from threading import Event
+from threading import Barrier, Event
 import time
 
 import pytest
 
-from ai.runtime.types import Limits, LostLease
+from ai.runtime.store import RuntimeStore
+from ai.runtime.types import Limits, LostLease, QueueFull
 from ai.runtime.worker import RuntimeWorker, TransientFailure, PermanentFailure
 from test_runtime_store_postgres import store, request, admin, expire
 
@@ -126,6 +128,62 @@ def test_worker_slot_is_bounded_and_heartbeat_preserves_lease_during_io(store):
         finally:
             release.set()
         assert future.result(timeout=10)['state'] == 'SUCCEEDED'
+
+
+def test_other_tenant_progresses_while_a_full_tenant_waits_in_four_workers(store):
+    store = RuntimeStore(store.connector, backlog_limit=12)
+    original = request(session='burst-a-0')
+    first = store.enqueue(original)
+    for index in range(1, 12):
+        store.enqueue(request(session=f'burst-a-{index}'))
+    entered, release = Barrier(5), Event()
+
+    def congested(context):
+        def model_fixture():
+            entered.wait(15)
+            assert release.wait(30)
+            return {'outcome': 'fixture-model-returned'}
+
+        return context.step('held-model', 'MODEL', 'NONE', {'operation': 'fixture.model'}, model_fixture)
+
+    def independent(context):
+        return context.step('read-fixture', 'TOOL', 'READ', {'operation': 'fixture.read'},
+                            lambda: {'outcome': 'fixture-read-completed'})
+
+    with ThreadPoolExecutor(4) as pool:
+        running = [pool.submit(worker(store, congested, tenant='TENANT_A').run_once, 'TENANT_A') for _ in range(4)]
+        try:
+            entered.wait(15)
+            with pytest.raises(QueueFull):
+                store.enqueue(request(session='over-limit'))
+            assert store.enqueue(original)['run_id'] == first['run_id']
+            assert all(not task.done() for task in running)
+            started = time.perf_counter()
+            scoped = worker(store, independent, tenant='TENANT_B')
+            for index in range(3):
+                pending = store.enqueue(request('TENANT_B', session=f'burst-b-{index}'))
+                done = scoped.run_once('TENANT_B')
+                assert done['run_id'] == pending['run_id'] and done['state'] == 'SUCCEEDED'
+                assert done['model_calls'] == 0 and done['tool_calls'] == 1
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            assert all(not task.done() for task in running)
+            assert scoped.run_once('TENANT_A') is None
+        finally:
+            release.set()
+        completed = [task.result(timeout=15) for task in running]
+
+    assert len({row['run_id'] for row in completed}) == 4
+    assert all(row['state'] == 'SUCCEEDED' and row['model_calls'] == 1 for row in completed)
+    with admin() as database:
+        a_pending = database.execute("SELECT count(*) AS n FROM agent_run WHERE tenant_code='TENANT_A' AND state='PENDING'").fetchone()['n']
+        assert a_pending == 8
+    report = {'environment': 'DISPOSABLE_POSTGRES_17_SYNTHETIC_HANDLERS', 'tenant_a_backlog_limit': 12,
+              'tenant_a_concurrent_workers_held': len(completed), 'tenant_a_pending_after_release': a_pending,
+              'tenant_a_overflow_rejected': 1, 'tenant_a_duplicate_reused': 1,
+              'tenant_b_runs_completed_while_a_blocked': 3, 'tenant_b_enqueue_plus_execution_ms': round(elapsed_ms, 3)}
+    path = Path(__file__).resolve().parents[2]/'.local/verification/runtime-tenant-burst.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
 
 
 def test_cancel_during_external_read_prevents_late_completion(store):
