@@ -43,6 +43,7 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
     private final AtomicInteger status = new AtomicInteger(200);
     private final AtomicBoolean takeoverDuringPreview = new AtomicBoolean();
     private final AtomicBoolean unmatchedActiveReference = new AtomicBoolean();
+    private final AtomicBoolean unmatchedProgressReference = new AtomicBoolean();
     private static final String PROPOSAL_TITLE = "合成提案🙂";
     private static final String PROPOSAL_BODY = "原始内容\n ";
     private UUID event;
@@ -66,9 +67,20 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
         when(roles.rolesOf(UID, "TENANT_B")).thenReturn(List.of("ADMIN"));
         server = new RuntimeReceiverStub(request -> {
             assertEquals(0, pool.getHikariPoolMXBean().getActiveConnections());
-            var node = JSON.readTree(request.body());
             assertEquals(List.of("TENANT_A"), request.headers().get("X-Tenant-Code"));
             assertNull(request.headers().get("Authorization"));
+            if (request.method().equals("GET")) {
+                assertTrue(request.rawPath().endsWith("/runs/" + run));
+                assertEquals(0, request.body().length);
+                if (status.get() != 200) return new RuntimeReceiverStub.Reply(status.get(), "synthetic private upstream failure");
+                if (takeoverDuringPreview.get()) scoped(() -> jdbc.update("UPDATE session SET agent_id=99 WHERE id=?", sessionId));
+                return new RuntimeReceiverStub.Reply(200, JSON.writeValueAsString(Map.of(
+                        "tenant_code", "TENANT_A", "run_id", run.toString(), "source_event_id",
+                        (unmatchedProgressReference.get() ? UUID.randomUUID() : event).toString(),
+                        "state", "FAILED", "attempt", 2, "step_count", 6, "model_calls", 0, "tool_calls", 4,
+                        "retry_count", 1, "error_code", "FIXTURE_PRIVATE_FAILURE")));
+            }
+            var node = JSON.readTree(request.body());
             if (request.rawPath().endsWith("/ticket-approval-active")) {
                 assertEquals(JSON.valueToTree(Map.of("session_no", sessionNo)), node);
                 if (status.get() != 200) return new RuntimeReceiverStub.Reply(status.get(), "synthetic private upstream failure");
@@ -117,6 +129,11 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
         return LoginUserContext.bind(user == null ? AuthState.anonymous() : AuthState.ok(user), () ->
                 mvc.perform(get("/api/customer/agent-approvals/sessions/" + sessionNo + "/active")
                         .header("X-Tenant-Code", "FORGED")).andReturn());
+    }
+
+    private MvcResult progress(LoginUser user) throws Exception {
+        return LoginUserContext.bind(user == null ? AuthState.anonymous() : AuthState.ok(user), () ->
+                mvc.perform(get(path.replace("/decisions", "/progress")).header("X-Tenant-Code", "FORGED")).andReturn());
     }
 
     @AfterEach @Override void cleanup() {
@@ -219,6 +236,37 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
         assertEquals("no-store", response.getHeader("Cache-Control"));
         assertFalse(response.getContentAsString().contains(PROPOSAL_BODY));
         assertEquals(1, server.calls.get());
+        assertNull(server.failure.get());
+    }
+
+    @Test void progressReturnsOnlySafeFieldsForTheCurrentReviewer() throws Exception {
+        var response = progress(ADMIN).getResponse();
+        assertEquals(200, response.getStatus());
+        assertEquals("no-store", response.getHeader("Cache-Control"));
+        assertEquals(JSON.valueToTree(Map.of("state", "FAILED", "attempt", 2, "step_count", 6)),
+                JSON.readTree(response.getContentAsByteArray()).get("data"));
+        assertFalse(response.getContentAsString().contains("FIXTURE_PRIVATE_FAILURE"));
+        assertEquals(1, server.calls.get());
+        assertNull(server.failure.get());
+    }
+
+    @Test void wrongTenantAndRoleAreRefusedBeforeProgressFetch() throws Exception {
+        assertEquals(401, progress(null).getResponse().getStatus());
+        assertEquals(404, progress(new LoginUser(UID, "U_1", "Other tenant", 2, "TENANT_B")).getResponse().getStatus());
+        when(roles.rolesOf(UID, "TENANT_A")).thenReturn(List.of("AGENT"));
+        assertEquals(403, progress(ADMIN).getResponse().getStatus());
+        assertEquals(0, server.calls.get());
+    }
+
+    @Test void unmatchedResponseAndConcurrentTakeoverSuppressProgress() throws Exception {
+        unmatchedProgressReference.set(true);
+        assertEquals(503, progress(ADMIN).getResponse().getStatus());
+        unmatchedProgressReference.set(false);
+        takeoverDuringPreview.set(true);
+        var response = progress(ADMIN).getResponse();
+        assertEquals(404, response.getStatus());
+        assertFalse(response.getContentAsString().contains("FAILED"));
+        assertEquals(2, server.calls.get());
         assertNull(server.failure.get());
     }
 

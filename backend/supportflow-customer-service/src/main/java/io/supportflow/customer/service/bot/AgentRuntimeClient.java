@@ -29,6 +29,7 @@ import java.util.concurrent.TimeoutException;
 public final class AgentRuntimeClient implements AutoCloseable {
     public record Receipt(UUID eventId, UUID runId) { }
     public record ApprovalReference(UUID eventId, UUID runId, String status, Instant expiresAt) { }
+    public record RunProgress(String state, int attempt, int stepCount) { }
     public static final class DeliveryFailure extends RuntimeException {
         private final boolean retryable;
         DeliveryFailure(boolean retryable, String code) { super(code); this.retryable = retryable; }
@@ -166,6 +167,27 @@ public final class AgentRuntimeClient implements AutoCloseable {
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_QUEUE_RESULT"); }
     }
 
+    public RunProgress approvalProgress(AgentSourceSnapshots.Snapshot source) {
+        if (source == null) throw new IllegalArgumentException("Verified progress source required");
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Progress lookup must run outside the business transaction");
+        URI uri = URI.create(endpoint + "/" + source.runId());
+        var response = exchange(AgentRuntimeProtocol.request(uri, "GET", source.tenant(), new byte[0], secret), "APPROVAL_PROGRESS");
+        int code = response.statusCode();
+        if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, "APPROVAL_PROGRESS_HTTP_" + code);
+        if (!hasPlainJsonBody(response)) throw new DeliveryFailure(false, "INVALID_APPROVAL_PROGRESS");
+        try {
+            JsonNode json = mapper.readTree(response.body());
+            if (json == null || !json.isObject() || json.size() != 10 || !json.has("model_calls") || !json.has("tool_calls")
+                    || !json.has("retry_count") || !json.has("error_code") || !source.tenant().equals(text(json, "tenant_code"))
+                    || !source.eventId().equals(uuid(json, "source_event_id")) || !source.runId().equals(uuid(json, "run_id")))
+                throw new IllegalArgumentException();
+            String state = text(json, "state");
+            if (!STATES.contains(state)) throw new IllegalArgumentException();
+            return new RunProgress(state, count(json, "attempt", Integer.MAX_VALUE), count(json, "step_count", 100));
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_PROGRESS"); }
+    }
+
     private AgentActionPermit authorize(AgentActionPermit.Request action,AgentActionPermit.Operation expectedOperation) {
         if (action == null || action.operation()!=expectedOperation) throw new IllegalArgumentException("Matching action reference is required");
         if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
@@ -230,6 +252,13 @@ public final class AgentRuntimeClient implements AutoCloseable {
         UUID parsed = UUID.fromString(raw);
         if (!parsed.toString().equals(raw)) throw new IllegalArgumentException();
         return parsed;
+    }
+
+    private static int count(JsonNode node, String key, int maximum) {
+        JsonNode value = node.path(key);
+        if (!value.isIntegralNumber() || !value.canConvertToInt() || value.intValue() < 0 || value.intValue() > maximum)
+            throw new IllegalArgumentException();
+        return value.intValue();
     }
 
     @Override public void close() { client.shutdownNow(); }

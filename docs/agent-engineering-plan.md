@@ -38,7 +38,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M06 Evaluation | 部分实现，契约与工程故障门禁 | RAG 拒答、引用及配对原文契约，4 类故障轨迹基线，真实服务的恢复、审批、发布、写作业和回执测试 | 真实模型质量、业务事实评分、盲测和工具受控重演待补。自动判分需用人工标注校准。A/D |
 | M07 Trace/Observability | 部分实现，Runtime 可导出并离线复核受限轨迹 | Java `TraceContext`、Python 图步骤、模型调用量、既有运营 Trace 与告警、版本化 Runtime 元数据及固定故障基线 | 待接统一查询、跨服务链路与受控模型及工具重演。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界Chat/查询Embedding与Runtime适配 | core.llm_chat单次HTTP/稳定错误/正文边界；显式租户ChatProfile、Prompt/请求Hash、MODEL原子正文/usage及预算恢复；实际协议TCP故障/进程验收；llm_gateway.py仍旧Mock占位 | 视觉/旧RAG同步Embedding、租户选择/Prompt发布/供应商权限和usage/Token金额结算治理仍缺；不造第二入口。E |
-| M09 Streaming/交互 | 部分实现 | `supportflow-realtime-service` WebSocket、消息 seq/ACK/补拉、机器人 typing | 缺持久化 Run 事件、审批/取消/恢复展示；优先复用 WebSocket。依赖 B、M07。E |
+| M09 Streaming/交互 | 部分实现 | 既有 WebSocket、消息 seq/ACK/补拉、坐席审批、事件和任务绑定的进度查询 | 任务事件推送、断线续传和用户取消还需验证。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
 | M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、`llm_usage.py` 实际 usage 与价格估算、计费日聚合；运营 `TenantCostBudget`、`ObservabilityService#costGuard/evaluate` 和客服 `CostGuardClient` 已有月预算告警/降级/暂停 | 复用既有预算配置；当前闸门缓存 60 秒且读取失败放行，不能当硬额度。已有跨Worker租约/fencing、Run调用/步骤/重试计数预算和租户积压上限；仍缺Token/费用并发预留结算和跨进程租户配额/公平性；计费去重 A4，运行预算随 M01，完整隔离压测 E。费用估算不是账单。B/E |
 | M12 Production Operations | 部分实现，六库备份恢复已本地演练 | Compose、CI、新旧库验收、迁移清单、受限凭据、两个 PostgreSQL 17 集群的六库恢复 | 生产部署、跨库一致性策略、WAL、对象存储恢复和 SLO 演练待验收。A5/E |
@@ -157,3 +157,5 @@ E2 完成 PostgreSQL 17 独立集群六库恢复，校验迁移历史、当前�
 C3 提供默认关闭的 RAG 原文核查。十个配对合成输出验证了具体拒答收益和正确转述损失。两种编排均纳入 CI，语义相关性、时效和生产数据仍单独验收。见 [ADR-0040](decisions/0040-rag-extractive-claims.md)。
 
 B3 补齐由签名访客消息和原事务 Outbox 入站的本地正例。重复消息只登记一次，提案和批准依赖独立进程，等待阶段未写工单。两条接管和过期负例继续保留。
+
+E3 为当前授权的审核员提供对应会话任务的状态、轮次和步骤数，复用已有 Runtime 查询及权限。真实服务对照等待审批与执行后终态。见 [ADR-0041](decisions/0041-authenticated-runtime-progress.md)。

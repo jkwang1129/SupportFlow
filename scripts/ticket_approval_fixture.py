@@ -85,6 +85,18 @@ def _review_path(base, source, run):
     return base + f'/api/customer/agent-approvals/events/{source.source_event_id}/runs/{run}'
 
 
+def _assert_progress(base, key, source, run, facts):
+    path = _review_path(base, source, run) + '/progress'
+    admin = {'Authorization': _fixture_token(key, source.tenant, 123)}
+    agent = {'Authorization': _fixture_token(key, source.tenant, 124)}
+    with httpx.Client(trust_env=False, timeout=3) as client:
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers=agent).status_code == 403
+        response = client.get(path, headers=admin)
+        assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+        assert response.json()['data'] == {name: facts[name] for name in ('state', 'attempt', 'step_count')}
+
+
 def _staff_review(client, base, key, source, run, row, title, content):
     auth = {'Authorization': _fixture_token(key, source.tenant, 123)}
     agent = {'Authorization': _fixture_token(key, source.tenant, 124)}
@@ -176,6 +188,8 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         assert store.claim_next(tenant, 'must-wait') is None
         assert not any(step['effect'] == 'WRITE' for step in store.steps(tenant, run))
         assert asyncio.run(tickets.receipt(source, run)) is None
+        if signed_admission:
+            _assert_progress(base, jwt_key, source, run, waiting)
         with httpx.Client(trust_env=False, follow_redirects=False, timeout=3) as client:
             _staff_review(client, base, jwt_key, source, run, row, approved_title, approved_body)
         assert approvals.get(tenant, run)['decided_by'] == 'staff:123'
@@ -219,6 +233,7 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             assert len(writes) == 1 and writes[0]['state'] == 'SUCCEEDED' and audit['consumed_step_no'] == writes[0]['step_no']
             assert facts == [(receipt.ticket_id, receipt.ticket_no, approved_title, approved_body, session_id)] and events == 1
             assert (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count']) == (7, 4, 0, 0)
+            _assert_progress(base, jwt_key, source, run, result)
         else:
             expected_error = 'SOURCE_REVOKED' if mode == 'taken_over_after_approval' else 'APPROVAL_EXPIRED'
             assert result['state'] == 'FAILED' and result['error_code'] == expected_error
@@ -226,10 +241,11 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             assert audit['consumed_step_no'] is None
         observations.append(dict(case=mode, source_enrollment='SIGNED_VISITOR_APPEND' if signed_admission else 'SYNTHETIC_STORED_EVENT',
             waiting_state=waiting['state'], before_review_writes=0, final_state=result['state'], error_code=result['error_code'],
-            approval_status=audit['status'], steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
+            approval_status=audit['status'], progress_checks=2 if signed_admission else 0,
+            steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=int(receipt is not None), events=events))
     artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v8', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v9', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
     print('Signed visitor append -> Outbox -> proposal worker -> authenticated staff review -> approval-only worker: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
           'duplicate approval preserved, one approved ticket/receipt, zero writes after takeover or expiry', flush=True)

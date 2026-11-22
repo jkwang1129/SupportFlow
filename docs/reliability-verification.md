@@ -1298,3 +1298,10 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 `PYTEST_ADDOPTS='-k "ticket_loop or runtime_approval_review"' python scripts/test-agent-runtime.py --with-java-delivery` 通过 37 项 PostgreSQL 定向测试。三条实际审批路径也全部通过，正例由真实签名访客消息入站。匿名被拒，重复提交同一消息只形成 1 条消息、1 项 Outbox 和 1 个 Run。提案批准前写入为 0。批准后独立 Worker 产生 1 张工单、1 条工单事件和 1 条回执，重复运行无新增，模型调用为 0。
 
 接管和过期仍用合成来源事件分别模拟，业务写入均为 0。报告 `runtime-ticket-approval.json` v8，日志 `b3-signed-visitor-approval.log`。此批只升级集成验收夹具，不修改运行代码和部署开关。需要回滚时回退验收夹具即可。
+
+## E3 坐席任务进度查询（2026-11-22）
+
+客服按指定事件和 Run 查询审批任务。现有审核角色和来源权限在读取前核验，返回前再次核对当前会话。响应只含状态、轮数和步骤数，设置 `Cache-Control: no-store`。设计和回滚见 [ADR-0041](decisions/0041-authenticated-runtime-progress.md)。
+
+- `python scripts/test-customer-rls.py --with-ai` 的 159 项客服 PostgreSQL 测试和 19 项知识库测试通过。新增三项覆盖安全投影、匿名/外租户/普通坐席拒绝、错误上游引用及查询中途的真实接管。独立 AI 签名状态及跨租户取消定向用例 1 项通过。日志 `e3-runtime-status-java-pg.log`、`e3-runtime-status-ai.log`。
+- `PYTEST_ADDOPTS='-k "ticket_loop or runtime_approval_review or cross_tenant_status_cancel"' python scripts/test-agent-runtime.py --with-java-delivery` 的 38 项定向测试和 3 条实际审批链路通过。签名访客正例实际读取待审批及执行完成两个状态，分别校验与受限 PostgreSQL 一致，并在两个时点验证匿名及普通坐席拒绝。记录在 `runtime-ticket-approval.json` v9 和 `e3-runtime-status-service.log`。
