@@ -1426,3 +1426,11 @@ AI 010 为租户提供可选的活跃模型步骤上限。PostgreSQL 在同一�
 - 使用 `PYTEST_ADDOPTS='-k "runtime_model_quota or knowledge_tools_postgres or runtime_worker or runtime_model_usage"' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 通过 64 项。两个 Worker 争抢一个名额，等待者消耗 0 次模型调用、0 次故障重试。另租户独立完成，名额归还后等待者成功恢复。实际子进程在预留后退出，接管将原步骤标记为 `UNKNOWN`，过期 Worker 无法写回。取消、零额度和截止时间、嵌套 Embedding 再核权、外租户隔离和只读配置权限均覆盖。原日志 `e7-quota-pg.log` 和报告 `runtime-model-concurrency.json`。
 - `python scripts/test-versioned-migrations.py` 的 17 项通过。AI 009 → 010 保留现有 Runtime 记录并新增配额表和索引。`python scripts/test-database-init.py` 和 `python scripts/test-schema-drift.py` 验证六库 99 张应用表。`python scripts/test-database-restore.py` 恢复两条配额和两条用量回执，受限角色按租户读取。原日志 `e7-quota-upgrade.log`、`e7-quota-init.log`、`e7-quota-drift.log`、`e7-quota-restore.log`。
 - 普通 AI 测试 1,052 项通过、439 项条件跳过，三组 RAG 门禁 54 项通过。原日志 `e7-quota-ai.log`。
+
+## E8 租户每日模型 Token 额度（2026-11-22）
+
+AI 011 新增每日预留记录，沿用并发配额的 PostgreSQL 租户锁。Run 计数、模型步骤和预留原子提交。用量回执替代该步骤的预留数，无回执始终按原预留数计算到 UTC 日界线。启用、回滚和已报告用量超过预留时的行为见 [ADR-0047](decisions/0047-tenant-daily-token-budget.md)。
+
+- `PYTEST_ADDOPTS='-k "runtime_model_token_budget or runtime_model_quota or knowledge_tools_postgres or runtime_model_usage"' python scripts/test-agent-runtime.py` 在实际隔离 PostgreSQL 17 通过 41 项。样本中租户日额度 16、每调用预留 12，两路同租户只有一路到达合成模型，另一路以 `MODEL_TOKEN_QUOTA_EXCEEDED` 结束，新增调用、步骤及故障重试均为 0。另租户在同一时间内完成。首路已知用量结算为 4，清理正文后新任务仍可预留到 16，随后请求受阻。超时、缺用量、取消、前一 UTC 日记录、实际用量超过预留、跨租户权限以及嵌套 Embedding 拒绝均覆盖。原日志 `e8-token-pg.log`。
+- `python scripts/test-versioned-migrations.py` 的 17 项通过，AI 010 → 011 保留旧并发额度和 Runtime 记录。初次初始化及结构漂移验收通过，覆盖六库的 100 张应用表。六库恢复比对两条 Token 预留、两条用量回执与两条配置，并按受限身份复核隔离。原日志 `e8-token-upgrade.log`、`e8-token-init.log`、`e8-token-drift.log`、`e8-token-restore.log`。
+- 普通 AI 测试 1,052 项通过、446 项按环境条件跳过。测试供应商为合成响应。保留进一步实测生产负载、每模型预留值及账单对账的边界。原日志 `e8-token-ai.log`。

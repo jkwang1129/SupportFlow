@@ -10,7 +10,8 @@ from psycopg.types.json import Jsonb
 
 from ..core.db import connect
 from .types import (RunInput, Limits, Lease, tenant_code, identifier, fingerprint, reference,
-                    RuntimeConflict, LostLease, BudgetExceeded, ModelCapacityBusy, QueueFull, ActionDenied)
+                    RuntimeConflict, LostLease, BudgetExceeded, ModelCapacityBusy, ModelTokenQuotaExceeded,
+                    QueueFull, ActionDenied)
 from .payloads import SCHEMAS,StepPayload,encode as encode_payload,decode as decode_payload
 from .model_usage import MODEL_OPERATIONS, payload_usage, summarize as summarize_model_usage
 
@@ -394,18 +395,34 @@ class RuntimeStore:
                         snapshot_id=str(snapshot_id),arguments_sha256=arguments_hash,expires_at_ms=int(expires.timestamp()*1000))
 
     @staticmethod
-    def _check_model_capacity(connection, tenant):
-        # Acquire the transaction lock before taking the snapshot used to count steps.
+    def _lock_model_budget(connection, tenant):
         connection.execute("SELECT pg_advisory_xact_lock(hashtextextended('supportflow:model-capacity:' || %s,0))", (tenant,))
-        quota = connection.execute('SELECT max_active_steps FROM agent_model_quota WHERE tenant_code=%s', (tenant,)).fetchone()
+
+    @staticmethod
+    def _check_model_capacity(connection, tenant):
+        # Lock before reading both active steps and the daily Token ledger.
+        RuntimeStore._lock_model_budget(connection, tenant)
+        quota = connection.execute('''SELECT max_active_steps,daily_token_limit,tokens_per_attempt
+            FROM agent_model_quota WHERE tenant_code=%s''', (tenant,)).fetchone()
         if quota is None:
-            return
+            return None
         limit = quota['max_active_steps']
         active = connection.execute("""SELECT count(*) AS count FROM (
             SELECT 1 FROM agent_step WHERE tenant_code=%s AND kind='MODEL' AND state='RESERVED' LIMIT %s
             ) AS active_steps""", (tenant, limit)).fetchone()['count']
         if active >= limit:
             raise ModelCapacityBusy('Tenant model capacity is full')
+        if quota['daily_token_limit'] is None:
+            return None
+        budget_day = connection.execute("SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date AS day").fetchone()['day']
+        charged = connection.execute('''SELECT coalesce(sum(coalesce(
+            u.input_tokens::numeric + coalesce(u.chat_output_tokens,0),r.reserved_tokens)),0) AS tokens
+            FROM agent_model_token_reservation r LEFT JOIN agent_model_usage u USING(tenant_code,run_id,step_no)
+            WHERE r.tenant_code=%s AND r.budget_day=%s''', (tenant, budget_day)).fetchone()['tokens']
+        allowance = quota['tokens_per_attempt']
+        if charged + allowance > quota['daily_token_limit']:
+            raise ModelTokenQuotaExceeded('Tenant daily model Token allowance is exhausted')
+        return budget_day, allowance
 
     def reserve_step(self, lease: Lease, step_key, kind, effect, intent_ref):
         identifier(step_key)
@@ -442,8 +459,9 @@ class RuntimeStore:
                 self._terminal(connection,run,'FAILED','SIDE_EFFECT_UNKNOWN' if self._unknown_write(connection,run) else 'BUDGET_EXHAUSTED')
                 exhausted = True
             else:
+                token_reservation = None
                 if kind == 'MODEL':
-                    self._check_model_capacity(connection, lease.tenant)
+                    token_reservation = self._check_model_capacity(connection, lease.tenant)
                     self._owned(connection, lease)  # Capacity locking may have waited past the lease deadline.
                 updated = connection.execute("""UPDATE agent_run SET step_count=step_count+1,
                     model_calls=model_calls+%s,tool_calls=tool_calls+%s,updated_at=clock_timestamp()
@@ -452,6 +470,10 @@ class RuntimeStore:
                 step = connection.execute("""INSERT INTO agent_step(tenant_code,run_id,step_no,step_key,kind,effect,intent_hash,intent_ref,fence)
                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                     (lease.tenant,lease.run_id,updated['step_count'],step_key,kind,effect,digest,Jsonb(intent_ref),lease.fence)).fetchone()
+                if token_reservation is not None:
+                    connection.execute('''INSERT INTO agent_model_token_reservation
+                        (tenant_code,run_id,step_no,budget_day,reserved_tokens) VALUES(%s,%s,%s,%s,%s)''',
+                        (lease.tenant, lease.run_id, step['step_no'], *token_reservation))
                 if approval is not None:
                     outcome = connection.execute("""UPDATE agent_approval SET status='CONSUMED',consumed_step_no=%s,
                         consumed_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s AND expires_at>clock_timestamp()""",
@@ -466,7 +488,7 @@ class RuntimeStore:
     def complete_payload_step(self,lease: Lease,step_key,schema,value):
         identifier(step_key)
         raw,digest=encode_payload(schema,value)
-        with self._scope(lease.tenant) as connection:
+        with self._scope(lease.tenant, read_committed=(schema == 'model-output-v1')) as connection:
             self._owned(connection,lease)
             step=connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s AND step_key=%s FOR UPDATE',
                                    (lease.tenant,lease.run_id,step_key)).fetchone()
@@ -482,16 +504,23 @@ class RuntimeStore:
                     raise RuntimeConflict('Persisted step payload changed')
                 return result
             if step['state']!='RESERVED': raise RuntimeConflict('Payload step is not reserved')
+            input_tokens = output_tokens = None
+            if schema == 'model-output-v1' and step['intent_ref'].get('operation') in MODEL_OPERATIONS:
+                input_tokens, output_tokens = payload_usage(step['intent_ref'], json.loads(raw))
+                if input_tokens is not None and connection.execute('''SELECT 1 FROM agent_model_token_reservation
+                    WHERE tenant_code=%s AND run_id=%s AND step_no=%s''',
+                    (lease.tenant,lease.run_id,step['step_no'])).fetchone():
+                    # Publishing a receipt can decrease or increase this day's charge.
+                    self._lock_model_budget(connection, lease.tenant)
+                    self._owned(connection, lease)
             payload_id=uuid4();result={'resource_ref':'payload:'+str(payload_id)}
             connection.execute('''INSERT INTO agent_payload(tenant_code,payload_id,run_id,step_no,fence,payload_schema,payload_json,payload_hash)
                 VALUES(%s,%s,%s,%s,%s,%s,%s,%s)''',(lease.tenant,payload_id,lease.run_id,step['step_no'],lease.fence,schema,raw,digest))
-            if schema == 'model-output-v1' and step['intent_ref'].get('operation') in MODEL_OPERATIONS:
-                input_tokens, output_tokens = payload_usage(step['intent_ref'], json.loads(raw))
-                if input_tokens is not None:
-                    connection.execute("""INSERT INTO agent_model_usage
-                        (tenant_code,run_id,step_no,fence,intent_hash,payload_id,payload_hash,input_tokens,chat_output_tokens)
-                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (lease.tenant, lease.run_id, step['step_no'],
-                        lease.fence, step['intent_hash'], payload_id, digest, input_tokens, output_tokens))
+            if input_tokens is not None:
+                connection.execute("""INSERT INTO agent_model_usage
+                    (tenant_code,run_id,step_no,fence,intent_hash,payload_id,payload_hash,input_tokens,chat_output_tokens)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (lease.tenant, lease.run_id, step['step_no'],
+                    lease.fence, step['intent_hash'], payload_id, digest, input_tokens, output_tokens))
             connection.execute("""UPDATE agent_step SET state='SUCCEEDED',result_ref=%s,completed_at=clock_timestamp()
                 WHERE tenant_code=%s AND run_id=%s AND step_no=%s""",(Jsonb(result),lease.tenant,lease.run_id,step['step_no']))
             self._owned(connection,lease)

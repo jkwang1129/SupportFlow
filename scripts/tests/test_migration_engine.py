@@ -25,7 +25,7 @@ class MigrationParserTest(unittest.TestCase):
         self.assertEqual(["001","002","003","004","005","006","007","008","009"],[m.version for m in plans["customer_db"]])
         self.assertEqual(["001"],[m.version for m in plans["billing_db"]])
         for database in ("ai_db", "user_db", "tenant_db", "ops_db"):
-            self.assertEqual(["001","002","003","004","005","006","007","008","009","010"] if database=='ai_db' else ["001"], [m.version for m in plans[database]])
+            self.assertEqual(["001","002","003","004","005","006","007","008","009","010","011"] if database=='ai_db' else ["001"], [m.version for m in plans[database]])
             self.assertEqual("baseline", plans[database][0].kind)
         for plan in plans.values():
             for migration in plan:

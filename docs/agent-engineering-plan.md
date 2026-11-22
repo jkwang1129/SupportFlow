@@ -40,7 +40,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M08 Model Gateway/Prompt | 部分实现：共用有界 Chat/查询 Embedding 与 Runtime 适配 | 单次 HTTP、稳定错误、显式租户 Profile、Prompt/请求摘要、MODEL 检查点和持久化 Token 回执、实际协议故障与恢复 | 视觉和旧 RAG 同步 Embedding、租户选择、Prompt 发布、供应商权限和金额结算待验收。E |
 | M09 Streaming/交互 | 部分实现 | 既有 WebSocket、消息 seq/ACK/补拉、坐席审批、事件和任务绑定的进度查询与显示 | 任务事件推送、断线续传和用户取消还需验证。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
-| M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、`llm_usage.py` 实际 usage 与价格估算、计费日聚合；运营 `TenantCostBudget`、`ObservabilityService#costGuard/evaluate` 和客服 `CostGuardClient` 已有月预算告警/降级/暂停 | 复用既有预算配置；当前闸门缓存 60 秒且读取失败放行，不能当硬额度。已有跨Worker租约/fencing、Run调用/步骤/重试计数预算和租户积压上限；仍缺Token/费用并发预留结算和跨进程租户配额/公平性；计费去重 A4，运行预算随 M01，完整隔离压测 E。费用估算不是账单。B/E |
+| M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、计费日聚合与月预算告警/降级/暂停；Runtime 有跨 Worker 租约、Run 预算、租户积压上限、模型并发额度、每日 Token 预留与回执结算 | 旧客服月预算读取仍有 60 秒缓存和失败放行；金额预留、月度 Token 上限、真实账单对账与生产并发容量待验收。计费去重 A4，运行预算随 M01。B/E |
 | M12 Production Operations | 部分实现，六库备份恢复已本地演练 | Compose、CI、新旧库验收、迁移清单、受限凭据、两个 PostgreSQL 17 集群的六库恢复 | 生产部署、跨库一致性策略、WAL、对象存储恢复和 SLO 演练待验收。A5/E |
 
 ## 分阶段计划与退出条件
@@ -189,3 +189,5 @@ E5 将模型步骤的已知 Token 保存为独立回执，在正文检查点过�
 E6 提供按显式价目快照核查单个任务已知用量的费用估算。记录费率版本与文件摘要，分别列出已计价、缺费率和缺用量的调用。沿用原模型回执和租户权限。租户硬额度、价格发布与真实账单对账单独验收。见 [ADR-0045](decisions/0045-versioned-runtime-cost-estimates.md)。
 
 E7 为租户增加数据库模型并发配额，预留、Run 调用计数和步骤创建原子提交。达到上限时短暂重新排队，既有截止时间继续有效。真实 Token 与金额预留、日月用量上限和生产调度容量继续独立验收。见 [ADR-0046](decisions/0046-tenant-model-concurrency.md)。
+
+E8 新增可选的 UTC 每日 Token 额度，Chat 和 Embedding 按租户共用预留，已知用量按持久回执结算，未知占用保留至当日结束。原 Run 预算及并发上限继续生效。待完善月度额度、按模型预留估计、金额和账单对账。配置与回滚见 [ADR-0047](decisions/0047-tenant-daily-token-budget.md)。

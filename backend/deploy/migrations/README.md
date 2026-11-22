@@ -129,3 +129,7 @@ ReplyReconciler为显式可信宿主控制面，无公开路由/自动轮询/模
 ## AI 010 租户模型并发配额
 
 010 增加租户配额表以及用于统计活跃模型步骤的部分索引。Runtime 验证表结构和只读权限。配额表初始为空，可在迁移、权限配置和 Worker 升级后按租户启用。配置命令及停用方式见 [ADR-0046](../../../docs/decisions/0046-tenant-model-concurrency.md)。
+
+## AI 011 租户每日模型 Token 额度
+
+011 保留既有并发配额，增加默认留空的每日 Token 策略及按租户隔离的预留表。预留表只授予 Runtime 查询与追加，用量结算复用 009 的回执。升级依次执行 migrate、provision、verify，待目标租户的 Worker 全部升级后再配置。停用参数和回滚方式见 [ADR-0047](../../../docs/decisions/0047-tenant-daily-token-budget.md)。

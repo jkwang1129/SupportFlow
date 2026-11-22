@@ -94,4 +94,5 @@ class ActionDenied(RuntimeConflict): pass
 class LostLease(RuntimeError): pass
 class BudgetExceeded(RuntimeError): pass
 class ModelCapacityBusy(RuntimeError): pass
+class ModelTokenQuotaExceeded(RuntimeError): pass
 class QueueFull(RuntimeError): pass

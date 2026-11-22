@@ -187,7 +187,7 @@ def main():
                     assert upgrade008['applied']==['008'] and read()==before and read_kb()==before_kb
                     read_ticket=existing_ticket(connection);before_ticket=read_ticket()
                 if database=='ai_db':
-                    assert [m.version for m in plan]==['001','002','003','004','005','006','007','008','009','010']
+                    assert [m.version for m in plan]==['001','002','003','004','005','006','007','008','009','010','011']
                     applied=run_plan(connection,plan[:2])["applied"]
                     read_ai=existing_ai_step(dsn(database));before_ai=read_ai()
                     applied+=run_plan(connection,plan[:3])['applied']
@@ -223,6 +223,12 @@ def main():
                     assert read_approval()==before_approval
                     assert connection.execute('SELECT count(*) FROM agent_model_usage').fetchone()==(0,)
                     print('AI 008 -> 009 preserved existing runtime data and created an empty usage receipt table',flush=True)
+                    upgrade010=run_plan(connection,plan[:10]);applied+=upgrade010['applied']
+                    assert upgrade010['applied']==['010'] and read_ai()==before_ai
+                    assert connection.execute('SELECT count(*) FROM agent_model_quota').fetchone()==(0,)
+                    assert connection.execute("SELECT indisvalid FROM pg_index WHERE indexrelid='public.agent_step_active_model_quota_idx'::regclass").fetchone()==(True,)
+                    connection.execute("INSERT INTO agent_model_quota(tenant_code,max_active_steps) VALUES('PAYLOAD_UP',4)")
+                    print('AI 009 -> 010 preserved existing runtime data and added the quota table and active-step index',flush=True)
                 result=run_plan(connection,plan)
                 assert applied+result["applied"]==[migration.version for migration in plan]
                 if database=='customer_db':
@@ -243,11 +249,12 @@ def main():
                     print('007 -> 008 preserved existing business/source/draft/chunk data; granted only index_status SELECT; 3 unsafe capability states rejected',flush=True)
                     print('008 -> 009 preserved every existing ticket/source/message/knowledge field; immutable ticket receipt initially empty; old global ticket PK retained',flush=True)
                 if database=='ai_db':
-                    assert result['applied']==['010'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
+                    assert result['applied']==['011'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
                     assert read_approval()==before_approval
-                    assert connection.execute('SELECT count(*) FROM agent_model_quota').fetchone()==(0,)
-                    assert connection.execute("SELECT indisvalid FROM pg_index WHERE indexrelid='public.agent_step_active_model_quota_idx'::regclass").fetchone()==(True,)
-                    print('AI 009 -> 010 preserved existing runtime data and added the quota table and active-step index',flush=True)
+                    assert connection.execute('SELECT * FROM agent_model_quota').fetchone()==('PAYLOAD_UP',4,None,None)
+                    assert connection.execute('SELECT count(*) FROM agent_model_token_reservation').fetchone()==(0,)
+                    assert connection.execute("SELECT indisvalid FROM pg_index WHERE indexrelid='public.agent_model_token_reservation_day_idx'::regclass").fetchone()==(True,)
+                    print('AI 010 -> 011 kept prior quotas and runtime records; daily Token policy remains disabled',flush=True)
                 assert run_plan(connection,plan)["applied"]==[]
                 run_plan(connection,plan,verify=True)
         runtime_password=secrets.token_hex(24)

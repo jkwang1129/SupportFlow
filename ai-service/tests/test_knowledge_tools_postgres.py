@@ -70,7 +70,7 @@ def test_no_free_live_refresh_after_tool_budget_is_exhausted(store):
 
 def test_nested_embedding_waits_for_tenant_model_quota_then_rechecks_source(store):
     with admin() as db:
-        db.execute("INSERT INTO agent_model_quota VALUES ('TENANT_A',1)")
+        db.execute("INSERT INTO agent_model_quota(tenant_code,max_active_steps) VALUES ('TENANT_A',1)")
     store.enqueue(request(session='holding-chat'))
     holder = acquire(store)
     store.reserve_step(holder, 'model', 'MODEL', 'NONE', {'operation': 'model.chat'})
@@ -88,6 +88,25 @@ def test_nested_embedding_waits_for_tenant_model_quota_then_rechecks_source(stor
     resumed = next_ready(executor)
     assert (resumed['state'], resumed['model_calls'], resumed['retry_count'], resumed['tool_calls']) == ('SUCCEEDED', 1, 0, 4)
     assert calls == dict(source=2, embedding=1, knowledge=1)
+
+
+def test_nested_embedding_obeys_daily_token_budget_before_provider_or_retrieval(store):
+    with admin() as db:
+        db.execute('''INSERT INTO agent_model_quota(tenant_code,max_active_steps,daily_token_limit,tokens_per_attempt)
+            VALUES ('TENANT_A',8,20,20)''')
+    store.enqueue(request(session='charging-chat'))
+    holder = acquire(store)
+    store.reserve_step(holder, 'model', 'MODEL', 'NONE', {'operation': 'model.chat'})
+    store.complete_step(holder, 'model', 'UNKNOWN', {'error_code': 'CALL_FAILED'})
+    store.fail(holder, 'MODEL_TIMEOUT')
+
+    work = store.enqueue(request(session='knowledge'))
+    calls = counts()
+    rejected = runner(store, {}, calls).run_once('TENANT_A')
+    assert rejected['run_id'] == work['run_id']
+    assert (rejected['state'], rejected['error_code']) == ('FAILED', 'MODEL_TOKEN_QUOTA_EXCEEDED')
+    assert (rejected['model_calls'], rejected['retry_count']) == (0, 0)
+    assert calls == dict(source=1, embedding=0, knowledge=0)
 
 
 def test_empty_scope_stores_explicit_empty_result_without_model_or_knowledge_http(store):
