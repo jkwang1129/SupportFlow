@@ -10,7 +10,7 @@ from psycopg.types.json import Jsonb
 
 from ..core.db import connect
 from .types import (RunInput, Limits, Lease, tenant_code, identifier, fingerprint, reference,
-                    RuntimeConflict, LostLease, BudgetExceeded, QueueFull, ActionDenied)
+                    RuntimeConflict, LostLease, BudgetExceeded, ModelCapacityBusy, QueueFull, ActionDenied)
 from .payloads import SCHEMAS,StepPayload,encode as encode_payload,decode as decode_payload
 from .model_usage import MODEL_OPERATIONS, payload_usage, summarize as summarize_model_usage
 
@@ -26,11 +26,13 @@ class RuntimeStore:
         self.backlog_limit = backlog_limit
 
     @contextmanager
-    def _scope(self, tenant):
+    def _scope(self, tenant, *, read_committed=False):
         tenant_code(tenant)
         with self.connector() as connection:
             connection.row_factory = dict_row
             with connection.transaction():
+                if read_committed:
+                    connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
                 connection.execute("SELECT set_config('app.tenant_code',%s,true),set_config('lock_timeout','2000',true),set_config('statement_timeout','5000',true)", (tenant,))
                 yield connection
 
@@ -391,6 +393,20 @@ class RuntimeStore:
                         owner=owner,fence=fence,step_key=step['step_key'],step_no=step['step_no'],operation=operation,
                         snapshot_id=str(snapshot_id),arguments_sha256=arguments_hash,expires_at_ms=int(expires.timestamp()*1000))
 
+    @staticmethod
+    def _check_model_capacity(connection, tenant):
+        # Acquire the transaction lock before taking the snapshot used to count steps.
+        connection.execute("SELECT pg_advisory_xact_lock(hashtextextended('supportflow:model-capacity:' || %s,0))", (tenant,))
+        quota = connection.execute('SELECT max_active_steps FROM agent_model_quota WHERE tenant_code=%s', (tenant,)).fetchone()
+        if quota is None:
+            return
+        limit = quota['max_active_steps']
+        active = connection.execute("""SELECT count(*) AS count FROM (
+            SELECT 1 FROM agent_step WHERE tenant_code=%s AND kind='MODEL' AND state='RESERVED' LIMIT %s
+            ) AS active_steps""", (tenant, limit)).fetchone()['count']
+        if active >= limit:
+            raise ModelCapacityBusy('Tenant model capacity is full')
+
     def reserve_step(self, lease: Lease, step_key, kind, effect, intent_ref):
         identifier(step_key)
         intent_ref = reference(intent_ref)
@@ -398,7 +414,7 @@ class RuntimeStore:
             raise ValueError('Invalid step kind/effect')
         digest = fingerprint({'kind':kind,'effect':effect,'intent':intent_ref})
         exhausted = False
-        with self._scope(lease.tenant) as connection:
+        with self._scope(lease.tenant, read_committed=(kind == 'MODEL')) as connection:
             run = self._owned(connection,lease)
             existing = connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s AND step_key=%s',
                                           (lease.tenant,lease.run_id,step_key)).fetchone()
@@ -426,6 +442,9 @@ class RuntimeStore:
                 self._terminal(connection,run,'FAILED','SIDE_EFFECT_UNKNOWN' if self._unknown_write(connection,run) else 'BUDGET_EXHAUSTED')
                 exhausted = True
             else:
+                if kind == 'MODEL':
+                    self._check_model_capacity(connection, lease.tenant)
+                    self._owned(connection, lease)  # Capacity locking may have waited past the lease deadline.
                 updated = connection.execute("""UPDATE agent_run SET step_count=step_count+1,
                     model_calls=model_calls+%s,tool_calls=tool_calls+%s,updated_at=clock_timestamp()
                     WHERE tenant_code=%s AND run_id=%s RETURNING step_count""",
@@ -525,17 +544,24 @@ class RuntimeStore:
         identifier(error_code)
         if type(delay_seconds) is not int or not 0 <= delay_seconds <= 300:
             raise ValueError('Invalid retry delay')
+        return self._reschedule(lease, error_code, delay_seconds, consumes_retry=True)
+
+    def defer_model_capacity(self, lease: Lease, error_code):
+        identifier(error_code)
+        return self._reschedule(lease, error_code, 1, consumes_retry=False)
+
+    def _reschedule(self, lease, error_code, delay_seconds, *, consumes_retry):
         with self._scope(lease.tenant) as connection:
             row = self._owned(connection,lease)
             self._unknown(connection,row)
             if self._unknown_write(connection,row):
                 return self._terminal(connection,row,'FAILED','SIDE_EFFECT_UNKNOWN')
-            if row['retry_count'] >= row['max_retries']:
+            if consumes_retry and row['retry_count'] >= row['max_retries']:
                 return self._terminal(connection,row,'FAILED','RETRY_EXHAUSTED')
-            return connection.execute("""UPDATE agent_run SET state='RETRY_WAIT',retry_count=retry_count+1,error_code=%s,
+            return connection.execute("""UPDATE agent_run SET state='RETRY_WAIT',retry_count=retry_count+%s,error_code=%s,
                 owner=NULL,lease_until=NULL,fence=fence+1,ready_at=least(deadline_at,clock_timestamp()+%s*interval '1 second'),
                 updated_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s RETURNING *""",
-                (error_code,delay_seconds,lease.tenant,lease.run_id)).fetchone()
+                (int(consumes_retry),error_code,delay_seconds,lease.tenant,lease.run_id)).fetchone()
 
     def fail(self, lease: Lease, error_code):
         identifier(error_code)

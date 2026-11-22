@@ -1418,3 +1418,11 @@ AI 009 为模型步骤保存独立的 Token 回执。回执与原检查点原子
 
 - `PYTEST_ADDOPTS='-k "runtime_model_usage or runtime_trace"' python scripts/test-agent-runtime.py` 在实际 PostgreSQL 17 通过 21 项。合成模型 3 次尝试中 1 次超时。清理正文后，若仅有 Chat 费率，已知部分估算为 `0.000027000000` CNY，1 次缺费率、1 次缺用量。补齐 Embedding 费率后为 `0.000051000000` CNY，仍有 1 次缺用量。换成无匹配费率得到 `null`。外租户价目被拒绝。原报告 `runtime-cost-estimate.json`、日志 `e6-runtime-price-book-pg.log`。
 - 普通 AI 测试 1,052 项通过、434 项条件跳过，含 7 项新价目解析和精度验证。三组 RAG 门禁 54 项通过。日志 `e6-runtime-price-book-ai.log`。金额来自合成快照和实际执行过的合成供应商用量，适用于计算契约验证。
+
+## E7 租户模型并发配额（2026-11-22）
+
+AI 010 为租户提供可选的活跃模型步骤上限。PostgreSQL 在同一事务串行核对租户占用、预留当前模型步骤并扣减 Run 调用预算。配额满时推迟领取，保留原截止时间和重试计数。配置按租户启用，升级、停用和供应商侧在途请求的边界见 [ADR-0046](decisions/0046-tenant-model-concurrency.md)。
+
+- 使用 `PYTEST_ADDOPTS='-k "runtime_model_quota or knowledge_tools_postgres or runtime_worker or runtime_model_usage"' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 通过 64 项。两个 Worker 争抢一个名额，等待者消耗 0 次模型调用、0 次故障重试。另租户独立完成，名额归还后等待者成功恢复。实际子进程在预留后退出，接管将原步骤标记为 `UNKNOWN`，过期 Worker 无法写回。取消、零额度和截止时间、嵌套 Embedding 再核权、外租户隔离和只读配置权限均覆盖。原日志 `e7-quota-pg.log` 和报告 `runtime-model-concurrency.json`。
+- `python scripts/test-versioned-migrations.py` 的 17 项通过。AI 009 → 010 保留现有 Runtime 记录并新增配额表和索引。`python scripts/test-database-init.py` 和 `python scripts/test-schema-drift.py` 验证六库 99 张应用表。`python scripts/test-database-restore.py` 恢复两条配额和两条用量回执，受限角色按租户读取。原日志 `e7-quota-upgrade.log`、`e7-quota-init.log`、`e7-quota-drift.log`、`e7-quota-restore.log`。
+- 普通 AI 测试 1,052 项通过、439 项条件跳过，三组 RAG 门禁 54 项通过。原日志 `e7-quota-ai.log`。

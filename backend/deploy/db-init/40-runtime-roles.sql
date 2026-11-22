@@ -118,6 +118,9 @@ DO $$ BEGIN
  IF to_regclass('public.agent_model_usage') IS NOT NULL THEN
    REVOKE UPDATE,DELETE,TRUNCATE ON public.agent_model_usage FROM supportflow_ai,supportflow_agent_runtime;
  END IF;
+ IF to_regclass('public.agent_model_quota') IS NOT NULL THEN
+   REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON public.agent_model_quota FROM supportflow_ai,supportflow_agent_runtime;
+ END IF;
  IF to_regclass('public.agent_reply_reconciliation') IS NOT NULL THEN
    REVOKE UPDATE,DELETE,TRUNCATE ON public.agent_reply_reconciliation FROM supportflow_ai,supportflow_agent_runtime;
  END IF;

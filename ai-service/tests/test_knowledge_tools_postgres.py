@@ -9,7 +9,7 @@ import pytest
 from ai.runtime.payloads import encode
 from ai.runtime.types import Limits
 from ai.runtime.worker import RuntimeWorker,TransientFailure
-from test_runtime_store_postgres import store,request,admin
+from test_runtime_store_postgres import acquire,store,request,admin
 from test_runtime_embeddings import profile
 from test_runtime_embeddings_postgres import next_ready
 from test_knowledge_tools import setup,call
@@ -66,6 +66,28 @@ def test_no_free_live_refresh_after_tool_budget_is_exhausted(store):
     result=runner(store,state,calls).run_once('TENANT_A')
     assert result['state']=='FAILED' and result['error_code']=='BUDGET_EXHAUSTED'
     assert (result['tool_calls'],result['model_calls'])==(3,1) and calls==dict(source=2,embedding=1,knowledge=1)
+
+
+def test_nested_embedding_waits_for_tenant_model_quota_then_rechecks_source(store):
+    with admin() as db:
+        db.execute("INSERT INTO agent_model_quota VALUES ('TENANT_A',1)")
+    store.enqueue(request(session='holding-chat'))
+    holder = acquire(store)
+    store.reserve_step(holder, 'model', 'MODEL', 'NONE', {'operation': 'model.chat'})
+    work = store.enqueue(request(session='knowledge'), Limits(max_retries=0))
+    calls = counts()
+    executor = runner(store, {}, calls)
+    deferred = executor.run_once('TENANT_A')
+    assert deferred['run_id'] == work['run_id']
+    assert (deferred['state'], deferred['error_code']) == ('RETRY_WAIT', 'MODEL_CAPACITY_BUSY')
+    assert (deferred['model_calls'], deferred['retry_count'], deferred['tool_calls']) == (0, 0, 2)
+    assert calls == dict(source=1, embedding=0, knowledge=0)
+
+    store.complete_step(holder, 'model', 'SUCCEEDED', {'outcome': 'done'})
+    store.finish(holder, {'outcome': 'done'})
+    resumed = next_ready(executor)
+    assert (resumed['state'], resumed['model_calls'], resumed['retry_count'], resumed['tool_calls']) == ('SUCCEEDED', 1, 0, 4)
+    assert calls == dict(source=2, embedding=1, knowledge=1)
 
 
 def test_empty_scope_stores_explicit_empty_result_without_model_or_knowledge_http(store):

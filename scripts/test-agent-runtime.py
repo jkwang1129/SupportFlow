@@ -73,6 +73,7 @@ def main():
                         'tests/test_runtime_models_postgres.py',
                         'tests/test_runtime_embeddings_postgres.py',
                         'tests/test_runtime_model_usage_postgres.py',
+                        'tests/test_runtime_model_quota_postgres.py',
                         'tests/test_brain_analysis_context.py',
                         'tests/test_knowledge_tools_postgres.py',
                         'tests/test_ticket_loop_postgres.py',
@@ -92,12 +93,17 @@ def main():
             audit_rows = connection.execute('SELECT * FROM agent_ticket_reconciliation ORDER BY tenant_code,run_id').fetchall()
             approval_rows = connection.execute('SELECT * FROM agent_approval ORDER BY tenant_code,run_id').fetchall()
             usage_rows = connection.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall()
+            quota_rows = connection.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall()
         subprocess.run(command, env=provision_env, input=provisioning,
                        text=True, check=True, stdout=subprocess.DEVNULL)
         with connect('ai_db') as connection:
             assert connection.execute('SELECT * FROM agent_ticket_reconciliation ORDER BY tenant_code,run_id').fetchall() == audit_rows
             assert connection.execute('SELECT * FROM agent_approval ORDER BY tenant_code,run_id').fetchall() == approval_rows
             assert connection.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall() == usage_rows
+            assert connection.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall() == quota_rows
+            for privilege, allowed in (('SELECT', True), ('INSERT', False), ('UPDATE', False), ('DELETE', False), ('TRUNCATE', False)):
+                assert connection.execute("SELECT has_table_privilege('supportflow_ai','agent_model_quota',%s)",
+                                          (privilege,)).fetchone() == (allowed,)
             for privilege, allowed in (('SELECT', True), ('INSERT', True), ('UPDATE', False), ('DELETE', False), ('TRUNCATE', False)):
                 assert connection.execute("SELECT has_table_privilege('supportflow_ai','agent_model_usage',%s)",
                                           (privilege,)).fetchone() == (allowed,)
@@ -119,6 +125,7 @@ def main():
         print(f'Ticket audit reprovision: {len(audit_rows)} rows preserved; AI SELECT/INSERT only, customer and KB SELECT denied', flush=True)
         print(f'Approval reprovision: {len(approval_rows)} rows preserved; only decision columns are writable', flush=True)
         print(f'Model usage reprovision: {len(usage_rows)} rows preserved; AI SELECT/INSERT only, customer and KB SELECT denied', flush=True)
+        print(f'Model quota reprovision: {len(quota_rows)} rows preserved; AI SELECT only', flush=True)
         if args.with_java_delivery:
             from runtime_delivery_fixture import verify_delivery
             verify_delivery(connect, environment, passwords, test_env)

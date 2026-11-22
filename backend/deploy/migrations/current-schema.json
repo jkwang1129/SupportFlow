@@ -210,6 +210,59 @@
             }
           }
         },
+        "agent_model_quota": {
+          "columns": {
+            "max_active_steps": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            }
+          },
+          "constraints": {
+            "agent_model_quota_max_active_steps_check": "CHECK (((max_active_steps >= 0) AND (max_active_steps <= 100)))",
+            "agent_model_quota_pkey": "PRIMARY KEY (tenant_code)",
+            "agent_model_quota_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))"
+          },
+          "indexes": {
+            "agent_model_quota_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_model_quota_pkey ON public.agent_model_quota USING btree (tenant_code)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_model_quota_guard": {
+                "check": null,
+                "command": "r",
+                "permissive": false,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_model_quota_tenant": {
+                "check": null,
+                "command": "r",
+                "permissive": true,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "agent_model_usage": {
           "columns": {
             "chat_output_tokens": {
@@ -1003,6 +1056,10 @@
             "agent_step_tenant_code_run_id_step_key_key": "UNIQUE (tenant_code, run_id, step_key)"
           },
           "indexes": {
+            "agent_step_active_model_quota_idx": {
+              "definition": "CREATE INDEX agent_step_active_model_quota_idx ON public.agent_step USING btree (tenant_code) WHERE (((kind)::text = 'MODEL'::text) AND ((state)::text = 'RESERVED'::text))",
+              "valid": true
+            },
             "agent_step_pkey": {
               "definition": "CREATE UNIQUE INDEX agent_step_pkey ON public.agent_step USING btree (tenant_code, run_id, step_no)",
               "valid": true
@@ -13923,6 +13980,10 @@
       {
         "checksum": "430606292151a2d9b3a5e08ece50530f22244c99fbafd58bf4eb4c2160222f79",
         "version": "009"
+      },
+      {
+        "checksum": "bd801395b760ae845d089ca6d7f5166a293167cab7e9a06158a7261f6030524a",
+        "version": "010"
       }
     ],
     "billing_db": [

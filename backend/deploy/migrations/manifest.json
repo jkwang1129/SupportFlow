@@ -20,6 +20,7 @@
     {"database":"ai_db","version":"007","name":"bounded expiry discovery for awaiting approvals","source":"backend/deploy/migrations/sql/ai_db_007_approval_due_queue.sql"},
     {"database":"ai_db","version":"008","name":"tenant-scoped lookup by request trace","source":"backend/deploy/migrations/sql/ai_db_008_agent_trace_lookup.sql"},
     {"database":"ai_db","version":"009","name":"immutable Runtime model usage receipts","source":"backend/deploy/migrations/sql/ai_db_009_agent_model_usage.sql"},
+    {"database":"ai_db","version":"010","name":"tenant active model step quota","source":"backend/deploy/migrations/sql/ai_db_010_agent_model_quota.sql"},
     {"database":"user_db","version":"001","name":"adopt canonical user baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/user_db.json"},
     {"database":"tenant_db","version":"001","name":"adopt canonical tenant baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/tenant_db.json"},
     {"database":"ops_db","version":"001","name":"adopt canonical operations baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/ops_db.json"}

@@ -8,7 +8,7 @@ import psycopg
 
 from ..core.trace import bind_trace_id
 from .store import RuntimeStore
-from .types import ActionDenied, Lease, LostLease, BudgetExceeded, RuntimeConflict, identifier, fingerprint, reference, tenant_code
+from .types import ActionDenied, Lease, LostLease, BudgetExceeded, ModelCapacityBusy, RuntimeConflict, identifier, fingerprint, reference, tenant_code
 from .payloads import SCHEMAS,encode as encode_payload
 
 
@@ -193,6 +193,8 @@ class RuntimeWorker:
                 # A budget failure has already committed its terminal state;
                 # lost leases belong to another worker/cancellation/deadline.
                 return self.store.get(tenant, run['run_id'])
+            except ModelCapacityBusy:
+                return self._transition(context, 'defer_model_capacity', 'MODEL_CAPACITY_BUSY')
             except (psycopg.OperationalError,psycopg.InterfaceError):
                 # No DB/provider detail enters persistence. retry() retains all
                 # counters, reuses committed steps, and holds uncertain WRITE.
@@ -228,7 +230,7 @@ class RuntimeWorker:
         tenants = [self.tenant] if self.tenant is not None else self.store.due_tenants()
         if not tenants:
             return None
-        # Local round-robin only; this does not claim cross-process tenant quotas.
+        # Scheduling rotates locally; model admission is coordinated in the store.
         if self._last_tenant in tenants:
             index = tenants.index(self._last_tenant) + 1
             tenants = tenants[index:] + tenants[:index]

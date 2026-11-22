@@ -72,6 +72,7 @@ def seed(connect):
             database.execute('''INSERT INTO agent_model_usage(tenant_code,run_id,step_no,fence,intent_hash,payload_id,payload_hash,
                 input_tokens,chat_output_tokens) VALUES(%s,%s,1,1,%s,%s,repeat('c',64),%s,7)''',
                 (tenant, run_id, intent_hash, payload_id, 12+index))
+            database.execute('INSERT INTO agent_model_quota(tenant_code,max_active_steps) VALUES(%s,%s)', (tenant, index))
 
 
 def projection(connect):
@@ -80,10 +81,12 @@ def projection(connect):
     with connect('ai_db') as database:
         runs = database.execute('SELECT tenant_code,source_event_id,run_id,message_id,state,model_calls FROM agent_run ORDER BY tenant_code').fetchall()
         usages = database.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall()
+        quotas = database.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall()
     assert len(outbox) == len(runs) == 2
     assert [row[:4] for row in outbox] == [row[:4] for row in runs]
     assert len(usages) == 2
-    return outbox, runs, usages
+    assert quotas == [('RESTORE_A', 1), ('RESTORE_B', 2)]
+    return outbox, runs, usages, quotas
 
 
 def table_counts(connect, name):
@@ -104,6 +107,7 @@ def assert_restricted_restored_reads(environment, passwords):
                 assert rows == expected
                 if role == 'AI':
                     assert connection.execute('SELECT tenant_code FROM agent_model_usage').fetchall() == expected
+                    assert connection.execute('SELECT tenant_code FROM agent_model_quota').fetchall() == expected
             assert connection.execute('SELECT has_table_privilege(current_user,%s,%s)', (table, 'TRUNCATE')).fetchone() == (False,)
 
 
@@ -146,6 +150,7 @@ def main():
             'schema_tables_verified': sum(item['schema_verified']['tables'] for item in verified),
             'matched_outbox_run_pairs': len(expected_projection[0]),
             'matched_model_usage_receipts': len(expected_projection[2]),
+            'matched_model_quotas': len(expected_projection[3]),
             'restricted_roles_verified': 2, 'invalid_archive_rejected': True,
         }
         path = ROOT/'.local/verification/database-restore-drill.json'

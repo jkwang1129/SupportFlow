@@ -125,3 +125,7 @@ ReplyReconciler为显式可信宿主控制面，无公开路由/自动轮询/模
 ## AI 009 模型用量回执
 
 009 新增 `agent_model_usage`，以复合外键关联原租户、任务和模型步骤。回执和完成步骤同事务提交，检查点清理后继续保留已知 Token。按 migrate、provision、verify 升级，原记录逐字段保留。Runtime 就绪门禁要求新表和受限权限。应用版本回退时保留 009 和现有回执。详见 [ADR-0044](../../../docs/decisions/0044-durable-model-usage-receipts.md)。
+
+## AI 010 租户模型并发配额
+
+010 增加租户配额表以及用于统计活跃模型步骤的部分索引。Runtime 验证表结构和只读权限。配额表初始为空，可在迁移、权限配置和 Worker 升级后按租户启用。配置命令及停用方式见 [ADR-0046](../../../docs/decisions/0046-tenant-model-concurrency.md)。

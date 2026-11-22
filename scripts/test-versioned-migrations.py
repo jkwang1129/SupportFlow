@@ -42,7 +42,13 @@ def existing_ai_step(url,*,payload=False):
     from psycopg.rows import dict_row
     from ai.runtime.store import RuntimeStore
     from ai.runtime.types import RunInput,Lease
-    store=RuntimeStore(lambda:psycopg.connect(url,row_factory=dict_row))
+    class PreQuotaStore(RuntimeStore):
+        @staticmethod
+        def _check_model_capacity(connection, tenant):
+            # This fixture represents a worker before the quota table existed.
+            pass
+
+    store=PreQuotaStore(lambda:psycopg.connect(url,row_factory=dict_row))
     value=RunInput('PAYLOAD_UP',uuid4(),'PAYLOAD_UPGRADE_BODY' if payload else 'PAYLOAD_UPGRADE',1,774002,'visitor-session:774001','payload-upgrade')
     row=store.enqueue(value);lease=Lease.from_run(store.claim_next(value.tenant,'migration-worker'))
     store.reserve_step(lease,'existing-model','MODEL','NONE',{'operation':'upgrade-test','version':'test-v1'})
@@ -181,7 +187,7 @@ def main():
                     assert upgrade008['applied']==['008'] and read()==before and read_kb()==before_kb
                     read_ticket=existing_ticket(connection);before_ticket=read_ticket()
                 if database=='ai_db':
-                    assert [m.version for m in plan]==['001','002','003','004','005','006','007','008','009']
+                    assert [m.version for m in plan]==['001','002','003','004','005','006','007','008','009','010']
                     applied=run_plan(connection,plan[:2])["applied"]
                     read_ai=existing_ai_step(dsn(database));before_ai=read_ai()
                     applied+=run_plan(connection,plan[:3])['applied']
@@ -212,6 +218,11 @@ def main():
                     assert read_approval()==before_approval
                     assert connection.execute("SELECT indisvalid FROM pg_index WHERE indexrelid='public.agent_run_trace_lookup_idx'::regclass").fetchone()==(True,)
                     print('AI 007 -> 008 added the valid trace index without changing existing Runs, Steps, payloads or decisions',flush=True)
+                    applied+=run_plan(connection,plan[:9])['applied']
+                    assert read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
+                    assert read_approval()==before_approval
+                    assert connection.execute('SELECT count(*) FROM agent_model_usage').fetchone()==(0,)
+                    print('AI 008 -> 009 preserved existing runtime data and created an empty usage receipt table',flush=True)
                 result=run_plan(connection,plan)
                 assert applied+result["applied"]==[migration.version for migration in plan]
                 if database=='customer_db':
@@ -232,10 +243,11 @@ def main():
                     print('007 -> 008 preserved existing business/source/draft/chunk data; granted only index_status SELECT; 3 unsafe capability states rejected',flush=True)
                     print('008 -> 009 preserved every existing ticket/source/message/knowledge field; immutable ticket receipt initially empty; old global ticket PK retained',flush=True)
                 if database=='ai_db':
-                    assert result['applied']==['009'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
+                    assert result['applied']==['010'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
                     assert read_approval()==before_approval
-                    assert connection.execute('SELECT count(*) FROM agent_model_usage').fetchone()==(0,)
-                    print('AI 008 -> 009 preserved existing runtime data and created an empty usage receipt table',flush=True)
+                    assert connection.execute('SELECT count(*) FROM agent_model_quota').fetchone()==(0,)
+                    assert connection.execute("SELECT indisvalid FROM pg_index WHERE indexrelid='public.agent_step_active_model_quota_idx'::regclass").fetchone()==(True,)
+                    print('AI 009 -> 010 preserved existing runtime data and added the quota table and active-step index',flush=True)
                 assert run_plan(connection,plan)["applied"]==[]
                 run_plan(connection,plan,verify=True)
         runtime_password=secrets.token_hex(24)
