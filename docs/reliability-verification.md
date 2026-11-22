@@ -1237,3 +1237,11 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - `PYTEST_ADDOPTS='-k runtime_trace' python scripts/test-agent-runtime.py` 的 3 项真实 PostgreSQL 测试通过。新增夹具在 WRITE 步骤预留后模拟丢确认，实际数据库任务为 `FAILED/SIDE_EFFECT_UNKNOWN`。回放观察到 1 个未知写。改写副本中的终态为成功后门禁失败，数据库记录未改变。原始输出 `runtime-trace-replay.json`、日志 `d2-runtime-replay-pg-final.log`。
 
 当前回放用于轨迹契约和故障回归。模型与工具行为的真实重演、长期质量数据集和评测面板待后续交付。
+
+## B2 通过 MCP 读取工单状态（2026-11-22）
+
+可选 MCP 客户端接入已有工单读取工具。客户服务先核验当前字段权限和工单版本。MCP 返回后核验同一工单及当前版本，权限撤回或数据不符时拒绝使用结果。连接地址、凭据、会话来源与任务绑定由服务端配置。默认仍使用既有签名客服 API。范围和回滚见 [ADR-0036](decisions/0036-bounded-ticket-mcp.md)。
+
+- 工单 Worker、工具和 MCP 定向单元 104 项通过，其中新 MCP 测试 18 项覆盖 JSON/SSE、协议头、结果投影、无重定向、超时、越界结果与拒绝后的零请求。日志 `b2-mcp-ticket-unit-final.log`。
+- `PYTEST_ADDOPTS='-k ticket_loop' python scripts/test-agent-runtime.py --with-java-delivery` 在 PostgreSQL 17 通过 17 项定向库测试及 10 条真实工单查询路径。一次签名访客消息经 Outbox、Java 投递、独立 Python Worker、MCP SSE 测试端及签名客服 API，查询到数据库工单状态。产生 1 份报告、1 次 MCP 请求、2 次模型替身请求和 5 次工具预留。业务回执为 0。首轮夹具漏导入 `asyncio`，修正后复跑通过。日志 `b2-mcp-ticket-runtime-final.log`、机器报告 `runtime-ticket-loop.json` v4。
+- 合并此前 D1、D2 代码后的普通 AI 全量测试 1,001 项通过、394 项条件跳过。日志 `d2-runtime-replay-ai.log`。MCP 服务端为隔离测试进程，真实供应商与生产网络未纳入这批测量。

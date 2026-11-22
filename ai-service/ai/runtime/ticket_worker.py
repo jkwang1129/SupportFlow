@@ -13,6 +13,7 @@ from ..core.schema_guard import runtime_missing
 from .approvals import TicketApprovals
 from .customer_tools import current_message_tool, ticket_status_tool
 from .models import ChatProfile, RuntimeChatClient
+from .mcp_ticket import McpTicketClient
 from .source import SourceClient
 from .store import RuntimeStore
 from .ticket_loop import TicketReadLoop
@@ -39,10 +40,17 @@ def build_worker(settings, tenant, provider, *, owner):
                           prompt_version='ticket-plan-v1', **config)
     base = settings.customer_runtime_url
     secret = settings.customer_secret.get_secret_value()
+    mcp_secret = settings.runtime_ticket_mcp_secret.get_secret_value()
+    mcp = None
+    if settings.runtime_ticket_mcp_url or mcp_secret:
+        if secret == mcp_secret:
+            raise ValueError('MCP and customer credentials must be distinct')
+        mcp = McpTicketClient(settings.runtime_ticket_mcp_url, mcp_secret)
     access = ToolExecutor(ToolRegistry([current_message_tool(SourceClient(base, secret))]), frozenset({'session:read'}))
-    tools = ToolExecutor(ToolRegistry([ticket_status_tool(TicketClient(base, secret))]), frozenset({'ticket:read'}))
+    tools = ToolExecutor(ToolRegistry([ticket_status_tool(TicketClient(base, secret), mcp_client=mcp)]), frozenset({'ticket:read'}))
     loop = TicketReadLoop(access, tools, RuntimeChatClient(profile),
-                          canonical_history=settings.runtime_canonical_planner_history)
+                          canonical_history=settings.runtime_canonical_planner_history,
+                          transport_hash=mcp.definition_hash() if mcp is not None else None)
     return RuntimeWorker(RuntimeStore(), {'runtime-v1': loop}, owner, tenant=tenant, approval_mode='without_approval')
 
 

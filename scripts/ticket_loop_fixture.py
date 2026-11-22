@@ -3,6 +3,7 @@
 Provider decisions/usage and setup data are synthetic. The scoped Worker case
 submits a signed visitor message and uses actual source enrollment and delivery.
 """
+import asyncio
 from contextlib import contextmanager
 import hmac
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
@@ -30,12 +31,25 @@ SHADOW_TENANT = 'LP_J'
 
 
 @contextmanager
-def planner_server(scenarios,connect):
+def planner_server(scenarios,connect,mcp_secret,mcp_call):
     class Handler(BaseHTTPRequestHandler):
         protocol_version='HTTP/1.1'
         def do_POST(self):
-            case=scenarios.get(self.headers.get('Authorization',''))
+            authorization = self.headers.get('Authorization','')
             length=int(self.headers.get('Content-Length','0'))
+            if self.path=='/mcp' and authorization=='Bearer '+mcp_secret and 0<length<=2048:
+                request = json.loads(self.rfile.read(length))
+                assert self.headers['Mcp-Method'] == request['method'] == 'tools/call'
+                assert self.headers['Mcp-Name'] == request['params']['name'] == 'get_ticket_status'
+                assert self.headers['MCP-Protocol-Version'] == request['params']['_meta']['io.modelcontextprotocol/protocolVersion'] == '2026-07-28'
+                result = mcp_call(request['params']['arguments'])
+                rpc = dict(jsonrpc='2.0', id=request['id'], result=dict(resultType='complete', content=[], structuredContent=result))
+                raw = (': fixture heartbeat\r\n\r\ndata: '+json.dumps(rpc)+'\r\n\r\n').encode()
+                self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(raw)))
+                self.send_header('Connection','close');self.end_headers()
+                self.wfile.write(raw[:80]);self.wfile.flush();self.wfile.write(raw[80:])
+                return
+            case=scenarios.get(authorization)
             if case is None or self.path!='/v1/chat/completions' or not 0<length<=262144:
                 self.send_response(403);self.send_header('Content-Length','0');self.end_headers();return
             body=json.loads(self.rfile.read(length));case['model_http_calls']+=1
@@ -153,7 +167,19 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             verify_ticket_approval(connect,base,child['SUPPORTFLOW_JWT_SECRET'],secret,store,
                                    runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'])
             observations=[];scenarios={}
-            with planner_server(scenarios,connect) as model_base:
+            mcp_key, mcp_runs = secrets.token_urlsafe(48), []
+            direct_tickets = TicketClient(base, secret)
+
+            def mcp_read(arguments):
+                assert set(arguments) == {'tenant_code', 'source_event_id', 'run_id', 'ticket_no'}
+                assert arguments['tenant_code'] == SHADOW_TENANT
+                row = store.get(SHADOW_TENANT, arguments['run_id'])
+                assert str(row['source_event_id']) == arguments['source_event_id']
+                value = asyncio.run(direct_tickets.read(RunInput.from_run(row), row['run_id'], arguments['ticket_no']))
+                mcp_runs.append(row['run_id'])
+                return value.result() | {'tenant_code': SHADOW_TENANT}
+
+            with planner_server(scenarios,connect,mcp_key,mcp_read) as model_base:
                 for index,mode in enumerate(('normal','late_status','owner_revoked','foreign_parameter','phantom_reference','fake_write_claim','model503','turn_limit','process_restart','configured_worker')):
                     tenant='LP_'+chr(ord('A')+index);session_id=15_900_001+index*10;message_id=session_id+1;customer_id=session_id+2;ticket_id=session_id+3
                     ticket_no='LOOP_'+tenant;source=RunInput(tenant,uuid4(),'LOOP_JAR_'+str(index),1,message_id,'visitor-session:'+str(session_id),'loop-'+str(index))
@@ -213,6 +239,8 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                             SUPPORTFLOW_AI_DATABASE_URL=runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'],
                             SUPPORTFLOW_AI_CUSTOMER_RUNTIME_URL=base, SUPPORTFLOW_AI_CUSTOMER_SECRET=secret,
                             SUPPORTFLOW_AI_RUNTIME_CANONICAL_PLANNER_HISTORY='true',
+                            SUPPORTFLOW_AI_RUNTIME_TICKET_MCP_URL=model_base.removesuffix('/v1')+'/mcp',
+                            SUPPORTFLOW_AI_RUNTIME_TICKET_MCP_SECRET=mcp_key,
                             SUPPORTFLOW_AI_QWEN_API_KEY=model_key, SUPPORTFLOW_AI_QWEN_BASE_URL=model_base,
                             SUPPORTFLOW_AI_QWEN_MODEL='fixture-chat')
                         command = [sys.executable, '-m', 'ai.runtime.ticket_worker', '--tenant', tenant, '--provider', 'qwen', '--once']
@@ -229,6 +257,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         assert configured.returncode == 0 and model_key not in configured.stderr
                         assert store.get(other.tenant, queued['run_id']) == queued
                         result = store.get(tenant,run)
+                        assert mcp_runs == [run], (len(mcp_runs), result['state'], result['error_code'])
                     else:result=worker.run_once(tenant)
                     if mode=='model503':
                         assert result['state']=='RETRY_WAIT' and result['model_calls']==1
@@ -263,11 +292,12 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         reports=len(reports),report_status=reports[0]['status'] if reports else None,actual_ticket_status=fact,source_messages=messages,result_receipts=receipts,tickets=tickets,
                         worker_process_restart=mode=='process_restart',configured_worker_process=mode=='configured_worker',
                         raw_assistant_bytes=scenario.get('raw_assistant_bytes'), canonical_assistant_bytes=scenario.get('canonical_assistant_bytes'),
+                        mcp_calls=mcp_runs.count(run),
                         fixture_lease_seconds=3 if mode=='process_restart' else 30))
             report=ROOT/'.local/verification/runtime-ticket-loop.json';report.parent.mkdir(parents=True,exist_ok=True)
-            report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v3',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
+            report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v4',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
                 source_enrollment='SIGNED_VISITOR_APPEND_FOR_CONFIGURED_WORKER',publication='REPORT_ONLY',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
-            print('Actual signed visitor append -> shadow Outbox -> scheduled AI delivery -> scoped worker CLI passed; duplicate message reused; 10 read-loop cases passed with synthetic model TCP and restricted PG; reports only',flush=True)
+            print('Actual signed visitor append -> shadow Outbox -> scheduled AI delivery -> scoped worker CLI -> bounded MCP SSE/Java ticket read passed; 10 read-loop cases passed with synthetic model TCP and restricted PG',flush=True)
             from knowledge_tool_fixture import verify_knowledge_tools
             verify_knowledge_tools(connect,base,secret,store)
             from ticket_creation_api_fixture import verify_ticket_creation_api

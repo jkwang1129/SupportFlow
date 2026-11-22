@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
+from .mcp_ticket import McpTicketClient
 from .source import SourceClient
 from .tools import ReadAuthorization, ReadTool, ToolModel
 from .tickets import TicketClient, ticket_digest
@@ -89,23 +90,25 @@ class TicketResult(ToolModel):
     resource_version: str = Field(pattern=r'^[0-9a-f]{64}$')
 
 
-def ticket_status_tool(client: TicketClient, *, timeout_seconds=3):
+def ticket_status_tool(client: TicketClient, *, timeout_seconds=3, mcp_client=None):
     if not isinstance(client,TicketClient):
         raise ValueError('Configured authenticated TicketClient required')
+    if mcp_client is not None and not isinstance(mcp_client, McpTicketClient):
+        raise ValueError('Configured MCP ticket client required')
 
-    def load(identity,arguments,deadline):
+    def load(backend,identity,arguments,deadline):
         async def bounded():
             async with asyncio.timeout(deadline.remaining()):
-                return await client.read(identity.source,identity.run_id,arguments['ticket_no'])
+                return await backend.read(identity.source,identity.run_id,arguments['ticket_no'])
         return asyncio.run(bounded())
 
     def authorize(identity,arguments,deadline):
-        value=load(identity,arguments,deadline)
+        value=load(client,identity,arguments,deadline)
         return ReadAuthorization({'resource_ref':value.ticket_no,'input_ref':str(value.snapshot_id),
                                   'version':'ticket-status-v1','arguments_sha256':value.resource_version,'business_ref':value.source_hash})
 
     def invoke(identity,arguments,deadline):
-        return load(identity,arguments,deadline).result()
+        return load(mcp_client or client,identity,arguments,deadline).result()
 
     def verify(identity,arguments,result,grant):
         proof=grant.references

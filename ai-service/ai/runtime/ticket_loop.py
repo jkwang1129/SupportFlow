@@ -60,7 +60,7 @@ def decision(content):
 
 class TicketReadLoop:
     def __init__(self,source_access: ToolExecutor,tools: ToolExecutor,model: RuntimeChatClient,*,max_turns=4,
-                 canonical_history=False):
+                 canonical_history=False, transport_hash=None):
         if not isinstance(source_access,ToolExecutor) or not isinstance(tools,ToolExecutor) or not isinstance(model,RuntimeChatClient):
             raise ValueError('Explicit source, tool and model adapters required')
         if type(max_turns) is not int or not 1<=max_turns<=4:raise ValueError('Invalid planner turn limit')
@@ -70,6 +70,7 @@ class TicketReadLoop:
             raise ValueError('Ticket loop requires an explicit context projection for each business tool')
         self.source_access,self.tools,self.model,self.max_turns=source_access,tools,model,max_turns
         self.canonical_history = canonical_history
+        self.transport_hash = transport_hash
 
     def __call__(self,context):
         return dict(self.prepare(context).references)
@@ -84,6 +85,8 @@ class TicketReadLoop:
                      source_snapshot=source['snapshot_id'],source_hash=source['payload_hash'],max_turns=self.max_turns)
         if self.canonical_history:
             terms['history'] = 'canonical-tool-decisions-v1'
+        if self.transport_hash is not None:
+            terms['ticket_transport'] = self.transport_hash
         binding = fingerprint(terms)
         context.step('ticket-loop','INTERNAL','NONE',dict(operation='ticket.agent',version=LOOP_VERSION,
             resource_ref=context.run['principal_ref'],input_ref=source['snapshot_id'],arguments_sha256=binding),lambda:{'outcome':'bound'})

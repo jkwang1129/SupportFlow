@@ -38,6 +38,19 @@ def test_canonical_planner_history_is_explicitly_enabled_for_the_read_worker():
     assert worker.handlers['runtime-v1'].canonical_history
 
 
+def test_mcp_requires_separate_credentials_and_changes_the_bound_read_policy():
+    standard = ticket_worker.build_worker(settings(), 'TENANT_A', 'qwen', owner='fixture-worker')
+    url = 'http://127.0.0.1:14002/mcp'
+    configured = ticket_worker.build_worker(
+        settings(runtime_ticket_mcp_url=url, runtime_ticket_mcp_secret='synthetic-mcp-service-credential-00002'),
+        'TENANT_A', 'qwen', owner='fixture-worker')
+    assert standard.handlers['runtime-v1'].transport_hash is None
+    assert len(configured.handlers['runtime-v1'].transport_hash) == 64
+    with pytest.raises(ValueError):
+        ticket_worker.build_worker(settings(runtime_ticket_mcp_url=url,
+            runtime_ticket_mcp_secret='synthetic-test-service-credential-01'), 'TENANT_A', 'qwen', owner='fixture-worker')
+
+
 @pytest.mark.parametrize('changes, tenant, provider', [
     ({'runtime_api_enabled': False}, 'TENANT_A', 'qwen'),
     ({}, 'PLATFORM', 'qwen'),

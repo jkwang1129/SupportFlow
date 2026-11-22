@@ -19,7 +19,7 @@
 | PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
 | PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前97表/索引/RLS；customer009、AI007及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
 | PR-8 持久化 Run | 部分实现：单租户可信登记、投递与只读 Loop 实际连通 | Run/Step/Worker、事务 Outbox、签名 API、固定运营 Profile、真实进程接管及受控回复回执；默认关闭的影子入口 | 待扩展租户策略管理、自动批准执行宿主及业务回复切换策略。B1 试点已验 |
-| PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。MCP尚未接入。B2 |
+| PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。已接固定工单只读 MCP 客户端。B2 |
 | PR-10 Checkpoint/HITL | 部分实现：工单审批、恢复、会话发现、坐席决定与独立执行入口 | 原子正文和原预算恢复、真实进程接管、限时审批绑定主体/快照/参数、一次性消费、到期/撤销、坐席角色与来源重验、回复及建单未知写核销 | 待接可信业务提案触发；其他写操作需各自回执。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
 | PR-12 RAG | 部分完成：证据不足、越界引用拒答 | `rag/graph.py` 的 24 项拒答与 10 项引用契约；线性及 LangGraph；文档范围、空选集、知识发布就绪过滤 | 待验证引用对事实的支持、冲突、过期及 ACL 评测，按基线选择检索改进。A6/C |
@@ -32,7 +32,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | --- | --- | --- | --- |
 | M01 Reliable Runtime | 部分实现，尚未切换业务触发 | Run/Step/Worker、双向桥接、租约/Step许可、原子业务回执；正文与Step成功原子存储、跨进程恢复；回复/建单核销及工单审批 | 只读Loop/报告发布已通过实际服务组合；可信触发、租户策略和审批交互待补，其他写操作需各自的核销适配。B |
 | M02 Context Engineering | 部分实现，工单规划已接可选压缩策略 | 旧最近12条对话；当前输入冻结并重验；检查点正文边界；工单规划确定性历史及配对对照、原预算恢复 | 待接有界长会话、事实筛选与摘要，并以真实模型比较 Token 与质量。C |
-| M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、来源/工单/知识工具与签名SDK，实际Worker/受限PG核权/刷新/共享Embedding预算；有界工单Loop；宿主报告原子发布与回执核销 | 原子建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE/知识决策Loop、通用未知写与可信MCP仍缺；不重复写业务服务。B |
+| M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、来源/工单/知识工具与签名SDK，实际Worker/受限PG核权/刷新/共享Embedding预算；有界工单Loop；宿主报告原子发布与回执核销；固定工单 MCP 客户端 | 原子建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE/知识决策Loop、通用未知写及 MCP 服务端部署和更广接入待完善。B |
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权/固定事实报告；操作专属签名许可/参数摘要与回执绑定、有效MAC跨操作拒绝、越权/假引用/假写声明负例 | 已补RAG/KB所测应用日志与已处理错误的内容排除；完整直接/间接注入集、通用PII/秘密保护、限时参数审批/防重放仍缺；无任意代码需求，暂不建Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，证据不足及越界引用拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号与租户过滤；实际引用契约进入 CI | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
 | M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime373项（含工单核销与审批测试）、客服PG139项、38项回执存储、实际只读Loop/进程恢复/五例发布/两例核销/七例知识工具和操作许可有机器证据 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
@@ -138,8 +138,10 @@ AI 已增加签名会话审批发现。返回有效审批的事件和任务引�
 
 C1 已交付可选工单规划历史压缩。18 项定向单元、17 项 Runtime PostgreSQL 和 10 条实际工单读取路径通过。合成格式样本的规划文本在下一轮从 4,907 字节减至 120 字节，原工单事实和调用次数一致。后续评测长会话的槽位保留和真实模型消耗。
 
-C2 已交付生成回答越界引用拒答。AI 全量 972 项通过，引用和拒答门禁合计 34 项通过。检索原文和旧的基线调用方式保持兼容。下一阶段继续单句事实支持和来源版本评测，并按 M03 接入可信 MCP 工具。
+C2 已交付生成回答越界引用拒答。AI 全量 972 项通过，引用和拒答门禁合计 34 项通过。检索原文和旧的基线调用方式保持兼容。下一阶段继续单句事实支持和来源版本评测。
 
 D1 可从受限数据库导出单个 Runtime 轨迹，2 项真实数据库验证包含独立命令、跨租户和不完整记录拒绝。离线回放使用这份版本化元数据核对步骤与结果。
 
 D2 离线回放可校验步骤序列、未知写入和确认结果，并对照预期状态与调用计数。11 项定向单元和 3 项真实数据库测试通过。修改实际导出轨迹的副本能令门禁失败。模型与工具重演为独立后续批次。
+
+B2 的 PR-9/M03 已增加可选 MCP 工单只读客户端。固定工具仍复用原权限、预算与结果核验，真实链路使用受信测试端和签名客服服务。可信 MCP 服务部署、更多业务工具与写入接入分批评估。设计和回滚见 [ADR-0036](decisions/0036-bounded-ticket-mcp.md)。

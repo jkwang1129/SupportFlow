@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     runtime_ticket_actions_enabled: bool = False
     runtime_approval_review_enabled: bool = False
     runtime_canonical_planner_history: bool = False
+    runtime_ticket_mcp_url: str = ""
+    runtime_ticket_mcp_secret: SecretStr = SecretStr("")
     customer_runtime_url: str = 'http://127.0.0.1:9093'
     # 日志级别：DEBUG / INFO / WARNING / ERROR
     log_level: str = "INFO"
