@@ -133,3 +133,7 @@ ReplyReconciler为显式可信宿主控制面，无公开路由/自动轮询/模
 ## AI 011 租户每日模型 Token 额度
 
 011 保留既有并发配额，增加默认留空的每日 Token 策略及按租户隔离的预留表。预留表只授予 Runtime 查询与追加，用量结算复用 009 的回执。升级依次执行 migrate、provision、verify，待目标租户的 Worker 全部升级后再配置。停用参数和回滚方式见 [ADR-0047](../../../docs/decisions/0047-tenant-daily-token-budget.md)。
+
+## AI 012 模型 Token 日汇总
+
+012 从预留与回执回填 UTC 日汇总，并在追加原始记录时同步更新。回填和安装触发器持有两张来源表的写入锁，安排在低写入时段。配置角色后以 `verify` 和 Runtime 就绪检查核对新表、函数与触发器。应用版本回退时保留本迁移。详见 [ADR-0048](../../../docs/decisions/0048-model-token-day-accounting.md)。

@@ -35,6 +35,7 @@ APPROVAL_SOURCE = 'backend/deploy/migrations/sql/ai_db_006_agent_approval.sql'
 MODEL_USAGE_SOURCE = 'backend/deploy/migrations/sql/ai_db_009_agent_model_usage.sql'
 MODEL_QUOTA_SOURCE = 'backend/deploy/migrations/sql/ai_db_010_agent_model_quota.sql'
 MODEL_TOKEN_BUDGET_SOURCE = 'backend/deploy/migrations/sql/ai_db_011_agent_model_token_budget.sql'
+MODEL_TOKEN_DAY_SOURCE = 'backend/deploy/migrations/sql/ai_db_012_agent_model_token_days.sql'
 MODEL_TOKEN_POLICY_COLUMNS = ('daily_token_limit', 'tokens_per_attempt')
 RUNTIME_COLUMNS = {
     'agent_run': ('tenant_code run_id source_event_id session_no event_seq message_id principal_ref trace_id runtime_version input_hash '
@@ -45,6 +46,7 @@ RUNTIME_COLUMNS = {
     'agent_model_usage': ('tenant_code run_id step_no fence intent_hash payload_id payload_hash input_tokens chat_output_tokens recorded_at').split(),
     'agent_model_quota': ('tenant_code', 'max_active_steps', *MODEL_TOKEN_POLICY_COLUMNS),
     'agent_model_token_reservation': ('tenant_code', 'run_id', 'step_no', 'budget_day', 'reserved_tokens'),
+    'agent_model_token_day': ('tenant_code', 'budget_day', 'charged_tokens'),
     'agent_reply_reconciliation': ('tenant_code run_id step_no observed_fence source_event_id snapshot_id arguments_sha256 intent_hash '
                                   'message_id message_no message_seq operator_ref original_error_code original_step_result confirmed_at').split(),
     'agent_ticket_reconciliation': ('tenant_code run_id step_no observed_fence source_event_id snapshot_id operation schema_version arguments_sha256 intent_hash '
@@ -60,7 +62,8 @@ def _runtime_source(table, column=None):
     return {'agent_payload': PAYLOAD_SOURCE, 'agent_reply_reconciliation': RECONCILIATION_SOURCE,
             'agent_ticket_reconciliation': TICKET_RECONCILIATION_SOURCE, 'agent_approval': APPROVAL_SOURCE,
             'agent_model_usage': MODEL_USAGE_SOURCE, 'agent_model_quota': MODEL_QUOTA_SOURCE,
-            'agent_model_token_reservation': MODEL_TOKEN_BUDGET_SOURCE}.get(table, RUNTIME_SOURCE)
+            'agent_model_token_reservation': MODEL_TOKEN_BUDGET_SOURCE,
+            'agent_model_token_day': MODEL_TOKEN_DAY_SOURCE}.get(table, RUNTIME_SOURCE)
 
 
 def _kb_connect(**kwargs):
@@ -102,10 +105,10 @@ def runtime_missing(columns=None):
             SELECT c.relname, c.relrowsecurity AND c.relforcerowsecurity
               AND NOT pg_has_role(current_user,c.relowner,'MEMBER')
               AND has_table_privilege(current_user,c.oid,'SELECT')
-              AND CASE WHEN c.relname='agent_model_quota' THEN NOT has_any_column_privilege(current_user,c.oid,'INSERT')
+              AND CASE WHEN c.relname IN ('agent_model_quota','agent_model_token_day') THEN NOT has_any_column_privilege(current_user,c.oid,'INSERT')
                   ELSE has_table_privilege(current_user,c.oid,'INSERT') END
-              AND CASE WHEN c.relname='agent_model_quota' THEN NOT has_any_column_privilege(current_user,c.oid,'UPDATE')
-                  WHEN c.relname='agent_model_token_reservation' THEN NOT has_any_column_privilege(current_user,c.oid,'UPDATE')
+              AND CASE WHEN c.relname IN ('agent_model_quota','agent_model_token_day','agent_model_token_reservation')
+                  THEN NOT has_any_column_privilege(current_user,c.oid,'UPDATE')
                   WHEN c.relname='agent_approval' THEN NOT has_table_privilege(current_user,c.oid,'UPDATE')
                    AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
                      AND has_column_privilege(current_user,c.oid,a.attnum,'UPDATE') <>
@@ -126,6 +129,16 @@ def runtime_missing(columns=None):
               THEN false ELSE has_function_privilege(current_user,'public.supportflow_agent_due_tenants(integer)','EXECUTE') END AS usable""").fetchone()
         if not role['usable'] or not function['usable']:
             missing['ai_db.runtime_capability'] = RUNTIME_SOURCE
+        projection = connection.execute("""SELECT count(*) = 2 AS usable
+            FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
+            WHERE p.oid=to_regprocedure('public.supportflow_model_token_day_insert()')
+              AND p.prosecdef AND NOT has_function_privilege(current_user,p.oid,'EXECUTE')
+              AND t.tgenabled IN ('O','A') AND t.tgtype=5 AND t.tgnargs=0 AND t.tgqual IS NULL
+              AND ((t.tgrelid=to_regclass('public.agent_model_token_reservation') AND t.tgname='agent_model_token_reservation_day_insert')
+                OR (t.tgrelid=to_regclass('public.agent_model_usage') AND t.tgname='agent_model_usage_day_insert'))
+        """).fetchone()
+        if not projection['usable']:
+            missing['ai_db.agent_model_token_day.triggers'] = MODEL_TOKEN_DAY_SOURCE
     return missing
 
 

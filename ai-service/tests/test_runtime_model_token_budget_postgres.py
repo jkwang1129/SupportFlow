@@ -13,7 +13,7 @@ from ai.runtime.models import RuntimeChatClient
 from ai.runtime.worker import RuntimeWorker
 from test_chat_transport import response
 from test_runtime_models import MESSAGES, answer, profile
-from test_runtime_store_postgres import admin, request, store
+from test_runtime_store_postgres import acquire, admin, request, store
 
 
 pytestmark = pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'), reason='requires disposable runtime PostgreSQL')
@@ -49,6 +49,19 @@ def usage(tokens_in, tokens_out):
     return response(output)
 
 
+def day_totals(connection):
+    return connection.execute('''SELECT tenant_code,budget_day,charged_tokens
+        FROM agent_model_token_day ORDER BY tenant_code,budget_day''').fetchall()
+
+
+def assert_days_match_sources(connection):
+    source = connection.execute('''SELECT tenant_code,budget_day,
+        sum(coalesce(u.input_tokens::numeric + coalesce(u.chat_output_tokens,0),r.reserved_tokens)) AS charged_tokens
+        FROM agent_model_token_reservation r LEFT JOIN agent_model_usage u USING(tenant_code,run_id,step_no)
+        GROUP BY tenant_code,budget_day ORDER BY tenant_code,budget_day''').fetchall()
+    assert day_totals(connection) == source
+
+
 def test_daily_allowance_is_reserved_across_workers_and_settled_by_durable_usage(store):
     configure('TENANT_A', 16, 12)
     configure('TENANT_B', 12, 12)
@@ -75,6 +88,9 @@ def test_daily_allowance_is_reserved_across_workers_and_settled_by_durable_usage
             assert denied['error_code'] == 'MODEL_TOKEN_QUOTA_EXCEEDED'
             assert (denied['model_calls'], denied['retry_count'], denied['step_count']) == (0, 0, 0)
             assert calls == ['A']
+            with admin() as connection:
+                assert [row['charged_tokens'] for row in day_totals(connection)] == [12]
+                assert_days_match_sources(connection)
             independently = worker(store, lambda _: usage(5, 2), 'token-b', tenant='TENANT_B').run_once('TENANT_B')
             assert (independently['run_id'], independently['state']) == (other, 'SUCCEEDED')
         finally:
@@ -94,6 +110,8 @@ def test_daily_allowance_is_reserved_across_workers_and_settled_by_durable_usage
         rows = connection.execute('''SELECT reserved_tokens,input_tokens,chat_output_tokens
             FROM agent_model_token_reservation JOIN agent_model_usage USING (tenant_code,run_id,step_no)
             WHERE tenant_code='TENANT_A' ORDER BY input_tokens''').fetchall()
+        assert [row['charged_tokens'] for row in day_totals(connection)] == [16, 7]
+        assert_days_match_sources(connection)
     assert [tuple(row.values()) for row in rows] == [(12, 3, 1), (12, 9, 3)]
 
 
@@ -130,24 +148,58 @@ def test_unknown_usage_keeps_reservation_and_stops_new_calls(store, outcome):
         assert connection.execute('''SELECT reserved_tokens FROM agent_model_token_reservation
             WHERE run_id=%s''', (original,)).fetchone() == {'reserved_tokens': 20}
         assert connection.execute('SELECT count(*) AS n FROM agent_model_usage').fetchone() == {'n': 0}
+        assert [row['charged_tokens'] for row in day_totals(connection)] == [20]
+        assert_days_match_sources(connection)
 
 
 def test_underestimated_usage_is_charged_and_prior_utc_day_does_not_block(store):
     configure('TENANT_A', 10, 4)
-    first = enqueue(store, 'overage')
+    enqueue(store, 'overage')
     maximum = 9223372036854775807
     assert worker(store, lambda _: usage(maximum, maximum)).run_once('TENANT_A')['state'] == 'SUCCEEDED'
     second = enqueue(store, 'denied')
     denied = worker(store, lambda _: pytest.fail('observed overage reached provider')).run_once('TENANT_A')
     assert (denied['run_id'], denied['error_code']) == (second, 'MODEL_TOKEN_QUOTA_EXCEEDED')
+    historical = enqueue(store, 'previous-day', 'TENANT_B')
+    assert worker(store, lambda _: usage(maximum, maximum), tenant='TENANT_B').run_once('TENANT_B')['state'] == 'SUCCEEDED'
     with admin() as connection:
-        connection.execute("UPDATE agent_model_token_reservation SET budget_day=(clock_timestamp() AT TIME ZONE 'UTC')::date-1 WHERE run_id=%s", (first,))
-    third = enqueue(store, 'new-day')
-    accepted = worker(store, lambda _: usage(1, 2)).run_once('TENANT_A')
+        connection.execute('''INSERT INTO agent_model_token_reservation
+            VALUES ('TENANT_B',%s,1,(clock_timestamp() AT TIME ZONE 'UTC')::date-1,4)''', (historical,))
+    configure('TENANT_B', 10, 4)
+    third = enqueue(store, 'new-day', 'TENANT_B')
+    accepted = worker(store, lambda _: usage(1, 2), tenant='TENANT_B').run_once('TENANT_B')
     assert (accepted['run_id'], accepted['state']) == (third, 'SUCCEEDED')
     with admin() as connection:
         assert connection.execute('''SELECT budget_day=(clock_timestamp() AT TIME ZONE 'UTC')::date AS today
             FROM agent_model_token_reservation WHERE run_id=%s''', (third,)).fetchone() == {'today': True}
+        assert [row['charged_tokens'] for row in day_totals(connection)] == [2*maximum, 2*maximum, 3]
+        assert_days_match_sources(connection)
+
+
+def test_token_day_tracks_receipt_rollback_and_duplicate_with_original_budget_day(store):
+    run_id = enqueue(store, 'previous-day')
+    lease = acquire(store)
+    step, _ = store.reserve_step(lease, 'model', 'MODEL', 'NONE', {'operation': 'model.chat'})
+    with admin() as connection:
+        connection.execute('''INSERT INTO agent_model_token_reservation
+            VALUES ('TENANT_A',%s,1,(clock_timestamp() AT TIME ZONE 'UTC')::date-1,12)''', (run_id,))
+        old_day, = day_totals(connection)
+    sql = '''INSERT INTO agent_model_usage(tenant_code,run_id,step_no,fence,intent_hash,payload_id,payload_hash,input_tokens,chat_output_tokens)
+        VALUES ('TENANT_A',%s,1,%s,%s,gen_random_uuid(),repeat('a',64),3,1)'''
+    params = (run_id, step['fence'], step['intent_hash'])
+    with pytest.raises(ValueError, match='rollback'), store._scope('TENANT_A') as connection:
+        connection.execute(sql, params)
+        assert day_totals(connection) == [old_day | {'charged_tokens': 4}]
+        raise ValueError('rollback')
+    with store._scope('TENANT_A') as connection:
+        assert day_totals(connection) == [old_day]
+        assert connection.execute('SELECT 1 FROM agent_model_usage').fetchone() is None
+        connection.execute(sql, params)
+    with pytest.raises(psycopg.errors.UniqueViolation), store._scope('TENANT_A') as connection:
+        connection.execute(sql, params)
+    with store._scope('TENANT_A') as connection:
+        assert day_totals(connection) == [old_day | {'charged_tokens': 4}]
+        assert_days_match_sources(connection)
 
 
 def test_budget_rows_are_tenant_scoped_append_only_and_readiness_rejects_column_writes(store, monkeypatch):
@@ -156,6 +208,7 @@ def test_budget_rows_are_tenant_scoped_append_only_and_readiness_rejects_column_
     assert worker(store, lambda _: usage(3, 1)).run_once('TENANT_A')['state'] == 'SUCCEEDED'
     with store._scope('TENANT_B') as connection:
         assert connection.execute('SELECT * FROM agent_model_token_reservation').fetchall() == []
+        assert day_totals(connection) == []
         with pytest.raises(psycopg.errors.InsufficientPrivilege), connection.transaction():
             connection.execute('''INSERT INTO agent_model_token_reservation
                 VALUES('TENANT_A',%s,1,CURRENT_DATE,12)''', (original,))
@@ -163,9 +216,12 @@ def test_budget_rows_are_tenant_scoped_append_only_and_readiness_rejects_column_
         assert connection.execute('SELECT reserved_tokens FROM agent_model_token_reservation').fetchone() == {'reserved_tokens': 12}
         for statement in ('UPDATE agent_model_token_reservation SET reserved_tokens=1',
                           'DELETE FROM agent_model_token_reservation', 'TRUNCATE agent_model_token_reservation',
+                          'UPDATE agent_model_token_day SET charged_tokens=0', 'DELETE FROM agent_model_token_day',
+                          'TRUNCATE agent_model_token_day',
                           'UPDATE agent_model_quota SET daily_token_limit=1000'):
             with pytest.raises(psycopg.errors.InsufficientPrivilege), connection.transaction():
                 connection.execute(statement)
+        assert connection.execute("SELECT has_function_privilege('public.supportflow_model_token_day_insert()','EXECUTE') AS usable").fetchone() == {'usable': False}
     monkeypatch.setattr(schema_guard, 'connect', lambda **kwargs: psycopg.connect(
         os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'], row_factory=dict_row, **kwargs))
     assert schema_guard.runtime_missing() == {}
@@ -176,3 +232,11 @@ def test_budget_rows_are_tenant_scoped_append_only_and_readiness_rejects_column_
     finally:
         with admin() as connection:
             connection.execute('REVOKE UPDATE(reserved_tokens) ON agent_model_token_reservation FROM supportflow_ai')
+    with admin() as connection:
+        connection.execute('ALTER TABLE agent_model_usage DISABLE TRIGGER agent_model_usage_day_insert')
+    try:
+        assert schema_guard.runtime_missing()['ai_db.agent_model_token_day.triggers'] == schema_guard.MODEL_TOKEN_DAY_SOURCE
+    finally:
+        with admin() as connection:
+            connection.execute('ALTER TABLE agent_model_usage ENABLE TRIGGER agent_model_usage_day_insert')
+    assert schema_guard.runtime_missing() == {}

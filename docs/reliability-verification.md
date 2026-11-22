@@ -1434,3 +1434,11 @@ AI 011 新增每日预留记录，沿用并发配额的 PostgreSQL 租户锁。R
 - `PYTEST_ADDOPTS='-k "runtime_model_token_budget or runtime_model_quota or knowledge_tools_postgres or runtime_model_usage"' python scripts/test-agent-runtime.py` 在实际隔离 PostgreSQL 17 通过 41 项。样本中租户日额度 16、每调用预留 12，两路同租户只有一路到达合成模型，另一路以 `MODEL_TOKEN_QUOTA_EXCEEDED` 结束，新增调用、步骤及故障重试均为 0。另租户在同一时间内完成。首路已知用量结算为 4，清理正文后新任务仍可预留到 16，随后请求受阻。超时、缺用量、取消、前一 UTC 日记录、实际用量超过预留、跨租户权限以及嵌套 Embedding 拒绝均覆盖。原日志 `e8-token-pg.log`。
 - `python scripts/test-versioned-migrations.py` 的 17 项通过，AI 010 → 011 保留旧并发额度和 Runtime 记录。初次初始化及结构漂移验收通过，覆盖六库的 100 张应用表。六库恢复比对两条 Token 预留、两条用量回执与两条配置，并按受限身份复核隔离。原日志 `e8-token-upgrade.log`、`e8-token-init.log`、`e8-token-drift.log`、`e8-token-restore.log`。
 - 普通 AI 测试 1,052 项通过、446 项按环境条件跳过。测试供应商为合成响应。保留进一步实测生产负载、每模型预留值及账单对账的边界。原日志 `e8-token-ai.log`。
+
+## E9 第一批模型 Token 日汇总（2026-11-22）
+
+AI 012 回填历史明细，在预留或回执写入时同步维护租户的 UTC 日汇总。核对 SQL、权限、部署与回滚见 [ADR-0048](decisions/0048-model-token-day-accounting.md)。
+
+- `PYTEST_ADDOPTS='-k "runtime_model_token_budget or runtime_model_quota or runtime_model_usage or knowledge_tools_postgres"' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 通过 42 项。覆盖在途预留、未知用量、实际用量超过预留、原日期结算、回滚后重提、重复回执、禁用触发器、外租户读取和直接改账权限。测试逐日期比对原始记录与汇总。原日志 `e9a-token-days-pg.log`。
+- `python scripts/test-versioned-migrations.py` 的 17 项通过。AI 011 → 012 保留原预留和回执，两个 UTC 日回填为 17 和 12 Token。初始化与结构漂移检查覆盖六库 101 张应用表，六库恢复比对两条日汇总及原始记录。原日志 `e9a-token-days-upgrade.log`、`e9a-token-days-init.log`、`e9a-token-days-drift.log`、`e9a-token-days-restore.log`。
+- 普通 AI 测试 1,052 项通过、447 项按环境条件跳过。供应商输出为测试替身。原日志 `e9a-token-days-ai.log`。

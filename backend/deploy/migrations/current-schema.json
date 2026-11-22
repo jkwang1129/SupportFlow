@@ -4,7 +4,8 @@
       "database": "ai_db",
       "format": 1,
       "functions": {
-        "supportflow_agent_due_tenants(p_limit integer)": "CREATE OR REPLACE FUNCTION public.supportflow_agent_due_tenants(p_limit integer)\n RETURNS TABLE(tenant_code character varying)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n WITH due AS (\n   SELECT r.tenant_code,r.created_at FROM public.agent_run r\n   WHERE ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())\n      OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))\n   AND NOT EXISTS(SELECT 1 FROM public.agent_run earlier WHERE earlier.tenant_code=r.tenant_code AND earlier.session_no=r.session_no\n      AND earlier.run_id<>r.run_id AND (earlier.state='RUNNING' OR\n         (earlier.event_seq<r.event_seq AND (earlier.state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR earlier.error_code='SIDE_EFFECT_UNKNOWN'))))\n   UNION ALL\n   SELECT r.tenant_code,r.created_at FROM public.agent_approval a\n   JOIN public.agent_run r ON r.tenant_code=a.tenant_code AND r.run_id=a.run_id\n   WHERE a.status IN ('PENDING','APPROVED') AND a.expires_at<=clock_timestamp()\n     AND r.state IN ('WAITING_APPROVAL','PENDING','RETRY_WAIT','RUNNING')\n     AND NOT EXISTS(SELECT 1 FROM public.agent_step s WHERE s.tenant_code=r.tenant_code AND s.run_id=r.run_id\n       AND s.effect='WRITE' AND s.state IN ('RESERVED','UNKNOWN'))\n )\n SELECT due.tenant_code FROM due GROUP BY due.tenant_code\n ORDER BY min(due.created_at),due.tenant_code\n LIMIT greatest(1,least(coalesce(p_limit,32),100))\n$function$\n"
+        "supportflow_agent_due_tenants(p_limit integer)": "CREATE OR REPLACE FUNCTION public.supportflow_agent_due_tenants(p_limit integer)\n RETURNS TABLE(tenant_code character varying)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n WITH due AS (\n   SELECT r.tenant_code,r.created_at FROM public.agent_run r\n   WHERE ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())\n      OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))\n   AND NOT EXISTS(SELECT 1 FROM public.agent_run earlier WHERE earlier.tenant_code=r.tenant_code AND earlier.session_no=r.session_no\n      AND earlier.run_id<>r.run_id AND (earlier.state='RUNNING' OR\n         (earlier.event_seq<r.event_seq AND (earlier.state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR earlier.error_code='SIDE_EFFECT_UNKNOWN'))))\n   UNION ALL\n   SELECT r.tenant_code,r.created_at FROM public.agent_approval a\n   JOIN public.agent_run r ON r.tenant_code=a.tenant_code AND r.run_id=a.run_id\n   WHERE a.status IN ('PENDING','APPROVED') AND a.expires_at<=clock_timestamp()\n     AND r.state IN ('WAITING_APPROVAL','PENDING','RETRY_WAIT','RUNNING')\n     AND NOT EXISTS(SELECT 1 FROM public.agent_step s WHERE s.tenant_code=r.tenant_code AND s.run_id=r.run_id\n       AND s.effect='WRITE' AND s.state IN ('RESERVED','UNKNOWN'))\n )\n SELECT due.tenant_code FROM due GROUP BY due.tenant_code\n ORDER BY min(due.created_at),due.tenant_code\n LIMIT greatest(1,least(coalesce(p_limit,32),100))\n$function$\n",
+        "supportflow_model_token_day_insert()": "CREATE OR REPLACE FUNCTION public.supportflow_model_token_day_insert()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\n SET row_security TO 'off'\nAS $function$\nDECLARE\n source_day date;\n expected_tokens integer;\n observed_tokens numeric;\nBEGIN\n IF TG_RELID = 'public.agent_model_token_reservation'::regclass THEN\n   SELECT input_tokens::numeric + coalesce(chat_output_tokens,0) INTO observed_tokens\n   FROM public.agent_model_usage\n   WHERE tenant_code=NEW.tenant_code AND run_id=NEW.run_id AND step_no=NEW.step_no;\n   INSERT INTO public.agent_model_token_day AS d(tenant_code,budget_day,charged_tokens)\n   VALUES(NEW.tenant_code,NEW.budget_day,coalesce(observed_tokens,NEW.reserved_tokens))\n   ON CONFLICT(tenant_code,budget_day) DO UPDATE\n   SET charged_tokens=d.charged_tokens+EXCLUDED.charged_tokens;\n ELSIF TG_RELID = 'public.agent_model_usage'::regclass THEN\n   SELECT budget_day,reserved_tokens INTO source_day,expected_tokens\n   FROM public.agent_model_token_reservation\n   WHERE tenant_code=NEW.tenant_code AND run_id=NEW.run_id AND step_no=NEW.step_no;\n   IF FOUND THEN\n     UPDATE public.agent_model_token_day\n     SET charged_tokens=charged_tokens-expected_tokens+NEW.input_tokens::numeric+coalesce(NEW.chat_output_tokens,0)\n     WHERE tenant_code=NEW.tenant_code AND budget_day=source_day;\n     IF NOT FOUND THEN\n       RAISE EXCEPTION 'Missing model Token day for reservation';\n     END IF;\n   END IF;\n ELSE\n   RAISE EXCEPTION 'Unexpected model Token day trigger relation';\n END IF;\n RETURN NULL;\nEND $function$\n"
       },
       "tables": {
         "agent_approval": {
@@ -267,6 +268,65 @@
                 "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
               },
               "agent_model_quota_tenant": {
+                "check": null,
+                "command": "r",
+                "permissive": true,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
+        "agent_model_token_day": {
+          "columns": {
+            "budget_day": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "date"
+            },
+            "charged_tokens": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "numeric"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            }
+          },
+          "constraints": {
+            "agent_model_token_day_charged_tokens_check": "CHECK (((charged_tokens >= (0)::numeric) AND (charged_tokens < 'Infinity'::numeric)))",
+            "agent_model_token_day_pkey": "PRIMARY KEY (tenant_code, budget_day)"
+          },
+          "indexes": {
+            "agent_model_token_day_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_model_token_day_pkey ON public.agent_model_token_day USING btree (tenant_code, budget_day)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_model_token_day_guard": {
+                "check": null,
+                "command": "r",
+                "permissive": false,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_model_token_day_tenant": {
                 "check": null,
                 "command": "r",
                 "permissive": true,
@@ -14081,6 +14141,10 @@
       {
         "checksum": "5dcad8f873f7e0a0f7dcf2e37900a11b8de5094780f1070e2b6445c45d9b4ab2",
         "version": "011"
+      },
+      {
+        "checksum": "227578448ffc608d48f5c57b66450f9637b310e99ea8eb2ca812b164dbb0da32",
+        "version": "012"
       }
     ],
     "billing_db": [

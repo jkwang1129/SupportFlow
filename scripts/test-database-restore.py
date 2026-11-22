@@ -86,12 +86,14 @@ def projection(connect):
         usages = database.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall()
         quotas = database.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall()
         token_reservations = database.execute('SELECT * FROM agent_model_token_reservation ORDER BY tenant_code').fetchall()
+        token_days = database.execute('SELECT * FROM agent_model_token_day ORDER BY tenant_code,budget_day').fetchall()
     assert len(outbox) == len(runs) == 2
     assert [row[:4] for row in outbox] == [row[:4] for row in runs]
     assert len(usages) == 2
     assert quotas == [('RESTORE_A', 1, 100, 25), ('RESTORE_B', 2, 100, 25)]
     assert len(token_reservations) == 2
-    return outbox, runs, usages, quotas, token_reservations
+    assert token_days == [('RESTORE_A', token_reservations[0][3], 20), ('RESTORE_B', token_reservations[1][3], 21)]
+    return outbox, runs, usages, quotas, token_reservations, token_days
 
 
 def table_counts(connect, name):
@@ -114,6 +116,7 @@ def assert_restricted_restored_reads(environment, passwords):
                     assert connection.execute('SELECT tenant_code FROM agent_model_usage').fetchall() == expected
                     assert connection.execute('SELECT tenant_code FROM agent_model_quota').fetchall() == expected
                     assert connection.execute('SELECT tenant_code FROM agent_model_token_reservation').fetchall() == expected
+                    assert connection.execute('SELECT tenant_code FROM agent_model_token_day').fetchall() == expected
             assert connection.execute('SELECT has_table_privilege(current_user,%s,%s)', (table, 'TRUNCATE')).fetchone() == (False,)
 
 
@@ -158,6 +161,7 @@ def main():
             'matched_model_usage_receipts': len(expected_projection[2]),
             'matched_model_quotas': len(expected_projection[3]),
             'matched_model_token_reservations': len(expected_projection[4]),
+            'matched_model_token_days': len(expected_projection[5]),
             'restricted_roles_verified': 2, 'invalid_archive_rejected': True,
         }
         path = ROOT/'.local/verification/database-restore-drill.json'

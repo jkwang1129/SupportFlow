@@ -96,6 +96,7 @@ def main():
             usage_rows = connection.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall()
             quota_rows = connection.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall()
             token_rows = connection.execute('SELECT * FROM agent_model_token_reservation ORDER BY tenant_code,run_id,step_no').fetchall()
+            token_days = connection.execute('SELECT * FROM agent_model_token_day ORDER BY tenant_code,budget_day').fetchall()
         subprocess.run(command, env=provision_env, input=provisioning,
                        text=True, check=True, stdout=subprocess.DEVNULL)
         with connect('ai_db') as connection:
@@ -104,9 +105,11 @@ def main():
             assert connection.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall() == usage_rows
             assert connection.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall() == quota_rows
             assert connection.execute('SELECT * FROM agent_model_token_reservation ORDER BY tenant_code,run_id,step_no').fetchall() == token_rows
+            assert connection.execute('SELECT * FROM agent_model_token_day ORDER BY tenant_code,budget_day').fetchall() == token_days
             for privilege, allowed in (('SELECT', True), ('INSERT', False), ('UPDATE', False), ('DELETE', False), ('TRUNCATE', False)):
-                assert connection.execute("SELECT has_table_privilege('supportflow_ai','agent_model_quota',%s)",
-                                          (privilege,)).fetchone() == (allowed,)
+                for table in ('agent_model_quota', 'agent_model_token_day'):
+                    assert connection.execute("SELECT has_table_privilege('supportflow_ai',%s,%s)",
+                                              (table, privilege)).fetchone() == (allowed,)
             for privilege, allowed in (('SELECT', True), ('INSERT', True), ('UPDATE', False), ('DELETE', False), ('TRUNCATE', False)):
                 for table in ('agent_model_usage', 'agent_model_token_reservation'):
                     assert connection.execute("SELECT has_table_privilege('supportflow_ai',%s,%s)",
