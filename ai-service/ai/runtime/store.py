@@ -11,6 +11,7 @@ from ..core.db import connect
 from .types import (RunInput, Limits, Lease, tenant_code, identifier, fingerprint, reference,
                     RuntimeConflict, LostLease, BudgetExceeded, QueueFull, ActionDenied)
 from .payloads import SCHEMAS,StepPayload,encode as encode_payload,decode as decode_payload
+from .model_usage import summarize as summarize_model_usage
 
 TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELLED'}
 
@@ -85,6 +86,22 @@ class RuntimeStore:
             if len(steps) != run['step_count'] or len(steps) > 100:
                 raise RuntimeConflict('Runtime trace steps are inconsistent')
             return {'schema_version': 'runtime-trace-v1', 'run': run, 'steps': steps}
+
+    def model_usage(self, tenant, run_id):
+        """Observe model attempts without calling the provider or altering accounting state."""
+        run_id = UUID(str(run_id))
+        with self._scope(tenant) as connection:
+            run = connection.execute("""SELECT run_id,model_calls FROM agent_run
+                WHERE tenant_code=%s AND run_id=%s FOR SHARE""", (tenant, run_id)).fetchone()
+            if run is None:
+                return None
+            steps = connection.execute("""SELECT s.state,s.effect,s.fence,s.intent_ref,s.intent_hash,s.result_ref,
+                    p.payload_id,p.fence AS payload_fence,p.payload_schema,p.payload_json,p.payload_hash
+                FROM agent_step s LEFT JOIN agent_payload p ON p.tenant_code=s.tenant_code
+                    AND p.run_id=s.run_id AND p.step_no=s.step_no AND p.expires_at>statement_timestamp()
+                WHERE s.tenant_code=%s AND s.run_id=%s AND s.kind='MODEL' ORDER BY s.step_no LIMIT 101""",
+                (tenant, run_id)).fetchall()
+        return summarize_model_usage(run, steps)
 
     @staticmethod
     def _confirmed_reconciliation(connection, run, operation, version, audit_table):

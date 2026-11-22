@@ -5,6 +5,7 @@ import math
 from time import monotonic
 
 from ..core.chat_transport import ModelCallFailure,_configuration,_send_embedding_json
+from .model_usage import checkpoint_usage
 from .types import tenant_code,identifier,fingerprint
 from .worker import PermanentFailure,TransientFailure
 
@@ -78,15 +79,8 @@ class RuntimeEmbeddingClient:
                     or value['schema_version']!='embedding-result-v1' or value['profile_ref']!=self.profile.profile_ref
                     or value['profile_hash']!=self.profile.definition_hash() or value['query_version']!=self.profile.query_version
                     or value['request_hash']!=digest):raise ValueError()
-            vector=self._vector(value['vector']);usage=value['usage']
-            if type(usage) is not dict or type(usage.get('available')) is not bool:raise ValueError()
-            if usage['available']:
-                if set(usage)!={'available','input_tokens'} or type(usage['input_tokens']) is not int or not 0<=usage['input_tokens']<=9223372036854775807:
-                    raise ValueError()
-                tokens=usage['input_tokens']
-            else:
-                if set(usage)!={'available'}:raise ValueError()
-                tokens=None
+            vector=self._vector(value['vector'])
+            tokens,_=checkpoint_usage(value['usage'],chat=False)
             return EmbeddingResult(vector,self.profile.profile_ref,self.profile.query_version,digest,tokens)
         except (ValueError,TypeError,KeyError,OverflowError):raise PermanentFailure('EMBEDDING_CHECKPOINT_INVALID') from None
 

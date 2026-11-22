@@ -24,13 +24,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tenant', required=True)
     parser.add_argument('--run', required=True, type=UUID)
+    parser.add_argument('--model-usage', action='store_true', help='Export provider usage observed in model checkpoints')
     args = parser.parse_args(argv)
     try:
         tenant = tenant_code(args.tenant)
         if runtime_missing():
             print('Runtime trace schema or role is unavailable', file=sys.stderr)
             return 1
-        snapshot = RuntimeStore().trace_snapshot(tenant, args.run)
+        store = RuntimeStore()
+        snapshot = store.model_usage(tenant, args.run) if args.model_usage else store.trace_snapshot(tenant, args.run)
         if snapshot is None:
             print('Runtime trace not found', file=sys.stderr)
             return 1

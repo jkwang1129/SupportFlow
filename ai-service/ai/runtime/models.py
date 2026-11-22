@@ -9,6 +9,7 @@ import json
 
 from ..core.chat_transport import ModelCallFailure,_configuration
 from ..core.llm_chat import call_chat
+from .model_usage import checkpoint_usage
 from .payloads import encode
 from .types import tenant_code,identifier,fingerprint
 from .worker import PermanentFailure,TransientFailure
@@ -98,16 +99,8 @@ class RuntimeChatClient:
             if (type(value) is not dict or set(value)!=fields or value['schema_version']!='chat-result-v1'
                     or value['profile_ref']!=self.profile.profile_ref or value['profile_hash']!=self.profile.definition_hash()
                     or value['prompt_version']!=self.profile.prompt_version or value['request_hash']!=request_hash):raise ValueError()
-            content=self._content(value['content']);usage=value['usage']
-            if type(usage) is not dict or type(usage.get('available')) is not bool:raise ValueError()
-            if usage['available']:
-                if set(usage)!={'available','input_tokens','output_tokens'}:raise ValueError()
-                for key in ('input_tokens','output_tokens'):
-                    if type(usage[key]) is not int or not 0<=usage[key]<=9223372036854775807:raise ValueError()
-                counts=usage['input_tokens'],usage['output_tokens']
-            else:
-                if set(usage)!={'available'}:raise ValueError()
-                counts=None,None
+            content=self._content(value['content'])
+            counts=checkpoint_usage(value['usage'],chat=True)
             return ChatResult(content,self.profile.profile_ref,self.profile.prompt_version,request_hash,*counts)
         except (ValueError,TypeError,KeyError,UnicodeError):
             raise PermanentFailure('MODEL_CHECKPOINT_INVALID') from None

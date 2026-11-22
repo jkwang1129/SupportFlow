@@ -1245,3 +1245,13 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - 工单 Worker、工具和 MCP 定向单元 104 项通过，其中新 MCP 测试 18 项覆盖 JSON/SSE、协议头、结果投影、无重定向、超时、越界结果与拒绝后的零请求。日志 `b2-mcp-ticket-unit-final.log`。
 - `PYTEST_ADDOPTS='-k ticket_loop' python scripts/test-agent-runtime.py --with-java-delivery` 在 PostgreSQL 17 通过 17 项定向库测试及 10 条真实工单查询路径。一次签名访客消息经 Outbox、Java 投递、独立 Python Worker、MCP SSE 测试端及签名客服 API，查询到数据库工单状态。产生 1 份报告、1 次 MCP 请求、2 次模型替身请求和 5 次工具预留。业务回执为 0。首轮夹具漏导入 `asyncio`，修正后复跑通过。日志 `b2-mcp-ticket-runtime-final.log`、机器报告 `runtime-ticket-loop.json` v4。
 - 合并此前 D1、D2 代码后的普通 AI 全量测试 1,001 项通过、394 项条件跳过。日志 `d2-runtime-replay-ai.log`。MCP 服务端为隔离测试进程，真实供应商与生产网络未纳入这批测量。
+
+## E1 已观测的模型用量（2026-11-22）
+
+从 AI 服务目录执行 `python -m ai.runtime.trace_export --tenant TENANT_A --run RUN_UUID --model-usage`。复用 Runtime 的受限账号，只汇总该租户、该任务的持久化模型预留与仍有效的检查点。摘要、物理步骤及模型请求绑定不一致时拒绝输出。导出不会改变任务状态或再次调用模型。设计、七天检查点保留边界与回滚见 [ADR-0037](decisions/0037-runtime-observed-model-usage.md)。
+
+- 在隔离 PostgreSQL 17 执行 `PYTEST_ADDOPTS='-k "runtime_model_usage or runtime_models or runtime_embeddings or runtime_trace"' python scripts/test-agent-runtime.py`，42 项通过。新增 9 项涵盖跨租户 CLI、重复读检查点、超时后重试、零值、缺失/过期/清理、错误摘要或绑定、非法计数与预留不符。首轮 33 项未包含新增文件，接入专项及 CI 入口后再跑。原日志 `e1-model-usage-pg-final.log`。
+- 使用 Chat 和 Embedding 服务替身记录 3 次传输与 3 次模型预留；其中 1 次超时用量未知，2 次提供用量。成功阶段导出 21 个观测输入 Token 和 7 个观测 Chat 输出 Token。成功的 Chat 检查点在同一任务内复读不重复调用。原始报告 `runtime-model-usage.json`。数字用于验证核算逻辑，来源为合成供应商响应。
+- 普通 AI 测试 1,001 项通过、403 项条件跳过。RAG 拒答 24 项及引用 10 项通过。日志与报告在 `.local/implementation/e1-*`。
+
+本次没有费用或质量评测。检查点超过保存期后相应使用量显示为未知。后续租户日月结算仍需单价版本、保留机制和对账数据。

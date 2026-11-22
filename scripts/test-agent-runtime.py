@@ -72,6 +72,7 @@ def main():
                         'tests/test_ticket_write_tool_postgres.py',
                         'tests/test_runtime_models_postgres.py',
                         'tests/test_runtime_embeddings_postgres.py',
+                        'tests/test_runtime_model_usage_postgres.py',
                         'tests/test_knowledge_tools_postgres.py',
                         'tests/test_ticket_loop_postgres.py',
                         'tests/test_publication_postgres.py',
