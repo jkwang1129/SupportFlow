@@ -26,10 +26,18 @@ def test_operator_config_is_bound_to_one_tenant_and_read_capabilities():
     assert worker.tenant == loop.model.profile.tenant == 'TENANT_A'
     assert worker.approval_mode == 'without_approval'
     assert not loop.canonical_history
+    assert loop.approvals is None
     assert loop.model.profile.model == 'fixture-chat'
     assert 'synthetic-test-qwen-key' not in repr(loop.model.profile)
     assert {v['name'] for v in loop.source_access.registry.catalog()} == {'get_current_message'}
     assert {v['name'] for v in loop.tools.registry.catalog()} == {'get_ticket_status'}
+
+
+def test_explicit_proposal_is_opt_in_and_uses_the_worker_store():
+    worker = ticket_worker.build_worker(settings(runtime_ticket_proposal_enabled=True), 'TENANT_A', 'qwen',
+                                        owner='fixture-proposal-worker')
+    assert worker.handlers['runtime-v1'].approvals.store is worker.store
+    assert worker.approval_mode == 'without_approval'
 
 
 def test_canonical_planner_history_is_explicitly_enabled_for_the_read_worker():

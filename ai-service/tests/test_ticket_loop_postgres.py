@@ -5,6 +5,7 @@ import os
 import psycopg
 import pytest
 
+from ai.runtime.approvals import TicketApprovals
 from ai.runtime.payloads import encode
 from ai.runtime.types import Limits
 from ai.runtime.worker import RuntimeWorker
@@ -161,3 +162,60 @@ def test_hash_valid_boolean_status_cannot_masquerade_as_numeric_report_after_res
         db.execute("UPDATE agent_payload SET payload_json=%s,payload_hash=%s WHERE payload_schema='working-state-v1'",(raw,digest))
     result=worker.run_once('TENANT_A')
     assert result['state']=='FAILED' and result['error_code']=='REPORT_CHECKPOINT_INVALID' and len(models)==2
+
+
+@pytest.mark.parametrize('command, enabled, expected', [
+    ('/ticket-request\r\n请处理这个问题🙂\r\n原始内容\n保留空格 ', True, 'WAITING_APPROVAL'),
+    ('/ticket-request\n请处理这个问题\nsynthetic request', False, 'SUCCEEDED'),
+    ('命令示例\n/ticket-request\n普通咨询', True, 'SUCCEEDED'),
+    ('/ticket-request\n标题缺正文', True, 'FAILED'),
+    ('/ticket-request\n'+('x'*129)+'\nsynthetic body', True, 'FAILED'),
+])
+def test_explicit_ticket_proposal_uses_exact_source_only_when_enabled(store, command, enabled, expected):
+    row, loop, http, models, _ = prepare(store, [{'action': 'clarify'}], source_text=command)
+    approvals = TicketApprovals(store)
+    loop.approvals = approvals if enabled else None
+    run_id, tenant = row['run_id'], row['tenant_code']
+    result = runner(store, loop).run_once(tenant)
+    assert result['state'] == expected
+    assert all(step['effect'] != 'WRITE' for step in store.steps(tenant, run_id))
+    assert not any('/tickets/' in entry.url.path or entry.url.path.endswith('/ticket-create') for entry in http)
+    if expected == 'WAITING_APPROVAL':
+        preview = approvals.preview(tenant, run_id, row['source_event_id'])
+        assert (preview['title'], preview['content']) == ('请处理这个问题🙂', '原始内容\n保留空格 ')
+        assert preview['expires_at'] <= row['deadline_at'] and models == [] and result['model_calls'] == 0
+        assert runner(store, loop).run_once(tenant) is None
+        assert approvals.preview(tenant, run_id, row['source_event_id']) == preview
+    else:
+        assert approvals.get(tenant, run_id) is None
+        assert len(models) == int(expected == 'SUCCEEDED')
+        if expected == 'FAILED':
+            assert result['error_code'] == 'TICKET_PROPOSAL_INVALID'
+
+
+@pytest.mark.parametrize('resume_proposal', [False, True])
+def test_explicit_ticket_proposal_checkpoint_survives_worker_restart_without_changing_route(store, resume_proposal):
+    row, loop, _, models, _ = prepare(store, [{'action': 'clarify'}], source_text='/ticket-request\n问题\n说明')
+
+    class LostProposalAck:
+        once = True
+
+        def __getattr__(self, name):
+            return getattr(store, name)
+
+        def complete_payload_step(self, *args):
+            value = store.complete_payload_step(*args)
+            if self.once and args[2] == 'working-state-v1':
+                self.once = False
+                raise psycopg.OperationalError('synthetic lost proposal acknowledgement')
+            return value
+
+    approvals = TicketApprovals(store)
+    loop.approvals = approvals
+    assert runner(LostProposalAck(), loop).run_once(row['tenant_code'])['state'] == 'RETRY_WAIT'
+    assert approvals.get(row['tenant_code'], row['run_id']) is None
+    loop.approvals = approvals if resume_proposal else None
+    result = runner(store, loop).run_once(row['tenant_code'])
+    assert result['state'] == ('WAITING_APPROVAL' if resume_proposal else 'FAILED')
+    assert result['retry_count'] == 1 and result['model_calls'] == 0 and models == [] and len(artifacts()) == 1
+    assert bool(approvals.get(row['tenant_code'], row['run_id'])) == resume_proposal

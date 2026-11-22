@@ -48,10 +48,12 @@ def build_worker(settings, tenant, provider, *, owner):
         mcp = McpTicketClient(settings.runtime_ticket_mcp_url, mcp_secret)
     access = ToolExecutor(ToolRegistry([current_message_tool(SourceClient(base, secret))]), frozenset({'session:read'}))
     tools = ToolExecutor(ToolRegistry([ticket_status_tool(TicketClient(base, secret), mcp_client=mcp)]), frozenset({'ticket:read'}))
+    store = RuntimeStore()
     loop = TicketReadLoop(access, tools, RuntimeChatClient(profile),
                           canonical_history=settings.runtime_canonical_planner_history,
-                          transport_hash=mcp.definition_hash() if mcp is not None else None)
-    return RuntimeWorker(RuntimeStore(), {'runtime-v1': loop}, owner, tenant=tenant, approval_mode='without_approval')
+                          transport_hash=mcp.definition_hash() if mcp is not None else None,
+                          approvals=TicketApprovals(store) if settings.runtime_ticket_proposal_enabled else None)
+    return RuntimeWorker(store, {'runtime-v1': loop}, owner, tenant=tenant, approval_mode='without_approval')
 
 
 def build_approval_worker(settings, tenant, *, owner):

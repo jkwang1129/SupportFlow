@@ -1255,3 +1255,11 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - 普通 AI 测试 1,001 项通过、403 项条件跳过。RAG 拒答 24 项及引用 10 项通过。日志与报告在 `.local/implementation/e1-*`。
 
 本次没有费用或质量评测。检查点超过保存期后相应使用量显示为未知。后续租户日月结算仍需单价版本、保留机制和对账数据。
+
+## B3 访客显式请求到坐席审批（2026-11-22）
+
+可选工单 Worker 从签名客服 API 获取来源快照，仅对以完整 `/ticket-request` 首行开头的消息生成待审提案。标题和正文来自原快照。仍由工作台审批与独立批准执行进程控制业务写入。有效期截断到原任务截止时间，持久化路由绑定防止配置切换后沿另一条路径恢复。停用和示例见 [ADR-0038](decisions/0038-explicit-ticket-proposal.md)。
+
+- `PYTEST_ADDOPTS='-k "ticket_loop or runtime_approval_review or runtime_model_usage or runtime_trace"' python scripts/test-agent-runtime.py --with-java-delivery` 的 49 项 PostgreSQL 定向测试通过，含 7 新用例。覆盖参数原文、未开启、普通消息、无效标题正文、检查点提交确认丢失、改路由后拒绝恢复。日志 `b3-explicit-proposal-runtime.log`。
+- 客服 JAR、受限 PostgreSQL 与独立 Python 进程的 3 条审批链路通过。用合成已入库访客消息及受控测试角色验收。待批时 4 步、2 个工具预留、0 模型、0 WRITE。通过人工审核 API 后创建工单、事件和回执各 1 条，重复执行未新增。接管或审批过期两案没有写入。机器报告 `runtime-ticket-approval.json` v7。
+- 普通 AI 测试 1,002 项通过、410 项条件跳过。日志 `b3-explicit-proposal-ai.log`。新提案未扩展原模型决策协议、工具注册或访客页面。旧签名访客消息登记到 Worker 已在独立工单查询路径验证。

@@ -20,7 +20,7 @@
 | PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前97表/索引/RLS；customer009、AI007及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
 | PR-8 持久化 Run | 部分实现：单租户可信登记、投递与只读 Loop 实际连通 | Run/Step/Worker、事务 Outbox、签名 API、固定运营 Profile、真实进程接管及受控回复回执；默认关闭的影子入口 | 待扩展租户策略管理、自动批准执行宿主及业务回复切换策略。B1 试点已验 |
 | PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。已接固定工单只读 MCP 客户端。B2 |
-| PR-10 Checkpoint/HITL | 部分实现：工单审批、恢复、会话发现、坐席决定与独立执行入口 | 原子正文和原预算恢复、真实进程接管、限时审批绑定主体/快照/参数、一次性消费、到期/撤销、坐席角色与来源重验、回复及建单未知写核销 | 待接可信业务提案触发；其他写操作需各自回执。B3 |
+| PR-10 Checkpoint/HITL | 工单链路已实现并本地验收，其他写操作分批 | 原子检查点和原预算恢复、访客显式提案、限时审批、一次性消费、坐席角色与来源重验、回复及建单未知写核销 | 自然语言提案和访客交互待评测；其他写操作需各自回执。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现 | 未跟踪 `scripts/evaluation`、`docs/evaluation/2026-11-19` 为既有本地小样本记录；`core/trace.py`、`llm_usage.py`、图 steps | 已有Run/Step存储和进程恢复测试，缺统一回放平台、工具/业务恢复数据集与质量门禁；历史样本不冒充普适准确率。A 起步/D 完善 |
 | PR-12 RAG | 部分完成：证据不足、越界引用拒答 | `rag/graph.py` 的 24 项拒答与 10 项引用契约；线性及 LangGraph；文档范围、空选集、知识发布就绪过滤 | 待验证引用对事实的支持、冲突、过期及 ACL 评测，按基线选择检索改进。A6/C |
 
@@ -147,3 +147,5 @@ D2 离线回放可校验步骤序列、未知写入和确认结果，并对照�
 B2 的 PR-9/M03 已增加可选 MCP 工单只读客户端。固定工具仍复用原权限、预算与结果核验，真实链路使用受信测试端和签名客服服务。可信 MCP 服务部署、更多业务工具与写入接入分批评估。设计和回滚见 [ADR-0036](decisions/0036-bounded-ticket-mcp.md)。
 
 E1 的 M08/M11 可按租户核查单个 Run 的已观测 Chat 和 Embedding Token 与未知用量次数。复用原子检查点与模型预留，无新增写入。合计首先用于评测和故障排查。金额对账、租户并发配额和账本保留单独验收。见 [ADR-0037](decisions/0037-runtime-observed-model-usage.md)。
+
+B3 已打通明确访客请求、提案暂停、坐席审核和独立 Worker 按原快照建单的本地链路。启用及回滚见 [ADR-0038](decisions/0038-explicit-ticket-proposal.md)。自然语言触发、访客提交入口及业务默认切换仍需独立验收。

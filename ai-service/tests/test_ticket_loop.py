@@ -25,9 +25,11 @@ REPORT={'action':'report','evidence':'tool-0'}
 
 
 def fixture(actions,*,max_turns=4,after_model=None,wrong_source=False,source_input=INPUT,run_id=RUN,model_faults=None,
-            canonical_history=False):
+            canonical_history=False,source_text=None):
     source=source_envelope();state={'status':2,'owner':True};http=[];models=[];reports=[]
     payload=json.loads(source['data']['payload_json'])
+    if source_text is not None:
+        payload['untrusted_input']['content'] = source_text
     payload['trusted_source'].update(tenant_code=source_input.tenant,source_event_id=str(source_input.source_event_id),run_id=str(run_id),
         session_no=source_input.session_no,message_id=str(source_input.message_id),event_seq=source_input.event_seq,principal_ref=source_input.principal_ref)
     raw=json.dumps(payload,ensure_ascii=False,sort_keys=True,separators=(',',':'))

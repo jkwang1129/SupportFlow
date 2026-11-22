@@ -20,13 +20,13 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _seed_source(connect, source, run, session_id):
+def _seed_source(connect, source, run, session_id, request_text):
     with connect('customer_db') as db:
         db.execute("""INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
             VALUES(%s,%s,%s,1,2,1,CURRENT_TIMESTAMP)""", (session_id, source.tenant, source.session_no))
         db.execute("""INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,visible_to,content,send_time)
-            VALUES(%s,%s,%s,%s,1,1,1,1,'synthetic approval source',CURRENT_TIMESTAMP)""",
-            (source.message_id, source.tenant, session_id, 'APPROVAL_MESSAGE_'+source.tenant))
+            VALUES(%s,%s,%s,%s,1,1,1,1,%s,CURRENT_TIMESTAMP)""",
+            (source.message_id, source.tenant, session_id, 'APPROVAL_MESSAGE_'+source.tenant, request_text))
         db.execute("""INSERT INTO agent_event_outbox(tenant_code,event_id,run_id,message_id,session_id,session_no,event_seq,
             principal_ref,trace_id,runtime_version,state,attempts,fence,delivered_at)
             VALUES(%s,%s,%s,%s,%s,%s,1,%s,%s,'runtime-v1','DELIVERED',1,1,clock_timestamp())""",
@@ -123,14 +123,19 @@ def _staff_review(client, base, key, source, run, row, title, content):
         assert result.json()['data'] == {'approval_id': str(row['approval_id']), 'status': 'APPROVED'}
 
 
-def _execute_with_worker(tenant, base, secret, runtime_dsn, *, authority_enabled):
+def _run_ticket_worker(tenant, base, secret, runtime_dsn, *, propose=False, authority_enabled=False):
     allowed = ('PATH', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'LANG', 'LC_ALL')
     env = {key: os.environ[key] for key in allowed if key in os.environ}
     env.update(PYTHONUTF8='1', PYTHONPATH=str(ROOT/'ai-service'),
                SUPPORTFLOW_AI_DATABASE_URL=runtime_dsn, SUPPORTFLOW_AI_RUNTIME_API_ENABLED='true',
                SUPPORTFLOW_AI_RUNTIME_TICKET_ACTIONS_ENABLED='true' if authority_enabled else 'false',
                SUPPORTFLOW_AI_CUSTOMER_RUNTIME_URL=base, SUPPORTFLOW_AI_CUSTOMER_SECRET=secret)
-    command = [sys.executable, '-m', 'ai.runtime.ticket_worker', '--tenant', tenant, '--approved-tickets-only', '--once']
+    mode = ['--approved-tickets-only']
+    if propose:
+        mode = ['--provider', 'qwen']
+        env.update(SUPPORTFLOW_AI_RUNTIME_TICKET_PROPOSAL_ENABLED='true', SUPPORTFLOW_AI_QWEN_MODEL='proposal-fixture',
+                   SUPPORTFLOW_AI_QWEN_API_KEY='synthetic-proposal-key', SUPPORTFLOW_AI_QWEN_BASE_URL='http://127.0.0.1:1/v1')
+    command = [sys.executable, '-m', 'ai.runtime.ticket_worker', '--tenant', tenant, *mode, '--once']
     with TemporaryDirectory(prefix='supportflow-approval-worker-') as directory:
         return subprocess.run(command, cwd=directory, env=env, capture_output=True, text=True,
                               encoding='utf-8', timeout=35,
@@ -142,7 +147,6 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn):
     from ai.runtime.source import SourceClient
     from ai.runtime.ticket_creation import TicketCreationClient
     from ai.runtime.types import RunInput
-    from ai.runtime.worker import RuntimeWorker
 
     source_client, tickets = SourceClient(base, secret), TicketCreationClient(base, secret)
     approved_title, approved_body = '审批工单🙂', 'synthetic approved body\n原始内容 '
@@ -153,15 +157,19 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn):
         source = RunInput(tenant, uuid4(), 'TICKET_APPROVAL_'+str(index), 1, session_id+1,
                           'visitor-session:'+str(session_id), 'approval-jar-'+str(index))
         run = store.enqueue(source)['run_id']
-        _seed_source(connect, source, run, session_id)
-        snapshot = asyncio.run(source_client.capture(source, run))
+        request_text = '/ticket-request\n' + approved_title + '\n' + approved_body
+        _seed_source(connect, source, run, session_id, request_text)
         approvals = TicketApprovals(store)
-        worker = RuntimeWorker(store, {'runtime-v1': lambda context: approvals.pause(
-            context, snapshot.snapshot_id, approved_title, approved_body)}, 'approval-first')
-        waiting = worker.run_once(tenant)
+        proposal = _run_ticket_worker(tenant, base, secret, runtime_dsn, propose=True)
+        assert proposal.returncode == 0 and secret not in proposal.stderr
+        waiting = store.get(tenant, run)
+        snapshot = asyncio.run(source_client.read(source, run))
         row = approvals.get(tenant, run)
         assert waiting['state'] == 'WAITING_APPROVAL' and row['snapshot_id'] == snapshot.snapshot_id
-        assert waiting['step_count'] == 1 and store.claim_next(tenant, 'must-wait') is None
+        assert (waiting['step_count'], waiting['tool_calls'], waiting['model_calls']) == (4, 2, 0)
+        assert store.claim_next(tenant, 'must-wait') is None
+        assert not any(step['effect'] == 'WRITE' for step in store.steps(tenant, run))
+        assert asyncio.run(tickets.receipt(source, run)) is None
         with httpx.Client(trust_env=False, follow_redirects=False, timeout=3) as client:
             _staff_review(client, base, jwt_key, source, run, row, approved_title, approved_body)
         assert approvals.get(tenant, run)['decided_by'] == 'staff:123'
@@ -184,12 +192,12 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn):
                                        'visitor-session:'+str(session_id+3000), 'approval-worker-ordinary'))
         if mode == 'accepted':
             approved = store.get(tenant, run)
-            disabled = _execute_with_worker(tenant, base, secret, runtime_dsn, authority_enabled=False)
+            disabled = _run_ticket_worker(tenant, base, secret, runtime_dsn)
             assert disabled.returncode == 1 and store.get(tenant, run) == approved
-        worker = _execute_with_worker(tenant, base, secret, runtime_dsn, authority_enabled=True)
+        worker = _run_ticket_worker(tenant, base, secret, runtime_dsn, authority_enabled=True)
         assert worker.returncode == 0 and secret not in worker.stderr, (mode, worker.returncode)
         result = store.get(tenant, run)
-        repeated = _execute_with_worker(tenant, base, secret, runtime_dsn, authority_enabled=True)
+        repeated = _run_ticket_worker(tenant, base, secret, runtime_dsn, authority_enabled=True)
         assert repeated.returncode == 0 and store.get(tenant, run) == result
         assert store.get(tenant, other['run_id']) == other
         audit = approvals.get(tenant, run)
@@ -202,17 +210,17 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn):
             assert result['state'] == 'SUCCEEDED' and audit['status'] == 'CONSUMED'
             assert len(writes) == 1 and writes[0]['state'] == 'SUCCEEDED' and audit['consumed_step_no'] == writes[0]['step_no']
             assert facts == [(receipt.ticket_id, receipt.ticket_no, approved_title, approved_body, session_id)] and events == 1
-            assert (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count']) == (4, 2, 0, 0)
+            assert (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count']) == (7, 4, 0, 0)
         else:
             expected_error = 'SOURCE_REVOKED' if mode == 'taken_over_after_approval' else 'APPROVAL_EXPIRED'
             assert result['state'] == 'FAILED' and result['error_code'] == expected_error
             assert writes == [] and receipt is None and facts == [] and events == 0
             assert audit['consumed_step_no'] is None
-        observations.append(dict(case=mode, waiting_state=waiting['state'], final_state=result['state'], error_code=result['error_code'],
+        observations.append(dict(case=mode, waiting_state=waiting['state'], before_review_writes=0, final_state=result['state'], error_code=result['error_code'],
             approval_status=audit['status'], steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=int(receipt is not None), events=events))
     artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v6', mode='SYNTHETIC_ROLE_SOURCE_REAL_JAVA_AI_PG_CLI',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v7', mode='STORED_VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
-    print('Authenticated customer-JAR approval discovery, preview, review and approval-only worker CLI: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
+    print('Explicit visitor proposal worker -> authenticated customer-JAR discovery, review and approval-only worker: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
           'duplicate approval preserved, one approved ticket/receipt, zero writes after takeover or expiry', flush=True)
