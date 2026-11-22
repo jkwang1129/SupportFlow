@@ -22,8 +22,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _seed_source(connect, source, run, session_id, request_text):
     with connect('customer_db') as db:
-        db.execute("""INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
-            VALUES(%s,%s,%s,1,2,1,CURRENT_TIMESTAMP)""", (session_id, source.tenant, source.session_no))
         db.execute("""INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,visible_to,content,send_time)
             VALUES(%s,%s,%s,%s,1,1,1,1,%s,CURRENT_TIMESTAMP)""",
             (source.message_id, source.tenant, session_id, 'APPROVAL_MESSAGE_'+source.tenant, request_text))
@@ -34,12 +32,12 @@ def _seed_source(connect, source, run, session_id, request_text):
 
 
 @contextmanager
-def approval_role_server():
+def approval_role_server(visitor_tenant):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             request = urlsplit(self.path)
             tenant = parse_qs(request.query).get('tenantCode', [])
-            if tenant not in (['TC_APPROVAL_0'], ['TC_APPROVAL_1'], ['TC_APPROVAL_2']):
+            if tenant not in ([visitor_tenant], ['TC_APPROVAL_1'], ['TC_APPROVAL_2']):
                 self.send_error(404)
                 return
             roles = {
@@ -142,7 +140,7 @@ def _run_ticket_worker(tenant, base, secret, runtime_dsn, *, propose=False, auth
                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
 
 
-def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn):
+def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *, visitor_tenant, append_visitor):
     from ai.runtime.approvals import TicketApprovals
     from ai.runtime.source import SourceClient
     from ai.runtime.ticket_creation import TicketCreationClient
@@ -152,13 +150,21 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn):
     approved_title, approved_body = '审批工单🙂', 'synthetic approved body\n原始内容 '
     observations = []
     for index, mode in enumerate(('accepted', 'taken_over_after_approval', 'expired_before_resume')):
-        tenant = 'TC_APPROVAL_'+str(index)
+        signed_admission = mode == 'accepted'
+        tenant = visitor_tenant if signed_admission else 'TC_APPROVAL_'+str(index)
         session_id = 20500001 + index * 10
-        source = RunInput(tenant, uuid4(), 'TICKET_APPROVAL_'+str(index), 1, session_id+1,
-                          'visitor-session:'+str(session_id), 'approval-jar-'+str(index))
-        run = store.enqueue(source)['run_id']
+        session_no = 'TICKET_APPROVAL_'+str(index)
         request_text = '/ticket-request\n' + approved_title + '\n' + approved_body
-        _seed_source(connect, source, run, session_id, request_text)
+        with connect('customer_db') as db:
+            db.execute('''INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
+                VALUES(%s,%s,%s,1,2,%s,CURRENT_TIMESTAMP)''', (session_id, tenant, session_no, int(not signed_admission)))
+        if signed_admission:
+            source, run = append_visitor(session_no, request_text)
+        else:
+            source = RunInput(tenant, uuid4(), session_no, 1, session_id+1,
+                              'visitor-session:'+str(session_id), 'approval-jar-'+str(index))
+            run = store.enqueue(source)['run_id']
+            _seed_source(connect, source, run, session_id, request_text)
         approvals = TicketApprovals(store)
         proposal = _run_ticket_worker(tenant, base, secret, runtime_dsn, propose=True)
         assert proposal.returncode == 0 and secret not in proposal.stderr
@@ -204,8 +210,10 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn):
         writes = [step for step in store.steps(tenant, run) if step['effect'] == 'WRITE']
         receipt = asyncio.run(tickets.receipt(source, run, expected_snapshot_id=snapshot.snapshot_id, expected_hash=row['arguments_sha256']))
         with connect('customer_db') as db:
-            facts = db.execute('SELECT id,ticket_no,title,"desc",source_session_id FROM ticket WHERE tenant_code=%s', (tenant,)).fetchall()
-            events = db.execute('SELECT count(*) FROM ticket_event WHERE tenant_code=%s', (tenant,)).fetchone()[0]
+            facts = db.execute('SELECT id,ticket_no,title,"desc",source_session_id FROM ticket WHERE tenant_code=%s AND source_session_id=%s',
+                               (tenant, session_id)).fetchall()
+            events = db.execute('''SELECT count(*) FROM ticket_event e JOIN ticket t ON t.id=e.ticket_id AND t.tenant_code=e.tenant_code
+                WHERE e.tenant_code=%s AND t.source_session_id=%s''', (tenant, session_id)).fetchone()[0]
         if mode == 'accepted':
             assert result['state'] == 'SUCCEEDED' and audit['status'] == 'CONSUMED'
             assert len(writes) == 1 and writes[0]['state'] == 'SUCCEEDED' and audit['consumed_step_no'] == writes[0]['step_no']
@@ -216,11 +224,12 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn):
             assert result['state'] == 'FAILED' and result['error_code'] == expected_error
             assert writes == [] and receipt is None and facts == [] and events == 0
             assert audit['consumed_step_no'] is None
-        observations.append(dict(case=mode, waiting_state=waiting['state'], before_review_writes=0, final_state=result['state'], error_code=result['error_code'],
+        observations.append(dict(case=mode, source_enrollment='SIGNED_VISITOR_APPEND' if signed_admission else 'SYNTHETIC_STORED_EVENT',
+            waiting_state=waiting['state'], before_review_writes=0, final_state=result['state'], error_code=result['error_code'],
             approval_status=audit['status'], steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=int(receipt is not None), events=events))
     artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v7', mode='STORED_VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v8', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
-    print('Explicit visitor proposal worker -> authenticated customer-JAR discovery, review and approval-only worker: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
+    print('Signed visitor append -> Outbox -> proposal worker -> authenticated staff review -> approval-only worker: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
           'duplicate approval preserved, one approved ticket/receipt, zero writes after takeover or expiry', flush=True)

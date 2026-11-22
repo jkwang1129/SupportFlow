@@ -1292,3 +1292,9 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - 普通 AI 全量 1,028 项通过、411 项条件跳过。`python scripts/report-rag-contract.py --junit .local/implementation/c3-rag-extractive-ai.xml --require-citations --require-extractive --output .local/implementation/c3-rag-extractive-report.json` 的 24 项拒答、10 项引用和 20 项配对门禁均通过。报告器 7 项通过。首轮 Windows 终端编码产生子进程读取异常，改用可跨编码读取的 JSON 摘要后复跑通过。
 
 配对数据在 `fixtures/evaluation/rag-extractive-v1.json`，原始日志及 XML 在 `.local/implementation/c3-*`。这些计数用于检验证据核查规则，通过率不可用作模型准确率、生产拒答率或成本收益。
+
+## B3 签名入站至批准建单的整体验收（2026-11-22）
+
+`PYTEST_ADDOPTS='-k "ticket_loop or runtime_approval_review"' python scripts/test-agent-runtime.py --with-java-delivery` 通过 37 项 PostgreSQL 定向测试。三条实际审批路径也全部通过，正例由真实签名访客消息入站。匿名被拒，重复提交同一消息只形成 1 条消息、1 项 Outbox 和 1 个 Run。提案批准前写入为 0。批准后独立 Worker 产生 1 张工单、1 条工单事件和 1 条回执，重复运行无新增，模型调用为 0。
+
+接管和过期仍用合成来源事件分别模拟，业务写入均为 0。报告 `runtime-ticket-approval.json` v8，日志 `b3-signed-visitor-approval.log`。此批只升级集成验收夹具，不修改运行代码和部署开关。需要回滚时回退验收夹具即可。

@@ -144,7 +144,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
     java=Path(os.environ['JAVA_HOME'])/'bin'/('java.exe' if os.name=='nt' else 'java');jar,=(ROOT/'backend/supportflow-customer-service/target').glob('*.jar')
     logs=ROOT/'.local/runtime-loop-service';logs.mkdir(parents=True,exist_ok=True);failed=False
     store=RuntimeStore(lambda:psycopg.connect(runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'],row_factory=dict_row))
-    with approval_role_server() as role_base, (logs/'customer-service.log').open('wb') as log:
+    with approval_role_server(SHADOW_TENANT) as role_base, (logs/'customer-service.log').open('wb') as log:
         process=subprocess.Popen([str(java),'-Xms32m','-Xmx384m','-jar',str(jar),f'--server.port={port}',
             '--supportflow.bot.runtime-source-enabled=true','--supportflow.bot.runtime-read-tools-enabled=true',
             '--supportflow.bot.runtime-ticket-create-enabled=true',
@@ -164,8 +164,6 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     except httpx.HTTPError:pass
                     time.sleep(.25)
                 else:raise RuntimeError('Disposable Loop customer service not ready')
-            verify_ticket_approval(connect,base,child['SUPPORTFLOW_JWT_SECRET'],secret,store,
-                                   runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'])
             observations=[];scenarios={}
             mcp_key, mcp_runs = secrets.token_urlsafe(48), []
             direct_tickets = TicketClient(base, secret)
@@ -298,6 +296,10 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v4',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
                 source_enrollment='SIGNED_VISITOR_APPEND_FOR_CONFIGURED_WORKER',publication='REPORT_ONLY',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
             print('Actual signed visitor append -> shadow Outbox -> scheduled AI delivery -> scoped worker CLI -> bounded MCP SSE/Java ticket read passed; 10 read-loop cases passed with synthetic model TCP and restricted PG',flush=True)
+            verify_ticket_approval(connect, base, child['SUPPORTFLOW_JWT_SECRET'], secret, store,
+                                   runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'], visitor_tenant=SHADOW_TENANT,
+                                   append_visitor=lambda session_no, text: _send_shadow_message(
+                                       connect, base, child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'], store, session_no, text))
             from knowledge_tool_fixture import verify_knowledge_tools
             verify_knowledge_tools(connect,base,secret,store)
             from ticket_creation_api_fixture import verify_ticket_creation_api
