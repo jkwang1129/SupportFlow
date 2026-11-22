@@ -54,6 +54,7 @@ REPEAT_RE = re.compile(r"(.)\1{3,}")
 
 # 槽位：客服场景里最常要客户补的两类信息
 ORDER_NO_RE = re.compile(r"(?:订单号|订单编号|订单|单号|运单号|快递单号|工单号)[:：\s]*([A-Za-z0-9\-]{6,32})")
+ORDER_CORRECTION_RE = re.compile(r"(?:订单号|订单编号)\s*(?:更正为|改为)\s*[:：]?\s*([A-Za-z0-9-]{6,32})[。.!！]?")
 BARE_DIGITS_RE = re.compile(r"(?<!\d)(\d{10,20})(?!\d)")
 PHONE_RE = re.compile(r"(?<!\d)(1[3-9]\d{9})(?!\d)")
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
@@ -552,6 +553,12 @@ def merge_emotion(rule: tuple[str, int, list[str]],
 
 
 # --------------------------------------------------------------------------- 槽位
+
+
+def explicit_order_correction(question: str) -> str | None:
+    """Accept a single, explicit order-number correction from the current turn."""
+    match = ORDER_CORRECTION_RE.fullmatch(question.strip())
+    return match.group(1) if match else None
 
 
 def extract_slots(texts: list[str], known: dict[str, Any] | None = None) -> dict[str, str]:

@@ -121,6 +121,58 @@ def test_brain_analysis_context_restores_same_session_slot_and_excludes_foreign_
     assert json.loads(captured[-1][1]['messages'][1]['content'])['remembered_slots'] == {}
 
 
+@pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'), reason='requires disposable runtime PostgreSQL')
+def test_brain_analysis_context_persists_an_explicit_order_correction_only_for_its_tenant(model, monkeypatch):
+    dsn = os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN']
+    monkeypatch.setattr(brain, 'connect', lambda: psycopg.connect(dsn, row_factory=dict_row))
+    monkeypatch.setattr(brain, 'load_setting', lambda _: brain.DEFAULT_SETTING)
+    monkeypatch.setattr(brain, 'load_intents', lambda _: [])
+    monkeypatch.setattr(brain, 'match_intent_by_version', lambda *_: None)
+    settings, captured = model
+    settings.brain_context_max_bytes = 2_048
+    session = 'corr-' + uuid4().hex
+    old = {'order_no': 'FIXTURE-OLD1', 'phone': '13800000000'}
+    corrected = old | {'order_no': 'FIXTURE-NEW1'}
+    other = {'order_no': 'FIXTURE-OTHER1'}
+    for tenant, slots in (('CTXT_A', old), ('CTXT_B', other)):
+        brain.save_dialogue(tenant, session, {'turn_count': 1, 'slots': slots})
+
+    def turn(tenant, question, history):
+        state = {'tenant_code': tenant, 'session_no': session, 'question': question, 'history': history}
+        result = asyncio.run(brain_agent.node_recognize(state))
+        return state | result, json.loads(captured[-1][1]['messages'][1]['content'])['remembered_slots']
+
+    reference = [{'role': 'user', 'content': '订单号：FIXTURE-OLD1'}]
+    first, model_slots = turn('CTXT_A', '订单号更正为：FIXTURE-NEW1。', reference)
+    assert first['slots'] == model_slots == corrected
+    brain_agent.node_persist(first)
+    assert brain.load_dialogue('CTXT_A', session)['slots'] == corrected
+    assert brain.load_dialogue('CTXT_B', session)['slots'] == other
+
+    followup, model_slots = turn('CTXT_A', '那笔订单现在到了吗？', reference)
+    assert followup['slots'] == model_slots == corrected
+    second_tenant, model_slots = turn('CTXT_B', '那笔订单现在到了吗？', reference)
+    assert second_tenant['slots'] == model_slots == other
+
+
+@pytest.mark.parametrize('question,expected_order', [
+    ('订单编号改为 13812345678', '13812345678'),
+    ('订单号更正为 ORDER-ONE1 或 ORDER-TWO2', 'FIXTURE-OLD1'),
+    ('不要把订单号更正为 ORDER-WRONG1', 'FIXTURE-OLD1'),
+    ('订单号改为 ' + 'A' * 33, 'FIXTURE-OLD1'),
+])
+def test_brain_analysis_context_applies_only_single_explicit_corrections(monkeypatch, question, expected_order):
+    monkeypatch.setattr(brain, 'load_setting', lambda _: brain.DEFAULT_SETTING)
+    monkeypatch.setattr(brain, 'load_intents', lambda _: [])
+    monkeypatch.setattr(brain, 'load_dialogue', lambda *_: {'slots': {'order_no': 'FIXTURE-OLD1'}})
+    monkeypatch.setattr(brain, 'match_intent_by_version', lambda *_: None)
+    monkeypatch.setattr(brain, 'resolve_provider', lambda _: (None, ''))
+
+    state = {'tenant_code': 'CTXT_A', 'session_no': 'fixture-session', 'question': question}
+    observed = asyncio.run(brain_agent.node_recognize(state))
+    assert observed['slots'] == {'order_no': expected_order}
+
+
 def test_brain_diagnostics_record_metadata_without_request_response_or_slots(model, monkeypatch, caplog):
     caplog.set_level('INFO')
     question, slot = 'PRIVATE_FIXTURE_QUESTION', 'ORDER-FIXTURE-A'

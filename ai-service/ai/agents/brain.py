@@ -91,6 +91,10 @@ async def node_recognize(state: BrainState) -> dict:
     setting = svc.load_setting(state["tenant_code"])
     intents = svc.load_intents(state["tenant_code"])
     dialogue = svc.load_dialogue(state["tenant_code"], state.get("session_no") or "")
+    known_slots = dialogue.get("slots") or {}
+    corrected_order = svc.explicit_order_correction(state["question"])
+    if corrected_order is not None:
+        known_slots = {**known_slots, "order_no": corrected_order}
 
     # 寒暄 / "你是谁" / "你能做什么" 这类固定问答：直接给话术，既不检索也不判转人工。
     # 放到最前面是因为它们和业务意图无关——硬塞进意图识别，模型偶尔会把它当成"想找人工"。
@@ -136,8 +140,7 @@ async def node_recognize(state: BrainState) -> dict:
                     (rule_intent or {}).get("name"), rule_confidence)
     else:
         model_result = await svc.analyze_with_llm(
-            state["question"], state.get("history") or [], intents, state["tenant_code"],
-            dialogue.get("slots"))
+            state["question"], state.get("history") or [], intents, state["tenant_code"], known_slots)
 
     intent = rule_intent
     confidence = rule_confidence
@@ -156,12 +159,14 @@ async def node_recognize(state: BrainState) -> dict:
             # 训练版本命中的要继续标成 trained（它是软证据，别被这句改写成硬规则）
             source = trained_source or "rule(模型判为其他)"
 
-    slots = svc.extract_slots(
-        [state["question"]] + [m.get("content") or "" for m in (state.get("history") or [])],
-        dialogue.get("slots"),
-    )
-    # 模型也抽了槽位就并进来（规则没覆盖到的格式它能补上）
-    slots = svc.merge_slots(slots, (model_result or {}).get("slots"))
+    if corrected_order is not None:
+        # The correction targets only order_no, even when its value looks like a phone number.
+        slots = known_slots
+    else:
+        slots = svc.extract_slots(
+            [state["question"]] + [m.get("content") or "" for m in (state.get("history") or [])], known_slots,
+        )
+        slots = svc.merge_slots(slots, (model_result or {}).get("slots"))
     turn_count = int(dialogue.get("turn_count") or 0) + 1
     logger.info("客服大脑意图 tenant=%s session=%s 意图=%s 置信度=%.2f 来源=%s slotCount=%d questionChars=%d",
                 state["tenant_code"], state.get("session_no") or "-",

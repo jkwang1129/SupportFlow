@@ -1389,3 +1389,10 @@ Worker 在业务处理前绑定验证过的持久化请求号，作用域退出�
 - `python scripts/test-versioned-migrations.py` 在隔离 PostgreSQL 验证 AI 007 → 008，逐字段保留已有任务、步骤、检查点、审批及写入核销，索引有效。六库迁移重跑为无变更，17 项迁移用例均通过。`python scripts/test-schema-drift.py` 的 97 张表一致，16 类 SQL 和 3 类元数据漂移均拦截。原日志 `d7-trace-lookup-migrate.log`、`d7-trace-lookup-schema.log`。
 - `python scripts/test-database-restore.py` 在两个独立 PostgreSQL 17 实例完成六库备份恢复，校验 97 张应用表及 6 张迁移历史表的 78 行合成记录。两个跨库 Outbox/Run 引用一致，两个受限角色通过范围检查。原日志 `d7-trace-lookup-restore.log`。
 - 普通 AI 测试 1,041 项通过、426 项条件跳过，三组 RAG 门禁 54 项均通过。原日志 `d7-trace-lookup-ai.log`，报告 `d7-trace-lookup-rag-contract.json`。
+
+## C7 当前回合的显式订单号更正（2026-11-22）
+
+对完整当前提问中的 `订单号更正为：ORDER-123456` 等单值句式，先更新订单槽位再分析，并经现有持久化节点保存。明确更正仅更新订单号，保留其他槽位。此规则只处理会话记忆，业务订单系统和写入权限沿用原链路。回退应用提交可恢复原抽取策略，已经保存的会话状态保留。记忆过期、开放式多订单推断和真实模型回答质量仍待测。
+
+- 隔离 PostgreSQL 17 首轮夹具超出会话号列长度，缩短后复现旧订单号仍出现在模型输入和业务状态。修复后新号立即进入实际 Chat 序列化请求，下一轮从库中恢复新值，同号会话的另一租户保持原值。四项其他回归覆盖长得像手机号的订单编号、多个候选、否定和超长输入。日志 `c7-slot-correction-baseline-v2.log`、`c7-slot-correction-pg.log`。
+- `PYTEST_ADDOPTS='-k "brain_analysis_context or runtime_trace or runtime_models or runtime_approval_review"' python scripts/test-agent-runtime.py` 通过 48 项。普通 AI 测试 1,045 项通过、427 项条件跳过。三组 RAG 门禁 54 项均通过。原日志 `c7-slot-correction-ai.log`，报告 `c7-slot-correction-rag-contract.json`。
