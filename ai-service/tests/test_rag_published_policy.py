@@ -2,10 +2,12 @@
 import asyncio
 from types import SimpleNamespace
 
+import psycopg
 import pytest
 
 from ai.agents import brain,graph as chat
 from ai.rag import graph,pipeline,llama_engine,store
+from ai.services import rag
 
 
 @pytest.mark.parametrize('entry',['brain','chat'])
@@ -60,3 +62,23 @@ def test_non_boolean_visibility_is_rejected_before_any_io(monkeypatch,value,entr
            'vector':lambda:store.search('TENANT_A',[1],published_only=value),
            'keyword':lambda:store.keyword_search('TENANT_A','query',published_only=value)}
     with pytest.raises(ValueError):calls[entry]()
+
+
+def test_database_recheck_failure_withholds_all_evidence_without_leaking_diagnostics(monkeypatch, caplog):
+    monkeypatch.setattr(graph, 'langgraph_available', lambda: False)
+    monkeypatch.setattr(graph.retriever, 'retrieve_with_meta', lambda **_: {
+        'mode': 'vector', 'results': [{'id': 1, 'doc_id': 101, 'score': .9, 'content': 'synthetic private facts'}],
+    })
+
+    async def compose(**_):
+        return rag.ComposedAnswer('synthetic private facts[1]', [{'index': 1, 'content': 'synthetic private facts'}], True)
+
+    def offline(*_):
+        raise psycopg.OperationalError('synthetic private database details')
+
+    monkeypatch.setattr(rag, 'compose_answer_details', compose)
+    monkeypatch.setattr(store, 'published_evidence_is_current', offline)
+    result = asyncio.run(graph.ask('refund', 'TENANT_A', published_only=True))
+    assert result['abstention_reason'] == 'stale_evidence'
+    assert result['citations'] == [] and result['retrieved'] == [] and not result['enough']
+    assert 'synthetic private' not in caplog.text and 'synthetic private' not in str(result)

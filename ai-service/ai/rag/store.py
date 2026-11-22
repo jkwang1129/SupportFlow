@@ -273,6 +273,30 @@ def keyword_search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[i
     return rows
 
 
+def published_evidence_is_current(tenant_code: str, hits: list[dict], doc_ids: list[int] | None) -> bool:
+    """Verify the exact evidence supplied to generation in a new scoped snapshot."""
+    if not 1 <= len(hits) <= 50:
+        return False
+    scope = document_scope(doc_ids)
+    fields = ('doc_id', 'chunk_no', 'content', 'doc_title')
+    expected = {hit['id']: tuple(hit[key] for key in fields) for hit in hits}
+    if len(expected) != len(hits) or any(type(chunk_id) is not int or not 1 <= chunk_id <= 9223372036854775807
+                                        for chunk_id in expected):
+        return False
+    if scope is not None and any(value[0] not in scope for value in expected.values()):
+        return False
+    with tenant_connection(tenant_code) as conn, conn.cursor() as cur:
+        cur.execute("SET LOCAL statement_timeout = '2000ms'")
+        cur.execute("""
+            SELECT c.id, c.doc_id, c.chunk_no, c.content, d.title AS doc_title
+              FROM kb_chunk c JOIN kb_document d ON d.id=c.doc_id AND d.tenant_code=c.tenant_code
+             WHERE c.tenant_code=%s AND c.id=ANY(%s)
+               AND d.is_deleted=FALSE AND d.status=3 AND d.index_status=3
+        """, (tenant_code, list(expected)))
+        actual = {row['id']: tuple(row[key] for key in fields) for row in cur.fetchall()}
+    return actual == expected
+
+
 def ping() -> bool:
     """探活：给健康检查用。"""
     try:

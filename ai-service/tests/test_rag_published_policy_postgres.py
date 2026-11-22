@@ -1,12 +1,15 @@
 """Actual publication/index predicates intersect scope, RLS and deletion."""
+import asyncio
 from itertools import count
 import os
+from types import SimpleNamespace
 
 import psycopg
 from psycopg.rows import dict_row
 import pytest
 
-from ai.rag import store,pipeline,llama_engine
+from ai.rag import graph, store, pipeline, llama_engine
+from ai.services import rag
 
 pytestmark=pytest.mark.skipif(not os.getenv('SUPPORTFLOW_KB_ADMIN_TEST_DSN'),reason='run scripts/test-customer-rls.py --with-ai')
 IDS=count(24_000_001,20)
@@ -67,3 +70,49 @@ def test_real_pipeline_fallback_keeps_visitor_visibility_and_document_scope(corp
     result=pipeline.search(tenant,'退款到账',doc_ids=scope,published_only=True)
     assert {row['doc_id'] for row in result['results']}==(set() if mode=='miss' else {docs['ready']})
     if mode!='miss':assert 'keyword' in result['mode']
+
+
+@pytest.mark.parametrize('engine', ['linear', 'langgraph'])
+@pytest.mark.parametrize('change', ['none', 'offline', 'index-failed', 'deleted', 'replaced'])
+def test_publication_is_rechecked_after_model_response(corpus, monkeypatch, engine, change):
+    if engine == 'langgraph' and not graph.langgraph_available():
+        pytest.skip('Install LangGraph to exercise the graph path')
+    tenant, docs = corpus
+    monkeypatch.setattr(graph, 'langgraph_available', lambda: engine == 'langgraph')
+    monkeypatch.setattr(graph, '_graph', None)
+    settings = SimpleNamespace(rag_vector_min_score=.35, rag_keyword_min_score=.12, llm_timeout=1)
+    monkeypatch.setattr(graph, 'get_settings', lambda: settings)
+    monkeypatch.setattr(rag, 'get_settings', lambda: settings)
+    monkeypatch.setattr(rag, 'resolve_provider', lambda tenant: ({'model': 'synthetic-model'}, 'fixture'))
+
+    def retrieve(*, query, **scope):
+        return {'mode': 'keyword', 'results': store.keyword_search(query='退款到账', **scope)}
+
+    async def complete(_chosen, payload, *_args, **_kwargs):
+        assert '退款到账 published policy' in payload['messages'][1]['content']
+        changes = {'offline': 'UPDATE kb_document SET status=4 WHERE id=%s',
+                   'index-failed': 'UPDATE kb_document SET index_status=4 WHERE id=%s',
+                   'deleted': 'UPDATE kb_document SET is_deleted=TRUE WHERE id=%s',
+                   'replaced': "UPDATE kb_chunk SET content='synthetic replacement' WHERE id=%s"}
+        if change in changes:
+            with psycopg.connect(os.environ['SUPPORTFLOW_KB_ADMIN_TEST_DSN']) as db:
+                db.execute(changes[change], (docs['ready'],))
+        return {'choices': [{'message': {'content': '合成初始材料回答[1]'}}]}
+
+    monkeypatch.setattr(graph.retriever, 'retrieve_with_meta', retrieve)
+    monkeypatch.setattr(rag, 'call_chat', complete)
+    result = asyncio.run(graph.ask('退款到账', tenant, doc_ids=[docs['ready']], published_only=True))
+    if change == 'none':
+        assert result['decision'] == 'answer' and result['answer'] == '合成初始材料回答[1]'
+        assert result['citations'][0]['doc_id'] == str(docs['ready'])
+    else:
+        assert result['decision'] == 'abstain' and result['abstention_reason'] == 'stale_evidence'
+        assert not result['citations'] and not result['retrieved'] and '合成初始材料回答' not in result['answer']
+
+
+def test_published_evidence_must_still_belong_to_the_same_tenant_and_document_scope(corpus):
+    tenant, docs = corpus
+    hits = store.keyword_search(tenant, '退款到账', doc_ids=[docs['ready']], published_only=True)
+    assert store.published_evidence_is_current(tenant, hits, None)
+    assert not store.published_evidence_is_current(tenant, hits, [docs['draft']])
+    assert not store.published_evidence_is_current(tenant.replace('KP', 'KQ'), hits, None)

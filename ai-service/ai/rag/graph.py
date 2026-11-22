@@ -18,12 +18,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, TypedDict
 
+import psycopg
+
 from ..config import get_settings
 from ..core.trace import get_trace_id
-from . import retriever
+from . import retriever, store
 from .store import query_terms
 
 logger = logging.getLogger(__name__)
@@ -283,6 +286,17 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
     else:
         logger.info("知识问答编排：线性实现（未装 langgraph，建议 pip install langgraph）")
         final = await _linear_flow(state)
+
+    if published_only and final.get('hits'):
+        try:
+            current = await asyncio.to_thread(store.published_evidence_is_current, tenant_code, final['hits'], doc_ids)
+        except (psycopg.Error, ValueError, TypeError, KeyError) as failure:
+            logger.warning('知识来源复核失败 errorType=%s', type(failure).__name__)
+            current = False
+        if not current:
+            final.update(answer='当前资料已变化或暂时无法核验。请稍后重试，或联系人工客服处理。', citations=[], hits=[],
+                         enough=False, abstention_reason='stale_evidence',
+                         steps=_step(final, 'verify_source', '拒绝返回已失效或无法核验的来源'))
 
     return {
         "question": question,

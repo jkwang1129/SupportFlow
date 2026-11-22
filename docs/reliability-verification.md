@@ -1312,3 +1312,10 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 
 - 在 `frontend` 运行 `npm run build`，TypeScript 和生产构建通过。既有入口分块体积仍触发大于 500 kB 的提示。原日志 `e3-workspace-progress-build.log`。
 - 启动 `node frontend/scripts/approval-workspace-fixture.mjs`，执行 `./scripts/test-approval-workspace.ps1`。实际 Chromium 共 6 组通过。新断言检查弹窗内部的待执行状态、执行终态、终态移除撤销及切换会话清理状态。原有拒绝、撤销、过期及访问角色继续通过。日志 `e3-workspace-progress-browser.log`。浏览器使用合成 HTTP 结果，后端真实链路见上一节。
+
+## C4 访客知识来源的返回前复核（2026-11-22）
+
+访客模式按原文档范围和切片 ID 读一次当前投影。复核后才能返回原答案及来源。查询语句设 2 秒超时、最多 50 个原召回切片，不重新请求向量嵌入或模型。发现来源失效或复核出错时清空生成正文、引用和召回原文。设计、局限和回滚见 [ADR-0042](decisions/0042-rag-publication-recheck.md)。
+
+- `python scripts/test-customer-rls.py --with-ai` 的 159 项客服及 30 项知识库测试通过，新增 11 项 PostgreSQL 用例。在签名租户上下文中用实际数据库读取原文，生成期间模拟下线、索引失败、软删除及原切片内容替换。线性与 LangGraph 共 8 条变更路径全部拒答，2 条原文保持路径正常通过。额外验证租户和显式文档范围。原日志 `c4-rag-publication-pg.log`。
+- 普通 AI 测试 1,029 项通过、422 项条件跳过，其中新增数据库复核异常和日志脱敏测试。拒答 24 项、引用 10 项和配对原文 20 项门禁均通过。报告 `c4-rag-publication-contract.json`。模型是合成替身，额外数据库读取的生产延迟及整个知识生命周期仍待实测。
