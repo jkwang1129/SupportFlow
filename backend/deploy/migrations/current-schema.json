@@ -752,6 +752,10 @@
             "agent_run_tenant_code_source_event_id_key": {
               "definition": "CREATE UNIQUE INDEX agent_run_tenant_code_source_event_id_key ON public.agent_run USING btree (tenant_code, source_event_id)",
               "valid": true
+            },
+            "agent_run_trace_lookup_idx": {
+              "definition": "CREATE INDEX agent_run_trace_lookup_idx ON public.agent_run USING btree (tenant_code, trace_id, created_at DESC, run_id DESC)",
+              "valid": true
             }
           },
           "rls": {
@@ -13796,6 +13800,10 @@
       {
         "checksum": "9305aff58869f20d7251a0a791e9288dd65809919b1eef37ffd0844207ef5952",
         "version": "007"
+      },
+      {
+        "checksum": "3b70494833c5440a21537731a29b1666f16e2e6d8ea23d06ecbe76d47c442ea3",
+        "version": "008"
       }
     ],
     "billing_db": [

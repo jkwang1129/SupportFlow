@@ -14,6 +14,7 @@ from .payloads import SCHEMAS,StepPayload,encode as encode_payload,decode as dec
 from .model_usage import summarize as summarize_model_usage
 
 TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELLED'}
+TRACE_LOOKUP_LIMIT = 20
 
 
 class RuntimeStore:
@@ -69,6 +70,18 @@ class RuntimeStore:
     def steps(self, tenant, run_id):
         with self._scope(tenant) as connection:
             return connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s ORDER BY step_no', (tenant,UUID(str(run_id)))).fetchall()
+
+    def lookup_trace(self, tenant, trace_id):
+        """Find candidate runs for one exact trace ID under the supplied tenant."""
+        trace_id = identifier(trace_id)
+        with self._scope(tenant) as connection:
+            runs = connection.execute("""
+                SELECT run_id,state,error_code,created_at,finished_at FROM agent_run
+                WHERE tenant_code=%s AND trace_id=%s
+                ORDER BY created_at DESC,run_id DESC LIMIT %s
+                """, (tenant, trace_id, TRACE_LOOKUP_LIMIT + 1)).fetchall()
+        return {'schema_version': 'runtime-trace-lookup-v1', 'trace_id': trace_id,
+                'runs': runs[:TRACE_LOOKUP_LIMIT], 'truncated': len(runs) > TRACE_LOOKUP_LIMIT}
 
     def trace_snapshot(self, tenant, run_id):
         """Export one tenant-bound trace without loading checkpoint or business content."""

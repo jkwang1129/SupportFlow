@@ -1,4 +1,5 @@
 """Read live Runtime trace metadata from PostgreSQL with the restricted account."""
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -43,7 +44,44 @@ def test_trace_cli_exports_run_and_ordered_steps_without_private_references(stor
     step, = trace['steps']
     assert set(step) == {'step_no', 'kind', 'effect', 'state', 'created_at', 'completed_at'}
     assert (step['step_no'], step['kind'], step['effect'], step['state']) == (1, 'TOOL', 'READ', 'SUCCEEDED')
+
+    command = [sys.executable, '-m', 'ai.runtime.trace_export', '--tenant', source.tenant, '--trace-id']
+    options = dict(cwd=tmp_path, env=server_env, capture_output=True, text=True, encoding='utf-8', timeout=10)
+    lookup = subprocess.run(command + [source.trace_id], **options)
+    assert lookup.returncode == 0 and 'fixture-private-' not in lookup.stdout + lookup.stderr
+    assert json.loads(lookup.stdout) == {
+        'schema_version': 'runtime-trace-lookup-v1', 'trace_id': source.trace_id, 'truncated': False,
+        'runs': [{key: trace['run'][key] for key in ('run_id', 'state', 'error_code', 'created_at', 'finished_at')}],
+    }
+    invalid = subprocess.run(command + ['%'], **options)
+    assert invalid.returncode == 1 and not invalid.stdout
+    mixed = subprocess.run(command + [source.trace_id, '--model-usage'], **options)
+    assert mixed.returncode == 2 and not mixed.stdout
     assert store.get(source.tenant, run) == completed
+
+
+def test_trace_lookup_caps_results_and_uses_the_tenant_index(store):
+    trace_id = 'fixture-shared-request-id'
+    rows = [store.enqueue(replace(request(session=f'S{i}'), trace_id=trace_id)) for i in range(21)]
+    foreign = store.enqueue(replace(request(tenant='TENANT_B'), trace_id=trace_id))
+    store.enqueue(replace(request(session='different'), trace_id=trace_id+'-suffix'))
+    with admin() as db:
+        db.execute("UPDATE agent_run SET created_at=TIMESTAMPTZ '2026-01-01 00:00Z' WHERE tenant_code='TENANT_A'")
+    expected_ids = sorted((row['run_id'] for row in rows), reverse=True)[:20]
+
+    result = store.lookup_trace('TENANT_A', trace_id)
+    assert result['truncated'] is True and [row['run_id'] for row in result['runs']] == expected_ids
+    assert {row['run_id'] for row in store.lookup_trace('TENANT_B', trace_id)['runs']} == {foreign['run_id']}
+    assert store.lookup_trace('TENANT_C', trace_id)['runs'] == []
+    with pytest.raises(ValueError):
+        store.lookup_trace('PLATFORM', trace_id)
+
+    with store._scope('TENANT_A') as db:
+        db.execute('SET LOCAL enable_seqscan = off')
+        plan = db.execute('''EXPLAIN (COSTS OFF) SELECT run_id,state,error_code,created_at,finished_at FROM agent_run
+            WHERE tenant_code=%s AND trace_id=%s ORDER BY created_at DESC,run_id DESC LIMIT 21''',
+            ('TENANT_A', trace_id)).fetchall()
+    assert any('Index Scan using agent_run_trace_lookup_idx' in row['QUERY PLAN'] for row in plan)
 
 
 def test_incomplete_trace_is_rejected_without_correcting_the_database(store):

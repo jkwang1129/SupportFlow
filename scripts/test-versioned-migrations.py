@@ -181,7 +181,7 @@ def main():
                     assert upgrade008['applied']==['008'] and read()==before and read_kb()==before_kb
                     read_ticket=existing_ticket(connection);before_ticket=read_ticket()
                 if database=='ai_db':
-                    assert [m.version for m in plan]==['001','002','003','004','005','006','007']
+                    assert [m.version for m in plan]==['001','002','003','004','005','006','007','008']
                     applied=run_plan(connection,plan[:2])["applied"]
                     read_ai=existing_ai_step(dsn(database));before_ai=read_ai()
                     applied+=run_plan(connection,plan[:3])['applied']
@@ -203,6 +203,10 @@ def main():
                     assert connection.execute('SELECT count(*) FROM agent_approval').fetchone()==(0,)
                     print('AI 005 -> 006 preserved exact Runtime rows, payload and both reconciliation ledgers; approval table initially empty',flush=True)
                     read_approval=existing_approval(dsn(database));before_approval=read_approval()
+                    applied+=run_plan(connection,plan[:7])['applied']
+                    assert read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
+                    assert read_approval()==before_approval
+                    print('AI 006 -> 007 preserved waiting approval, checkpoint reference, budgets and previous audit rows',flush=True)
                 result=run_plan(connection,plan)
                 assert applied+result["applied"]==[migration.version for migration in plan]
                 if database=='customer_db':
@@ -223,9 +227,10 @@ def main():
                     print('007 -> 008 preserved existing business/source/draft/chunk data; granted only index_status SELECT; 3 unsafe capability states rejected',flush=True)
                     print('008 -> 009 preserved every existing ticket/source/message/knowledge field; immutable ticket receipt initially empty; old global ticket PK retained',flush=True)
                 if database=='ai_db':
-                    assert result['applied']==['007'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
+                    assert result['applied']==['008'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
                     assert read_approval()==before_approval
-                    print('AI 006 -> 007 preserved waiting approval, checkpoint reference, budgets and previous audit rows',flush=True)
+                    assert connection.execute("SELECT indisvalid FROM pg_index WHERE indexrelid='public.agent_run_trace_lookup_idx'::regclass").fetchone()==(True,)
+                    print('AI 007 -> 008 added the valid trace index without changing existing Runs, Steps, payloads or decisions',flush=True)
                 assert run_plan(connection,plan)["applied"]==[]
                 run_plan(connection,plan,verify=True)
         runtime_password=secrets.token_hex(24)

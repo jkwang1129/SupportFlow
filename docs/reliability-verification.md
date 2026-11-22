@@ -1380,3 +1380,12 @@ Worker 在业务处理前绑定验证过的持久化请求号，作用域退出�
 
 - `PYTEST_ADDOPTS='-k "runtime_models or runtime_worker or runtime_trace"' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 上通过 51 项。新增 1 项令租户 A 的实际 Chat 适配器收到合成 503，随后同一 Worker 处理租户 B 成功，再恢复 A。共 3 次替身 HTTP 请求，日志关联号顺序为 A、B、A，A 总模型预留为 2 且只有 1 次重试，错误原文未进入日志，外层上下文完整恢复。日志 `d6-model-runtime-trace-pg.log`。
 - 普通 AI 测试 1,041 项通过、425 项条件跳过。拒答、引用与逐句原文三组门禁 54 项全部通过。日志 `d6-runtime-trace-ai.log`，报告 `d6-runtime-trace-rag-contract.json`。
+
+## D7 通过原请求号定位 Runtime 任务（2026-11-22）
+
+从 AI 服务目录用受限账号运行 `python -m ai.runtime.trace_export --tenant TENANT_A --trace-id REQUEST_ID`。查询精确匹配租户和请求号，返回最多 20 个最新任务的 ID、状态、错误码和时间。用 `--run RUN_UUID` 进一步读取步骤，原 `--model-usage` 仍只接收任务 ID。索引 AI 008 不改表权限和任务数据。应用回退时停用新 CLI 选项并保留已登记的迁移和索引，迁移锁等待超限可按原流程重试。
+
+- 在隔离 PostgreSQL 17 运行 `PYTEST_ADDOPTS='-k "runtime_trace or runtime_model_usage"' python scripts/test-agent-runtime.py`。14 项通过，包括同请求号的双租户数据、缺失和平台租户、结果上限与同时间顺序、CLI 保密投影、无效编号及不兼容参数。`EXPLAIN` 在关闭顺序扫描的测试条件下显示使用新复合索引。该用例核验可用的访问路径，查询延迟与生产容量未测。原日志 `d7-trace-lookup-pg.log`。
+- `python scripts/test-versioned-migrations.py` 在隔离 PostgreSQL 验证 AI 007 → 008，逐字段保留已有任务、步骤、检查点、审批及写入核销，索引有效。六库迁移重跑为无变更，17 项迁移用例均通过。`python scripts/test-schema-drift.py` 的 97 张表一致，16 类 SQL 和 3 类元数据漂移均拦截。原日志 `d7-trace-lookup-migrate.log`、`d7-trace-lookup-schema.log`。
+- `python scripts/test-database-restore.py` 在两个独立 PostgreSQL 17 实例完成六库备份恢复，校验 97 张应用表及 6 张迁移历史表的 78 行合成记录。两个跨库 Outbox/Run 引用一致，两个受限角色通过范围检查。原日志 `d7-trace-lookup-restore.log`。
+- 普通 AI 测试 1,041 项通过、426 项条件跳过，三组 RAG 门禁 54 项均通过。原日志 `d7-trace-lookup-ai.log`，报告 `d7-trace-lookup-rag-contract.json`。

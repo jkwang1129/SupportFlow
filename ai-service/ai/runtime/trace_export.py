@@ -1,4 +1,4 @@
-"""Export metadata for a single Runtime task using the restricted operator database account."""
+"""Look up Runtime tasks or export one task's metadata using the restricted database role."""
 import argparse
 from datetime import datetime
 import json
@@ -9,7 +9,7 @@ import psycopg
 
 from ..core.schema_guard import runtime_missing
 from .store import RuntimeStore
-from .types import RuntimeConflict, tenant_code
+from .types import RuntimeConflict, identifier, tenant_code
 
 
 def _metadata(value):
@@ -23,16 +23,26 @@ def _metadata(value):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tenant', required=True)
-    parser.add_argument('--run', required=True, type=UUID)
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument('--run', type=UUID, help='Export one task and its ordered steps')
+    target.add_argument('--trace-id', help='Find up to 20 newest tasks for one exact request ID')
     parser.add_argument('--model-usage', action='store_true', help='Export provider usage observed in model checkpoints')
     args = parser.parse_args(argv)
+    if args.model_usage and args.run is None:
+        parser.error('--model-usage requires --run')
     try:
         tenant = tenant_code(args.tenant)
+        trace_id = identifier(args.trace_id) if args.trace_id is not None else None
         if runtime_missing():
             print('Runtime trace schema or role is unavailable', file=sys.stderr)
             return 1
         store = RuntimeStore()
-        snapshot = store.model_usage(tenant, args.run) if args.model_usage else store.trace_snapshot(tenant, args.run)
+        if trace_id is not None:
+            snapshot = store.lookup_trace(tenant, trace_id)
+        elif args.model_usage:
+            snapshot = store.model_usage(tenant, args.run)
+        else:
+            snapshot = store.trace_snapshot(tenant, args.run)
         if snapshot is None:
             print('Runtime trace not found', file=sys.stderr)
             return 1
