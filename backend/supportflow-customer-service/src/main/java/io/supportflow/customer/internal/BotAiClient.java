@@ -8,7 +8,6 @@ import io.supportflow.common.exception.BizException;
 import io.supportflow.customer.dto.bot.BotAiHealthVO;
 import io.supportflow.customer.dto.bot.BotProfile;
 import io.supportflow.customer.dto.cost.Guard;
-import io.supportflow.customer.service.bot.BotBrainService;
 import io.supportflow.customer.service.metrics.BillingUsageCollector;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -87,13 +86,11 @@ public class BotAiClient {
         // 而不是抛异常（抛异常会让上层"AI 不可用 → 直接转人工"，那是把成本问题变成人工成本）。
         Guard guard = costGuardClient.check(tenantCode);
         if (guard.isDegraded()) {
-            log.warn("按成本策略降级，本轮不调模型 tenant={} session={} reason={}",
-                    tenantCode, sessionNo, guard.reason());
+            log.warn("按成本策略降级，本轮不调模型 tenant={} session={}", tenantCode, sessionNo);
             return degradedReply(guard.reason());
         }
         if (guard.isBlocked()) {
-            log.warn("按成本策略暂停 AI，转入人工 tenant={} session={} reason={}",
-                    tenantCode, sessionNo, guard.reason());
+            log.warn("按成本策略暂停 AI，转入人工 tenant={} session={}", tenantCode, sessionNo);
             return blockedReply(guard.reason());
         }
         billingUsageCollector.countAiCall(tenantCode);
@@ -103,9 +100,9 @@ public class BotAiClient {
         body.put("messages", messages == null ? List.of() : messages);
         body.put("top_k", topK <= 0 ? 5 : topK);
         // 调用前先留一行：这样"卡在 AI 调用上"和"压根没调"在日志里能区分开
-        log.info("调用客服大脑 tenant={} session={} 历史={}条 问题={}",
-                tenantCode, sessionNo, messages == null ? 0 : messages.size(),
-                lastQuestion(messages));
+        String traceId = TraceContext.getOrCreate();
+        log.info("调用客服大脑 tenant={} session={} traceId={} historyCount={}",
+                tenantCode, sessionNo, traceId, messages == null ? 0 : messages.size());
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/api/ai/v1/agent/brain"))
@@ -113,26 +110,30 @@ public class BotAiClient {
                     .header("Content-Type", "application/json;charset=UTF-8")
                     .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
                     // 调用链号：前端 → 网关 → 本服务 → AI 服务一路透传，AI 侧把它写进计量表
-                    .header(TraceContext.HEADER_REQUEST_ID,
-                            TraceContext.getOrCreate())
+                    .header(TraceContext.HEADER_REQUEST_ID, traceId)
                     .POST(HttpRequest.BodyPublishers.ofString(
                             objectMapper.writeValueAsString(body), StandardCharsets.UTF_8))
                     .build();
             HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
             if (logPayload) {
-                log.info("客服大脑响应 tenant={} session={} status={} body={}",
-                        tenantCode, sessionNo, response.statusCode(), safe(response.body()));
+                log.info("客服大脑响应 tenant={} session={} traceId={} status={} responseChars={}",
+                        tenantCode, sessionNo, traceId, response.statusCode(), response.body().length());
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new BizException(50001, describeStatus(response.statusCode(), parseDetail(response.body())));
+                throw new BizException(50001, "客服大脑返回 HTTP " + response.statusCode());
             }
             return objectMapper.readValue(response.body(), new TypeReference<>() {
             });
         } catch (BizException e) {
             throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BizException(50001, "客服大脑调用被中断");
         } catch (Exception e) {
-            throw new BizException(50001, "客服大脑调用失败：" + friendly(e));
+            log.warn("客服大脑调用失败 tenant={} session={} traceId={} errorType={}",
+                    tenantCode, sessionNo, traceId, e.getClass().getSimpleName());
+            throw new BizException(50001, "客服大脑调用失败");
         }
     }
 
@@ -259,7 +260,7 @@ public class BotAiClient {
             }
         } catch (Exception e) {
             // 取不到不是错误：退回中性称呼即可，别让开场白拖住会话
-            log.warn("读取机器人配置失败 tenant={} error={}", tenantCode, e.getMessage());
+            log.warn("读取机器人配置失败 tenant={} errorType={}", tenantCode, e.getClass().getSimpleName());
         }
         greetingCache.put(tenantCode, profile);
         greetingCacheAt.put(tenantCode, now);
@@ -279,29 +280,6 @@ public class BotAiClient {
     private final Map<String, BotProfile> greetingCache = new ConcurrentHashMap<>();
     private final Map<String, Long> greetingCacheAt = new ConcurrentHashMap<>();
     private static final long GREETING_CACHE_MILLIS = 60_000L;
-
-    /** 日志里显示"这一轮客户问的是什么"：取最后一条 user 消息的前 60 字 */
-    private String lastQuestion(List<Map<String, String>> messages) {
-        if (messages == null || messages.isEmpty()) {
-            return "-";
-        }
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            Map<String, String> item = messages.get(i);
-            if ("user".equals(item.get("role"))) {
-                return preview(item.get("content"));
-            }
-        }
-        return preview(messages.get(messages.size() - 1).get("content"));
-    }
-
-    /** 内容预览：换行压平、超长截断 */
-    private String preview(String content) {
-        if (content == null || content.isBlank()) {
-            return "-";
-        }
-        String flat = content.replaceAll("\\s+", " ").trim();
-        return flat.length() <= 60 ? flat : flat.substring(0, 60) + "…";
-    }
 
     /** 组装一条会话消息（Java 侧只负责角色映射，判断交给 Python）。 */
     public static Map<String, String> message(String role, String content) {

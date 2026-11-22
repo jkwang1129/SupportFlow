@@ -186,7 +186,7 @@ public class BotBrainService {
         } catch (Exception e) {
             // 必须在这里兜住：这是线程池里的任务，异常跑出去只会打到 stderr，
             // 现象就是"机器人没回话"，日志里却没有一句"为什么"。
-            log.error("机器人接待异常 tenant={} sessionNo={}", tenantCode, sessionNo, e);
+            log.error("机器人接待异常 tenant={} sessionNo={} errorType={}", tenantCode, sessionNo, e.getClass().getSimpleName());
         }
     }
 
@@ -202,7 +202,7 @@ public class BotBrainService {
         try {
             session = sessions.requireSession(tenantCode, sessionNo);
         } catch (BizException e) {
-            log.warn("跳过机器人接待：{} tenant={} sessionNo={}", e.getMessage(), tenantCode, sessionNo);
+            log.warn("跳过机器人接待 tenant={} sessionNo={} errorCode={}", tenantCode, sessionNo, e.getCode());
             clearTyping(tenantCode, sessionNo);
             return;
         }
@@ -271,8 +271,8 @@ public class BotBrainService {
             result = aiClient.think(tenantCode, sessionNo, messages, topK);
         } catch (Exception e) {
             // 大脑不可用：不能让客户干等，直接转人工
-            log.warn("客服大脑不可用，降级转人工 tenant={} sessionNo={} error={}",
-                    tenantCode, sessionNo, e.getMessage());
+            log.warn("客服大脑不可用，降级转人工 tenant={} sessionNo={} errorType={}",
+                    tenantCode, sessionNo, e.getClass().getSimpleName());
             escalate(sessions, tenantCode, sessionNo, "智能客服暂时不可用，已转人工",
                     "智能客服暂时无法应答，正在为您转接人工客服，请稍候");
             return;
@@ -309,13 +309,13 @@ public class BotBrainService {
                     tenantCode, sessionNo, SessionService.SENDER_BOT, null, msgType, content);
             notifyClient.notifyMessage(tenantCode, sessionNo, toMap(saved), true);
         }
-        log.info("机器人接待完成 tenant={} sessionNo={} 意图={} 情绪={} 转人工={} 原因={} 问题={}",
-                tenantCode, sessionNo, intent, emotion, needHuman,
-                result.get("transfer_reason"), previewOf(extraContext));
-        log.info("机器人回答 tenant={} sessionNo={} 编排={} 引用={}条 回答={}",
-                tenantCode, sessionNo, result.get("engine"),
+        log.info("机器人接待完成 tenant={} sessionNo={} needHuman={} reasonChars={} imageContextChars={}",
+                tenantCode, sessionNo, needHuman,
+                strValue(result.get("transfer_reason"), "").length(), extraContext == null ? 0 : extraContext.length());
+        log.info("机器人回答 tenant={} sessionNo={} citationCount={} replyChars={}",
+                tenantCode, sessionNo,
                 ((List<?>) (result.get("citations") == null ? List.of() : result.get("citations"))).size(),
-                previewOf(reply));
+                reply.length());
         // "图片里的内容到底用上了没有"——发图场景最常问的一句话，日志里直接给结论：
         // 回答里如果出现了图里的订单号/报错原文片段，就说明模型真的读进去了
         logImageGrounding(tenantCode, sessionNo, extraContext, reply);
@@ -346,8 +346,8 @@ public class BotBrainService {
             return;
         }
         // 没派到人：给客户一句实话，同时让在线坐席刷新列表（有人上线就会自动接走）
-        log.warn("转人工后暂无人接待（坐席不在线或都在忙） tenant={} sessionNo={} 原因={}",
-                tenantCode, sessionNo, reason);
+        log.warn("转人工后暂无人接待（坐席不在线或都在忙） tenant={} sessionNo={} reasonChars={}",
+                tenantCode, sessionNo, reason == null ? 0 : reason.length());
         String waiting = "当前人工客服暂时无法接入（客服不在线或正在忙），已经为您排入队列，"
                 + "客服上线后会第一时间接入；您也可以先留言，我们看到会尽快回复。";
         MessageVO waitNotice = sessions.appendMessage(
@@ -384,18 +384,9 @@ public class BotBrainService {
             return objectMapper.writeValueAsString(card);
         } catch (Exception e) {
             // 序列化失败就退回纯文本：宁可少一个按钮，也不能让消息发不出去
-            log.warn("机器人卡片消息序列化失败，降级成纯文本：{}", e.getMessage());
+            log.warn("机器人卡片消息序列化失败，降级成纯文本 errorType={}", e.getClass().getSimpleName());
             return text;
         }
-    }
-
-    /** 日志里的内容预览：换行压平、超长截断 */
-    private String previewOf(String value) {
-        if (value == null || value.isBlank()) {
-            return "-";
-        }
-        String text = value.replaceAll("\\s+", " ").trim();
-        return text.length() <= 120 ? text : text.substring(0, 120) + "…";
     }
 
     /**
@@ -418,14 +409,14 @@ public class BotBrainService {
         while (quoted.find() && keys.size() < 12) {
             keys.add(quoted.group());
         }
-        List<String> hit = keys.stream().distinct().filter(reply::contains).limit(3).toList();
-        if (hit.isEmpty()) {
+        long hitCount = keys.stream().distinct().filter(reply::contains).limit(3).count();
+        if (hitCount == 0) {
             log.warn("[图片识别] 回答里没有出现图片中的任何关键信息（订单号/原文片段），"
                             + "可能没真正用上：tenant={} sessionNo={}", tenantCode, sessionNo);
             return;
         }
-        log.info("[图片识别] 回答用上了图片中的信息 tenant={} sessionNo={} 命中={}",
-                tenantCode, sessionNo, hit);
+        log.info("[图片识别] 回答与图片识别结果有重合 tenant={} sessionNo={} hitCount={}",
+                tenantCode, sessionNo, hitCount);
     }
 
     /** 再查一次会话状态：只有仍然没人接待、且没结束时，机器人才发这条回复。 */

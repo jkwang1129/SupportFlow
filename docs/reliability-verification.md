@@ -1346,3 +1346,10 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 
 - `python -m pytest -q tests/test_internal_auth.py tests/test_brain_analysis_context.py` 从 AI 服务目录运行，20 项通过、1 项真实库条件跳过。新增三项覆盖签名 HTTP 异常、正常编排中的私密文本和槽位、本地数据库及模型异常。初次测试断言低证据回复未附带现有转人工提示，并错对了统一 500 外层文案，按既有合同修正断言后通过。日志 `m04-brain-log-scope-unit-final.log`。
 - 普通 AI 带 JUnit 全量 1,041 项通过、424 项条件跳过。三类 RAG 门禁共 54 项通过。日志 `m04-brain-log-scope-ai.log`，报告 `m04-brain-log-scope-contract.json`。所测内容来自合成输入。Java 接待、附件处理、基础设施和审计留存需各自核对。
+
+## M04 Java 接待与 AI 客户端日志（2026-11-22）
+
+`BotAiClient` 仅报告请求关联号、历史条数、HTTP 状态、响应长度或错误类型。即使打开共享日志配置，客户提问、模型回复和上游错误正文也不会写入该客户端日志。`BotBrainService` 保留图文匹配计数、回复长度和人工兜底。业务状态和回复仍由原链路读写。客服大脑的调用错误返回固定说明或 HTTP 状态码。其他 AI 客户端、探活接口与审计留存分别核对。回滚可单独回退本提交，无配置或数据库迁移。
+
+- JDK 25 下 `mvn -B -f backend/pom.xml verify` 成功，144 项通过、173 项数据库条件跳过。新增四项覆盖真实回环 HTTP 请求/回复、HTTP 503/JSON 解析错误、图片匹配日志及回复投递、AI 调用失败后的人工兜底。原有机器人串行与中断用例通过。日志 `m04-customer-brain-backend-verify.log`。
+- 首轮夹具尝试模拟 final 消息记录，改成真实记录。Trace 测试改用 ScopedValue 的作用域绑定。两处修正均在测试代码，最终为合成客户和模型文本。
