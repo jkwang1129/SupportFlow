@@ -47,22 +47,25 @@ class BrainRequest(BaseModel):
 async def brain(body: BrainRequest, trace_id: str = Depends(require_trace_id)) -> dict:
     messages = [m.model_dump() for m in body.messages]
     question = ""
-    for message in reversed(messages):
+    history = []
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
         if (message.get("role") or "user") == "user" and (message.get("content") or "").strip():
             question = (message.get("content") or "").strip()
+            history = messages[:index]
             break
     if not question:
         raise HTTPException(status_code=400, detail="没有可处理的客户消息")
 
     started = time.perf_counter()
     logger.info("收到客服大脑请求 trace=%s tenant=%s session=%s 历史=%d 问题=%s",
-                trace_id, body.tenant_code, body.session_id or "-", len(messages), question[:60])
+                trace_id, body.tenant_code, body.session_id or "-", len(history), question[:60])
     try:
         result = await brain_agent.think(
             question=question,
             tenant_code=body.tenant_code,
             session_no=body.session_id,
-            history=messages[:-1] if messages else [],
+            history=history,
             top_k=body.top_k,
         )
     except Exception as exc:  # noqa: BLE001

@@ -1333,3 +1333,9 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - `PYTEST_ADDOPTS='-k brain_analysis_context' python scripts/test-agent-runtime.py` 在 PostgreSQL 17 通过 6 项用例。包括同一会话编号跨租户使用各自订单、软删除后停止恢复、超预算零模型请求、UTF-8 精确预算、保留重复询问与角色过滤。首轮传输替身使用已读响应体，改成流式夹具后通过。日志 `c5-brain-context-pg-final.log`。
 - 一个合成长对话样本的版本对照经过实际 Chat 传输序列化。`messages` 由 13,638 降至 1,632 字节，完整 HTTP 请求体由 13,693 降至 1,687 字节。两个策略各调用同一模型替身一次，结构化结果一致。原始统计 `brain-analysis-context.json`。该夹具固定输出，真实模型 Token 和语义正确率留待独立评测。
 - 普通 AI 套件 1,034 项通过、424 项条件跳过。拒答、引用和原文核查三组门禁共 54 项通过。日志 `c5-brain-context-ai.log`、报告 `c5-rag-contract.json`。
+
+## C6 客服大脑的当前回合边界（2026-11-22）
+
+从最近的非空客户问题确定当前回合，向意图分析传递该问题之前的整段原历史。此调整沿用两种上下文预算策略。回滚可回退接口的历史截取，无配置或数据库迁移。
+
+从 `ai-service` 运行 `python -m pytest -q tests/test_internal_auth.py tests/test_brain_analysis_context.py`，17 项通过、1 项真实库用例条件跳过。四个新增签名 HTTP 请求覆盖末尾客户问题、后续坐席回复、尾部空白客户消息和无有效问题，检查原问题不会重复作为当前历史而早轮相同询问仍可传入。日志 `c6-brain-turn-boundary.log`。

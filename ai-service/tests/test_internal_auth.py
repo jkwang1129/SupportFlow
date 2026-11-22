@@ -130,6 +130,34 @@ def test_signed_customer_can_index_delete_and_handle_a_conversation(client, monk
     assert observed == [("index", "TENANT_A", 7, "hello"), ("brain", "TENANT_A", "hello"), ("delete", "TENANT_A", 7)]
 
 
+@pytest.mark.parametrize('trailing', [[], [{'role': 'assistant', 'content': 'LATER_REPLY'}],
+    [{'role': 'assistant', 'content': 'LATER_REPLY'}, {'role': 'user', 'content': '   '}]])
+def test_brain_only_uses_history_before_the_selected_customer_question(client, monkeypatch, trailing):
+    calls = []
+
+    async def think(**kwargs):
+        calls.append(kwargs)
+        return {'reply': 'fixture answer'}
+
+    monkeypatch.setattr(brain.brain_agent, 'think', think)
+    earlier = [{'role': 'user', 'content': 'Check that order'}, {'role': 'assistant', 'content': 'Looking it up'}]
+    selected = {'role': 'user', 'content': ' Check that order '}
+    response = client.post(BRAIN, json={'tenant_code': 'TENANT_A', 'session_id': 'S1',
+                                       'messages': earlier+[selected]+trailing}, headers=signed('POST', BRAIN))
+    assert response.status_code == 200
+    assert len(calls) == 1
+    assert calls[0]['question'] == 'Check that order'
+    assert calls[0]['history'] == earlier and calls[0]['session_no'] == 'S1'
+
+
+def test_brain_without_a_nonblank_customer_question_rejects_before_analysis(client, monkeypatch):
+    monkeypatch.setattr(brain.brain_agent, 'think', lambda **_: pytest.fail('No question is available'))
+    response = client.post(BRAIN, json={'tenant_code': 'TENANT_A', 'messages': [
+        {'role': 'assistant', 'content': 'suggestion'}, {'role': 'user', 'content': ' '}],
+    }, headers=signed('POST', BRAIN))
+    assert response.status_code == 400
+
+
 def test_processing_errors_do_not_expose_internal_exception_text(client, monkeypatch):
     def unavailable(**_kwargs):
         raise RuntimeError("PRIVATE UPSTREAM DETAILS")
