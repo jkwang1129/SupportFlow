@@ -1396,3 +1396,9 @@ Worker 在业务处理前绑定验证过的持久化请求号，作用域退出�
 
 - 隔离 PostgreSQL 17 首轮夹具超出会话号列长度，缩短后复现旧订单号仍出现在模型输入和业务状态。修复后新号立即进入实际 Chat 序列化请求，下一轮从库中恢复新值，同号会话的另一租户保持原值。四项其他回归覆盖长得像手机号的订单编号、多个候选、否定和超长输入。日志 `c7-slot-correction-baseline-v2.log`、`c7-slot-correction-pg.log`。
 - `PYTEST_ADDOPTS='-k "brain_analysis_context or runtime_trace or runtime_models or runtime_approval_review"' python scripts/test-agent-runtime.py` 通过 48 项。普通 AI 测试 1,045 项通过、427 项条件跳过。三组 RAG 门禁 54 项均通过。原日志 `c7-slot-correction-ai.log`，报告 `c7-slot-correction-rag-contract.json`。
+
+## D7 全服务验收的迁移清单校验（2026-11-22）
+
+提交 `65a44a4` 的远端完整服务验收在 AI 008 后仍断言迁移数为 7，实际为 8 且权限断言全部符合，导致验收失败。`test-security-flow.py` 现在从同一份版本清单读取六库预期版本数量，保留校验和与历史只读权限的原断言。这批改变验收脚本，无运行时行为或数据库变动。
+
+- JDK 25、隔离 PostgreSQL 17 及离线模型下执行 `python scripts/test-security-flow.py`。默认新库、旧库升级、空库 CLI 初始化三套真实服务场景全部通过。每套验证了六库迁移历史、五个受限 Java 运行账号、知识库和机器人实际调用及原租户权限边界。验收容器与卷已清理。原日志 `d7-migration-count-full-flows.log`。旧失败见 [CI 45003172825](https://github.com/jkwang1129/SupportFlow/actions/runs/45003172825)。

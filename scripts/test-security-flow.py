@@ -5,8 +5,11 @@ import subprocess
 import sys
 import time
 
+from migration_engine import load_plan
+
 ROOT = Path(__file__).resolve().parents[1]
 if __name__ == '__main__':
+    required_versions = {database: str(len(plan)) for database, plan in load_plan().items()}
     logs = ROOT / '.local/security-services'
     logs.mkdir(parents=True, exist_ok=True)
     stop = logs / 'stop'
@@ -38,7 +41,7 @@ if __name__ == '__main__':
                 ledger = subprocess.check_output([*billing_psql,"SELECT count(*),has_table_privilege('supportflow_billing','billing_usage_batch','DELETE') FROM billing_usage_batch"],text=True).strip().split('|')
                 assert int(ledger[0]) >= 1 and ledger[1] == 'f', ledger
                 versions = subprocess.check_output([*psql,"SELECT count(*),bool_and(length(checksum)=64),has_table_privilege('supportflow_customer','supportflow_schema_history','INSERT') FROM supportflow_schema_history"],text=True).strip().split('|')
-                assert versions == ['9','t','f'], versions
+                assert versions == [required_versions['customer_db'],'t','f'], versions
                 outbox_privileges = subprocess.check_output([*psql,"SELECT has_table_privilege('supportflow_customer','agent_event_outbox','SELECT'),has_table_privilege('supportflow_customer','agent_event_outbox','INSERT'),has_table_privilege('supportflow_customer','agent_event_outbox','UPDATE'),has_table_privilege('supportflow_customer','agent_event_outbox','DELETE'),has_table_privilege('supportflow_customer','agent_event_outbox','TRUNCATE')"],text=True).strip().split('|')
                 assert outbox_privileges == ['t','t','t','f','f'], outbox_privileges
                 snapshot_privileges = subprocess.check_output([*psql,"SELECT has_table_privilege('supportflow_customer','agent_source_snapshot','SELECT'),has_table_privilege('supportflow_customer','agent_source_snapshot','INSERT'),has_table_privilege('supportflow_customer','agent_source_snapshot','UPDATE'),has_table_privilege('supportflow_customer','agent_source_snapshot','DELETE'),has_table_privilege('supportflow_customer','agent_source_snapshot','TRUNCATE')"],text=True).strip().split('|')
@@ -48,12 +51,12 @@ if __name__ == '__main__':
                 ticket_privileges = subprocess.check_output([*psql,"SELECT has_table_privilege('supportflow_customer','agent_ticket_receipt','SELECT'),has_table_privilege('supportflow_customer','agent_ticket_receipt','INSERT'),has_table_privilege('supportflow_customer','agent_ticket_receipt','UPDATE'),has_table_privilege('supportflow_customer','agent_ticket_receipt','DELETE'),has_table_privilege('supportflow_customer','agent_ticket_receipt','TRUNCATE')"],text=True).strip().split('|')
                 assert ticket_privileges == ['t','t','f','f','f'], ticket_privileges
                 billing_versions = subprocess.check_output([*billing_psql,"SELECT count(*),has_table_privilege('supportflow_billing','supportflow_schema_history','UPDATE') FROM supportflow_schema_history"],text=True).strip().split('|')
-                assert billing_versions == ['1','f'], billing_versions
+                assert billing_versions == [required_versions['billing_db'],'f'], billing_versions
                 for database in ('ai','user','tenant','ops'):
                     command = ['docker','exec',project+'-postgres-1','psql','-U','supportflow','-d',database+'_db','-XqAt','-c']
                     history = subprocess.check_output([*command,
                         f"SELECT count(*),bool_and(length(checksum)=64),has_table_privilege('supportflow_{database}','supportflow_schema_history','SELECT'),has_table_privilege('supportflow_{database}','supportflow_schema_history','INSERT'),has_table_privilege('supportflow_{database}','supportflow_schema_history','UPDATE'),has_table_privilege('supportflow_{database}','supportflow_schema_history','DELETE') FROM supportflow_schema_history"],text=True).strip().split('|')
-                    assert history == ['7' if database=='ai' else '1','t','t','f','f','f'], (database,history)
+                    assert history == [required_versions[database+'_db'],'t','t','f','f','f'], (database,history)
                     if database=='ai':
                         payload_privileges=subprocess.check_output([*command,
                             "SELECT has_table_privilege('supportflow_ai','agent_payload','SELECT'),has_table_privilege('supportflow_ai','agent_payload','INSERT'),has_table_privilege('supportflow_ai','agent_payload','UPDATE'),has_table_privilege('supportflow_ai','agent_payload','DELETE'),has_table_privilege('supportflow_ai','agent_payload','TRUNCATE')"],text=True).strip().split('|')
