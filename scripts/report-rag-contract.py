@@ -15,6 +15,8 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "fixtures/evaluation/rag-abstention-v1.json"
+EXTRACTIVE_DATASET = ROOT / "fixtures/evaluation/rag-extractive-v1.json"
+EXTRACTIVE_TEST = "test_rag_extractive_support_compares_paired_outputs"
 CITATION_CASES = {
     f"test_invalid_citation_withholds_generated_answer[{marker}-{engine}]"
     for marker in ("two_digit", "three_digit", "unicode_digits", "oversized")
@@ -58,6 +60,7 @@ def main():
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--require-citations", action="store_true")
+    parser.add_argument("--require-extractive", action="store_true")
     args = parser.parse_args()
     dataset = json.loads(DATASET.read_text(encoding="utf-8"))
     rows = read_cases(args.junit)
@@ -93,13 +96,25 @@ def main():
         for path in ("ai-service/ai/services/rag.py", "ai-service/tests/test_rag_failure_modes.py"):
             report["code_sha256"][path] = hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
         gate = gate and citation_gate
-        report["gate_passed"] = gate
+    if args.require_extractive:
+        fixture = json.loads(EXTRACTIVE_DATASET.read_text(encoding="utf-8"))
+        extractive = read_cases(args.junit, "test_rag_extractive", (EXTRACTIVE_TEST + "[",))
+        expected = {f"{EXTRACTIVE_TEST}[{case['id']}-{engine}]"
+                    for case in fixture["cases"] for engine in ("linear", "langgraph")}
+        extractive_gate = passed(extractive, expected)
+        report["extractive_gate"] = {"dataset_version": fixture["version"],
+            "dataset_sha256": hashlib.sha256(EXTRACTIVE_DATASET.read_bytes()).hexdigest(),
+            "counts": counts(extractive), "cases": extractive, "gate_passed": extractive_gate}
+        gate = gate and extractive_gate
+    report["gate_passed"] = gate
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     summary = {"counts": report["counts"], "gate_passed": gate, "output": str(args.output)}
     if args.require_citations:
         summary["citation_counts"] = report["citation_gate"]["counts"]
-    print(json.dumps(summary, ensure_ascii=False))
+    if args.require_extractive:
+        summary["extractive_counts"] = report["extractive_gate"]["counts"]
+    print(json.dumps(summary))
     return 0 if gate else 1
 
 

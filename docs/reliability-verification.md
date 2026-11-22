@@ -1283,3 +1283,12 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 - MCP、模型用量两笔早期 CI 访问旧回复发布夹具时因新增参数失败。兼容修复的 [CI 44972572733](https://github.com/jkwang1129/SupportFlow/actions/runs/44972572733) 通过。本地真实组合复跑也通过 5 条回复发布路径、单独的回复核销及端到端回执用例。日志 `b3-explicit-proposal-runtime.log`。
 
 演练在业务停写的逻辑恢复口径下进行。生产 RPO/RTO、WAL、线上服务切换、知识附件和对象存储待另行实测。
+
+## C3 RAG 逐句核对引用原文（2026-11-22）
+
+`SUPPORTFLOW_AI_RAG_REQUIRE_EXTRACTIVE_SUPPORT=true` 开启逐句原文模式。生成正文每行需以一个来源编号结束，完整句子须出现在对应检索切片。数字、条件、否定和标点均参与核查。证据不足和越界引用继续走原拒答链路。关配置可回滚，不改数据库。设计和边界见 [ADR-0040](decisions/0040-rag-extractive-claims.md)。
+
+- 在 `ai-service` 运行 `python -m pytest -q tests/test_rag_extractive.py`，23 项通过。十条配对合成模型输出分别经过线性与 LangGraph，普通模式各接受 10/10，原文模式各接受 3/10。拒绝 7 条中包括改数字、丢条件、否定颠倒、引错切片、未标引用和正确转述。来源中虽真实存在但和问题无关的一条原句仍通过。每次使用同一份召回输入及一次模型替身请求。
+- 普通 AI 全量 1,028 项通过、411 项条件跳过。`python scripts/report-rag-contract.py --junit .local/implementation/c3-rag-extractive-ai.xml --require-citations --require-extractive --output .local/implementation/c3-rag-extractive-report.json` 的 24 项拒答、10 项引用和 20 项配对门禁均通过。报告器 7 项通过。首轮 Windows 终端编码产生子进程读取异常，改用可跨编码读取的 JSON 摘要后复跑通过。
+
+配对数据在 `fixtures/evaluation/rag-extractive-v1.json`，原始日志及 XML 在 `.local/implementation/c3-*`。这些计数用于检验证据核查规则，通过率不可用作模型准确率、生产拒答率或成本收益。

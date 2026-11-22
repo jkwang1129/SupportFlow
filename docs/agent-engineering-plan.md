@@ -34,7 +34,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M02 Context Engineering | 部分实现，工单规划已接可选压缩策略 | 旧最近12条对话；当前输入冻结并重验；检查点正文边界；工单规划确定性历史及配对对照、原预算恢复 | 待接有界长会话、事实筛选与摘要，并以真实模型比较 Token 与质量。C |
 | M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、来源/工单/知识工具与签名SDK，实际Worker/受限PG核权/刷新/共享Embedding预算；有界工单Loop；宿主报告原子发布与回执核销；固定工单 MCP 客户端 | 原子建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE/知识决策Loop、通用未知写及 MCP 服务端部署和更广接入待完善。B |
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权/固定事实报告；操作专属签名许可/参数摘要与回执绑定、有效MAC跨操作拒绝、越权/假引用/假写声明负例 | 已补RAG/KB所测应用日志与已处理错误的内容排除；完整直接/间接注入集、通用PII/秘密保护、限时参数审批/防重放仍缺；无任意代码需求，暂不建Sandbox。A/B |
-| M05 RAG Engineering | 部分实现，证据不足及越界引用拒答 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、单轮改写、引用编号与租户过滤；实际引用契约进入 CI | 事实支持、冲突/过期、知识发布版本尚缺；混检重排先基线后选择。A/C |
+| M05 RAG Engineering | 部分实现，已接可选逐句原文核查 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、改写、租户及发布过滤、越界拒答和逐句证据门禁 | 相关性、冲突/过期、知识发布版本及真实语义评测待补；混检重排先建基线。A/C |
 | M06 Evaluation | 部分实现，契约与工程故障门禁 | 已有评测保留；RAG24项契约/5项报告负面；Runtime373项（含工单核销与审批测试）、客服PG139项、38项回执存储、实际只读Loop/进程恢复/五例发布/两例核销/七例知识工具和操作许可有机器证据 | 工程测试不等于200条语义质量平台，仍缺holdout、业务事实评分、恢复/工具质量评测与安全replay；Judge若采用需人工校准。A/D |
 | M07 Trace/Observability | 部分实现，Runtime 可导出并离线复核受限轨迹 | Java `TraceContext`、Python 图步骤、模型调用量、既有运营 Trace 与告警、版本化 Runtime 元数据及固定故障基线 | 待接统一查询、跨服务链路与受控模型及工具重演。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界Chat/查询Embedding与Runtime适配 | core.llm_chat单次HTTP/稳定错误/正文边界；显式租户ChatProfile、Prompt/请求Hash、MODEL原子正文/usage及预算恢复；实际协议TCP故障/进程验收；llm_gateway.py仍旧Mock占位 | 视觉/旧RAG同步Embedding、租户选择/Prompt发布/供应商权限和usage/Token金额结算治理仍缺；不造第二入口。E |
@@ -153,3 +153,5 @@ B3 已打通明确访客请求、提案暂停、坐席审核和独立 Worker 按
 D3 将取消、模型超时、工具拒绝和写确认丢失的实际 Run 元数据与版本化基线纳入同一离线门禁。步骤独立复核预算计数，遗漏用例直接失败。当前基线覆盖工程故障和副作用约束，RAG 语义质量及模型交互还需各自评测。
 
 E2 完成 PostgreSQL 17 独立集群六库恢复，校验迁移历史、当前表结构、Outbox 与 Run 关联和受限账号范围。CI 已接演练步骤。环境和边界见 [ADR-0039](decisions/0039-disposable-postgres-restore.md)。
+
+C3 提供默认关闭的 RAG 原文核查。十个配对合成输出验证了具体拒答收益和正确转述损失。两种编排均纳入 CI，语义相关性、时效和生产数据仍单独验收。见 [ADR-0040](decisions/0040-rag-extractive-claims.md)。

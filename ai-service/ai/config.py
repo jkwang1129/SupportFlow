@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     #   keyword → 命中片段占比（命中词数 / 查询片段数），基数小，0.12 起步。
     rag_vector_min_score: float = 0.35
     rag_keyword_min_score: float = 0.12
+    rag_require_extractive_support: bool = False
 
     # 训练版本做意图匹配时的相似度门槛：低于它就不采信（交回字面规则匹配）。
     # 中文短问句和正确语料的余弦相似度一般在 0.5~0.9，取 0.45 是"明显相关才认"。

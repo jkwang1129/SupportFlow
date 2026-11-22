@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "question": "退款条件和到账时间是什么？",
+  "sources": [
+    "签收后七天内可申请退货。退款以审核通过为前提，三个工作日内退回原支付账户。",
+    "线下门店周一至周五营业。特殊渠道仅支持人工退款。"
+  ],
+  "cases": [
+    {"id": "exact", "answer": "退款以审核通过为前提，三个工作日内退回原支付账户。[1]", "strict": true},
+    {"id": "multiline", "answer": "签收后七天内可申请退货。[1]\n特殊渠道仅支持人工退款。[2]", "strict": true},
+    {"id": "irrelevant-quote", "answer": "线下门店周一至周五营业。[2]", "strict": true},
+    {"id": "amount-changed", "answer": "退款以审核通过为前提，一个工作日内退回原支付账户。[1]", "strict": false},
+    {"id": "condition-omitted", "answer": "三个工作日内退回原支付账户。[1]", "strict": false},
+    {"id": "negation-flipped", "answer": "特殊渠道不支持人工退款。[2]", "strict": false},
+    {"id": "wrong-evidence", "answer": "签收后七天内可申请退货。[2]", "strict": false},
+    {"id": "one-line-uncited", "answer": "签收后七天内可申请退货。[1]\n无条件秒到账。", "strict": false},
+    {"id": "uncited", "answer": "签收后七天内可申请退货。", "strict": false},
+    {"id": "correct-paraphrase", "answer": "商品签收后，有七天时间提出退货请求。[1]", "strict": false}
+  ]
+}

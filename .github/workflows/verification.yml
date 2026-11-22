@@ -52,8 +52,8 @@ jobs:
       - name: Verify AI service authorization
         working-directory: ai-service
         run: python -m pytest -q --junitxml=../.local/verification/ai-tests.xml
-      - name: Verify RAG abstention and citation contract gates
-        run: python scripts/report-rag-contract.py --junit .local/verification/ai-tests.xml --require-citations --output .local/verification/rag-contract.json
+      - name: Verify RAG abstention, citation and extractive support gates
+        run: python scripts/report-rag-contract.py --junit .local/verification/ai-tests.xml --require-citations --require-extractive --output .local/verification/rag-contract.json
       - name: Verify evaluation gate negative cases
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
       - name: Verify fresh and legacy runtime database privileges

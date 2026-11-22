@@ -62,6 +62,7 @@ class RagState(TypedDict, total=False):
     rounds: int           # 已经改写了几次
     answer: str
     answer_generated: bool
+    extractive_only: bool
     citations: list[dict]
     abstention_reason: str
     steps: list[dict]     # 每一步的执行记录，前端展示"编排过程"用
@@ -146,6 +147,7 @@ async def node_answer(state: RagState) -> dict:
         question=state["question"],
         hits=state.get("hits") or [],
         tenant_code=state.get("tenant_code") or "",
+        extractive_only=state.get("extractive_only", False),
     )
     return {
         "answer": answer.text,
@@ -159,7 +161,7 @@ async def node_answer(state: RagState) -> dict:
 
 def node_verify(state: RagState) -> dict:
     """Withhold generated claims when any reference falls outside the evidence."""
-    from ..services.rag import OVERSIZED_CITATION_INDEX, verify_citations
+    from ..services.rag import OVERSIZED_CITATION_INDEX, has_extractive_support, verify_citations
 
     answer = state.get("answer") or ""
     citations = state.get("citations") or []
@@ -175,6 +177,14 @@ def node_verify(state: RagState) -> dict:
             "enough": False,
             "abstention_reason": "invalid_citation",
             "steps": _step(state, "verify", "回答引用未通过校验", kept=0, dropped=dropped, oversized=oversized),
+        }
+    if state.get("extractive_only") and not has_extractive_support(answer, kept):
+        return {
+            "answer": "资料未能支持回答中的原句。请补充问题细节，或联系人工客服处理。",
+            "citations": [],
+            "enough": False,
+            "abstention_reason": "unsupported_claim",
+            "steps": _step(state, "verify", "回答未通过逐句原文核查", kept=0, dropped=[]),
         }
 
     return {
@@ -260,6 +270,7 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
         "top_k": top_k,
         "doc_ids": doc_ids,
         "published_only": published_only,
+        "extractive_only": getattr(get_settings(), "rag_require_extractive_support", False),
         "query": question,
         "rounds": 0,
         "steps": [],

@@ -9,10 +9,11 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 DATASET = json.loads((ROOT / "fixtures/evaluation/rag-abstention-v1.json").read_text(encoding="utf-8"))
+EXTRACTIVE = json.loads((ROOT / "fixtures/evaluation/rag-extractive-v1.json").read_text(encoding="utf-8"))
 
 
 class RagContractReportTest(unittest.TestCase):
-    def report(self, mutation=None, *, citations=False):
+    def report(self, mutation=None, *, citations=False, extractive=False):
         suite = ET.Element("testsuite")
         for case in DATASET["cases"]:
             for engine in ("linear", "langgraph"):
@@ -29,6 +30,11 @@ class RagContractReportTest(unittest.TestCase):
             for name in ("test_generated_in_range_citation_is_preserved",
                          "test_no_model_excerpt_keeps_literal_document_number_and_original_source"):
                 ET.SubElement(suite, "testcase", {"classname": "tests.test_rag_failure_modes", "name": name})
+        if extractive:
+            for case in EXTRACTIVE["cases"]:
+                for engine in ("linear", "langgraph"):
+                    ET.SubElement(suite, "testcase", {"classname": "tests.test_rag_extractive",
+                        "name": f"test_rag_extractive_support_compares_paired_outputs[{case['id']}-{engine}]"})
         if mutation:
             mutation(suite)
         with tempfile.TemporaryDirectory(prefix="supportflow-report-test-") as directory:
@@ -37,7 +43,8 @@ class RagContractReportTest(unittest.TestCase):
             ET.ElementTree(suite).write(junit, encoding="utf-8")
             process = subprocess.run([sys.executable, str(ROOT / "scripts/report-rag-contract.py"),
                                       "--junit", str(junit), "--output", str(output),
-                                      *(["--require-citations"] if citations else [])], cwd=ROOT,
+                                      *(["--require-citations"] if citations else []),
+                                      *(["--require-extractive"] if extractive else [])], cwd=ROOT,
                                      capture_output=True, text=True, encoding="utf-8", timeout=15)
             self.assertIn(process.returncode, (0, 1), process.stderr)
             return process.returncode, json.loads(output.read_text(encoding="utf-8"))
@@ -76,6 +83,14 @@ class RagContractReportTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertFalse(report["citation_gate"]["gate_passed"])
         self.assertEqual(24, report["counts"]["passed"])
+
+    def test_paired_extractive_cases_require_both_engines(self):
+        code, report = self.report(extractive=True)
+        self.assertEqual(0, code)
+        self.assertEqual(20, report['extractive_gate']['counts']['passed'])
+        code, report = self.report(lambda suite: ET.SubElement(suite[-1], 'skipped'), extractive=True)
+        self.assertEqual(1, code)
+        self.assertFalse(report['extractive_gate']['gate_passed'])
 
 
 if __name__ == "__main__":
