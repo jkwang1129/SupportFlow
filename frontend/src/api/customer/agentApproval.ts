@@ -19,6 +19,12 @@ export interface ApprovalProposal {
   content: string
 }
 
+export interface ApprovalProgress {
+  state: 'PENDING' | 'RUNNING' | 'WAITING_APPROVAL' | 'RETRY_WAIT' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED'
+  attempt: number
+  step_count: number
+}
+
 const APPROVALS = '/customer/agent-approvals'
 
 function proposalPath(reference: ApprovalReference) {
@@ -34,6 +40,12 @@ export function activeApproval(sessionNo: string, signal: AbortSignal) {
 export function readApproval(reference: ApprovalReference, signal: AbortSignal) {
   return request<ApprovalProposal>({
     url: `${proposalPath(reference)}/proposal`, signal, silent: true,
+  })
+}
+
+export function readApprovalProgress(reference: ApprovalReference, signal: AbortSignal) {
+  return request<ApprovalProgress>({
+    url: `${proposalPath(reference)}/progress`, signal, silent: true,
   })
 }
 

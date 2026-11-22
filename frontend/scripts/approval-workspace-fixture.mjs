@@ -17,6 +17,7 @@ const approvalId = '00000000-0000-4000-8000-000000000003'
 const digest = 'a'.repeat(64)
 let status = 'PENDING'
 let stale = false
+let progressReads = 0
 
 function reply(response, data, statusCode = 200, message = 'fixture') {
   response.writeHead(statusCode, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
@@ -28,6 +29,7 @@ async function route(request, response, next) {
   if (path.pathname === '/__approval-fixture') {
     status = 'PENDING'
     stale = false
+    progressReads = 0
     const role = path.searchParams.get('role') === 'agent' ? 'fixture-agent' : 'fixture-admin'
     response.writeHead(200, { 'Content-Type': 'text/html' })
     response.end(`<script>localStorage.setItem('supportflow_admin_token','${role}');localStorage.setItem('supportflow_admin_tenant','FIXTURE');location.replace('/modules/workspace')</script>`)
@@ -57,6 +59,11 @@ async function route(request, response, next) {
   if (path.pathname === `${proposalPath}/proposal`) {
     return reply(response, { approval_id: approvalId, arguments_sha256: digest, status, expires_at,
       title: '合成工单提案', content: '第一行\n<fixture-text>原文以纯文本显示</fixture-text>' })
+  }
+  if (path.pathname === `${proposalPath}/progress` && request.method === 'GET') {
+    progressReads += 1
+    if (progressReads === 1) return reply(response, { state: 'PENDING', attempt: 1, step_count: 4 })
+    return reply(response, { state: 'SUCCEEDED', attempt: 2, step_count: 7 })
   }
   if (path.pathname !== `${proposalPath}/decisions` || request.method !== 'POST') return reply(response, null, 404)
   const chunks = []

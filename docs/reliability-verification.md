@@ -1305,3 +1305,10 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 
 - `python scripts/test-customer-rls.py --with-ai` 的 159 项客服 PostgreSQL 测试和 19 项知识库测试通过。新增三项覆盖安全投影、匿名/外租户/普通坐席拒绝、错误上游引用及查询中途的真实接管。独立 AI 签名状态及跨租户取消定向用例 1 项通过。日志 `e3-runtime-status-java-pg.log`、`e3-runtime-status-ai.log`。
 - `PYTEST_ADDOPTS='-k "ticket_loop or runtime_approval_review or cross_tenant_status_cancel"' python scripts/test-agent-runtime.py --with-java-delivery` 的 38 项定向测试和 3 条实际审批链路通过。签名访客正例实际读取待审批及执行完成两个状态，分别校验与受限 PostgreSQL 一致，并在两个时点验证匿名及普通坐席拒绝。记录在 `runtime-ticket-approval.json` v9 和 `e3-runtime-status-service.log`。
+
+## E3 坐席工作台进度查看（2026-11-22）
+
+批准后的弹窗可以按该提案引用查询进度。显示状态、执行轮数和步骤数，终态撤下撤销操作，权限失效时清除旧提案。切换会话和关闭时取消请求。沿用原工作台开关，回滚关闭 `VITE_RUNTIME_APPROVAL_REVIEW_ENABLED` 或回退前端。
+
+- 在 `frontend` 运行 `npm run build`，TypeScript 和生产构建通过。既有入口分块体积仍触发大于 500 kB 的提示。原日志 `e3-workspace-progress-build.log`。
+- 启动 `node frontend/scripts/approval-workspace-fixture.mjs`，执行 `./scripts/test-approval-workspace.ps1`。实际 Chromium 共 6 组通过。新断言检查弹窗内部的待执行状态、执行终态、终态移除撤销及切换会话清理状态。原有拒绝、撤销、过期及访问角色继续通过。日志 `e3-workspace-progress-browser.log`。浏览器使用合成 HTTP 结果，后端真实链路见上一节。

@@ -32,6 +32,8 @@ try {
     if ((Browser get count 'fixture-text') -ne '0') { throw 'Approval content was interpreted as markup' }
     Browser find role button click --name '批准' --exact | Out-Null
     Browser wait --text '已批准，执行前可撤销' | Out-Null
+    Browser find role button click --name '查询执行进度' | Out-Null
+    Browser wait --fn "document.querySelector('.approval-dialog p')?.textContent.trim() === '已批准，等待执行'" | Out-Null
     Browser find role button click --name '撤销批准' --exact | Out-Null
     Browser wait --text '当前会话没有可审查的工单提案。' | Out-Null
     Close-Approval
@@ -57,6 +59,22 @@ try {
     Browser find role button click --name '拒绝' --exact | Out-Null
     Browser wait --text '当前会话没有可审查的工单提案。' | Out-Null
     Write-Output 'PASS denial'
+
+    Open-Workspace $fixtureUrl
+    Open-Approval '测试客户 A'
+    Browser wait --text '合成工单提案' | Out-Null
+    Browser find role button click --name '批准' --exact | Out-Null
+    Browser wait --text '已批准，执行前可撤销' | Out-Null
+    Browser find role button click --name '查询执行进度' | Out-Null
+    Browser wait --fn "document.querySelector('.approval-dialog p')?.textContent.trim() === '已批准，等待执行'" | Out-Null
+    Browser find role button click --name '查询执行进度' | Out-Null
+    Browser wait --text '任务执行完成' | Out-Null
+    if ((Browser snapshot -s '.el-dialog' -i) -match 'button "撤销批准"') { throw 'A terminal task still allows revocation' }
+    Close-Approval
+    Open-Approval '测试客户 B'
+    Browser wait --text '当前会话没有可审查的工单提案。' | Out-Null
+    if ((Browser snapshot -s '.el-dialog') -match '任务执行完成') { throw 'A previous session progress leaked into a new dialog' }
+    Write-Output 'PASS exact progress, terminal action, and session isolation'
 
     Open-Workspace "$($fixtureUrl)?role=agent"
     Browser find role button click --name '测试客户 A' | Out-Null
