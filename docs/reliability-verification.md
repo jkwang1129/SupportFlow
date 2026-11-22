@@ -1366,3 +1366,10 @@ Java 在提交机器人接待任务时记录原请求号，在任务范围内绑
 在既有工单验收夹具中为原签名请求和重发请求发送不同编号。两个 HTTP 响应分别回显本次编号，业务消息保持幂等，Java Outbox 和 Python Run 保留首次编号。查询及审批用例额外读取有步骤、无业务正文的租户限定 Trace；审批暂停与终态持有同一个编号。这批只修改验收，回退夹具即可。
 
 - 在隔离 PostgreSQL 17 设置 `PYTEST_ADDOPTS='-k "runtime_trace or ticket_loop or runtime_approval_review"'`，执行 `python scripts/test-agent-runtime.py --with-java-delivery`。41 项定向数据库测试通过。随后真实 Java、Python 和数据库的 10 条查询路径与 3 条审批路径通过，13 条均校验 Trace 与步骤数，外租户不可读取。查询中 5 条成功、5 条为预期业务或工具失败；审批中 1 条写入、接管及过期 2 条零写入。签名 HTTP 到 Outbox/Run 的来源关联覆盖其中两条；其他路径使用合成来源事件。原日志 `d5-durable-trace-runtime.log`，报告 `runtime-ticket-loop.json` v5、`runtime-ticket-approval.json` v10。
+
+## M04 Java 知识客户端日志和错误投影（2026-11-22）
+
+`KbAiClient` 在文件索引、正文索引、检索和 RAG 问答只记录操作、HTTP 状态与长度等元数据。HTTP 异常保留原有业务错误码并转换为固定状态说明，传输及解析异常按操作返回固定提示。成功响应继续交付原预览、检索结果和回答。合成夹具只覆盖 Java 客户端，反向代理访问日志、调用方或其他服务的记录继续按各自入口验收。回滚回退此提交，无数据迁移。
+
+- 使用 `KbAiClientDiagnosticsTest` 等五个客服测试类定向验证 11 项，全部通过。两项新增回环 HTTP 用例覆盖四种正常路径及 503 和不可解析的 JSON。原日志 `m04-kb-client-diagnostics.log`。
+- JDK 25 下 `mvn -B -f backend/pom.xml verify` 成功，147 项通过、173 项数据库条件跳过。原日志 `m04-kb-client-backend-verify.log`。

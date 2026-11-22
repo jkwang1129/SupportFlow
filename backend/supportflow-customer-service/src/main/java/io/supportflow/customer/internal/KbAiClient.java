@@ -86,8 +86,7 @@ public class KbAiClient {
                 + "?tenant_code=" + enc(tenantCode)
                 + "&doc_id=" + docId
                 + "&file_name=" + enc(fileName);
-        log.info("调用知识库索引 tenant={} docId={} file={} bytes={}",
-                tenantCode, docId, fileName, payload.length);
+        log.info("调用知识库索引 tenant={} docId={} bytes={}", tenantCode, docId, payload.length);
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -100,18 +99,11 @@ public class KbAiClient {
                     .build();
             HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (logPayload) {
-                log.info("知识库索引响应 tenant={} docId={} status={} body={}",
-                        tenantCode, docId, response.statusCode(), safe(response.body()));
-            }
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new BizException(40001, parseDetail(response.body()));
-            }
-            return readResult(response.body());
+            return readResult(checkResponse(response, tenantCode, "index-file", 40001));
         } catch (BizException e) {
             throw e;
         } catch (Exception e) {
-            throw new BizException(50001, "文档索引失败：" + friendly(e));
+            throw callFailure("文档索引失败", tenantCode, e);
         }
     }
 
@@ -125,15 +117,12 @@ public class KbAiClient {
         body.put("content", content);
         try {
             String response = postJson(baseUrl + "/api/ai/v1/kb/index-text?tenant_code=" + enc(tenantCode),
-                    body, tenantCode);
-            if (logPayload) {
-                log.info("知识库索引（正文）响应 tenant={} docId={} body={}", tenantCode, docId, safe(response));
-            }
+                    body, tenantCode, "index-text", 40001);
             return readResult(response);
         } catch (BizException e) {
             throw e;
         } catch (Exception e) {
-            throw new BizException(50001, "正文索引失败：" + friendly(e));
+            throw callFailure("正文索引失败", tenantCode, e);
         }
     }
 
@@ -147,17 +136,16 @@ public class KbAiClient {
         body.put("query", query);
         body.put("topK", topK);
         try {
-            String response = postJson(baseUrl + "/api/ai/v1/kb/search", body, tenantCode);
-            if (logPayload) {
-                log.info("知识库检索响应 tenant={} query={} body={}", tenantCode, query, safe(response));
-            }
+            String response = postJson(baseUrl + "/api/ai/v1/kb/search", body, tenantCode, "search", 50001);
             Map<String, Object> parsed = objectMapper.readValue(response, new TypeReference<>() {
             });
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> results = (List<Map<String, Object>>) parsed.get("results");
             return results == null ? List.of() : results;
+        } catch (BizException e) {
+            throw e;
         } catch (Exception e) {
-            throw new BizException(50001, "知识检索失败：" + friendly(e));
+            throw callFailure("知识检索失败", tenantCode, e);
         }
     }
 
@@ -170,7 +158,7 @@ public class KbAiClient {
         // 成本闸门：超预算时不调模型，返回一句如实说明的降级答案（引用为空，不编来源）
         Guard guard = costGuardClient.check(tenantCode);
         if (guard.skipModel()) {
-            log.warn("按成本策略跳过知识问答的模型调用 tenant={} reason={}", tenantCode, guard.reason());
+            log.warn("按成本策略跳过知识问答的模型调用 tenant={}", tenantCode);
             Map<String, Object> degraded = new LinkedHashMap<>();
             degraded.put("answer", "抱歉，智能问答当前因成本策略暂停（" + guard.reason()
                     + "）。可以稍后再试，或转人工客服处理。");
@@ -186,17 +174,13 @@ public class KbAiClient {
         body.put("question", question);
         body.put("topK", topK);
         try {
-            String response = postJson(baseUrl + "/api/ai/v1/rag/ask", body, tenantCode);
-            if (logPayload) {
-                log.info("知识问答响应 tenant={} question={} body={}",
-                        tenantCode, question, safe(response));
-            }
+            String response = postJson(baseUrl + "/api/ai/v1/rag/ask", body, tenantCode, "ask", 40001);
             return objectMapper.readValue(response, new TypeReference<>() {
             });
         } catch (BizException e) {
             throw e;
         } catch (Exception e) {
-            throw new BizException(50001, "知识问答失败：" + friendly(e));
+            throw callFailure("知识问答失败", tenantCode, e);
         }
     }
 
@@ -215,7 +199,7 @@ public class KbAiClient {
             httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode), HttpResponse.BodyHandlers.discarding());
         } catch (Exception e) {
             // 删切片失败不该拦住删文档：切片留着也只是查不到（文档已软删）
-            log.warn("删除知识切片失败 tenant={} docId={} error={}", tenantCode, docId, e.getMessage());
+            log.warn("删除知识切片失败 tenant={} docId={} errorType={}", tenantCode, docId, e.getClass().getSimpleName());
         }
     }
 
@@ -264,7 +248,7 @@ public class KbAiClient {
             return objectMapper.readValue(body, new TypeReference<Map<String, Object>>() {
             });
         } catch (Exception e) {
-            log.warn("知识库向量体检失败：{}", e.getMessage());
+            log.warn("知识库向量体检失败 tenant={} errorType={}", tenantCode, e.getClass().getSimpleName());
             return Map.of();
         }
     }
@@ -279,13 +263,14 @@ public class KbAiClient {
             String body = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", null), HttpResponse.BodyHandlers.ofString()).body();
             return body != null && body.contains("\"UP\"");
         } catch (Exception e) {
-            log.warn("知识库探活失败：{}", e.getMessage());
+            log.warn("知识库探活失败 errorType={}", e.getClass().getSimpleName());
             return false;
         }
     }
 
     /** POST JSON：显式按 UTF-8 编码请求体，避免中文被写坏。 */
-    private String postJson(String url, Map<String, Object> body, String tenantCode) throws Exception {
+    private String postJson(String url, Map<String, Object> body, String tenantCode, String operation, int statusErrorCode)
+            throws Exception {
         String payload = objectMapper.writeValueAsString(body);
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -299,36 +284,24 @@ public class KbAiClient {
                 .build();
         HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode),
                 HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (response.statusCode() < 200 || response.statusCode() >= 300) {
-            throw new BizException(40001, parseDetail(response.body()));
+        return checkResponse(response, tenantCode, operation, statusErrorCode);
+    }
+
+    private String checkResponse(HttpResponse<String> response, String tenantCode, String operation, int statusErrorCode) {
+        int status = response.statusCode();
+        if (status < 200 || status >= 300) {
+            log.warn("知识服务返回错误 tenant={} operation={} status={}", tenantCode, operation, status);
+            throw new BizException(statusErrorCode, "知识服务返回 HTTP " + status);
+        }
+        if (logPayload) {
+            log.info("知识服务响应 tenant={} operation={} status={} responseChars={}",
+                    tenantCode, operation, status, response.body().length());
         }
         return response.body();
     }
 
-    /** 从 AI 服务的错误响应里抠出可读原因（FastAPI 的 detail 字段）。 */
-    private String parseDetail(String body) {
-        try {
-            Map<String, Object> parsed = objectMapper.readValue(body, new TypeReference<>() {
-            });
-            Object detail = parsed.get("detail");
-            if (detail != null) {
-                return String.valueOf(detail);
-            }
-        } catch (Exception ignored) {
-            // 解析不出来就退回原文
-        }
-        return safe(body);
-    }
-
     private String enc(String value) {
         return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8);
-    }
-
-    private String safe(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.length() > 400 ? value.substring(0, 400) + "..." : value;
     }
 
     private IndexResult readResult(String body) throws Exception {
@@ -347,16 +320,12 @@ public class KbAiClient {
                 preview == null ? List.of() : preview);
     }
 
-    /** 把底层异常翻译成用户能看懂的一句话。 */
-    private String friendly(Exception e) {
-        String message = e.getMessage() == null ? "" : e.getMessage();
-        if (message.contains("Connection refused") || message.contains("I/O error")) {
-            return "AI 服务（supportflow-ai）没启动，请先启动它再试";
+    private BizException callFailure(String message, String tenantCode, Exception error) {
+        if (error instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
         }
-        if (message.contains("400")) {
-            return message.replaceAll("^.*400[^\\]]*\\]?\\s*", "");
-        }
-        return message.length() > 180 ? message.substring(0, 180) : message;
+        log.warn("{} tenant={} errorType={}", message, tenantCode, error.getClass().getSimpleName());
+        return new BizException(50001, message);
     }
 
     private String str(Object value) {
