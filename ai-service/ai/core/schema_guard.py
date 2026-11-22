@@ -32,12 +32,14 @@ PAYLOAD_SOURCE = 'backend/deploy/migrations/sql/ai_db_003_agent_payload.sql'
 RECONCILIATION_SOURCE = 'backend/deploy/migrations/sql/ai_db_004_reply_reconciliation.sql'
 TICKET_RECONCILIATION_SOURCE = 'backend/deploy/migrations/sql/ai_db_005_ticket_reconciliation.sql'
 APPROVAL_SOURCE = 'backend/deploy/migrations/sql/ai_db_006_agent_approval.sql'
+MODEL_USAGE_SOURCE = 'backend/deploy/migrations/sql/ai_db_009_agent_model_usage.sql'
 RUNTIME_COLUMNS = {
     'agent_run': ('tenant_code run_id source_event_id session_no event_seq message_id principal_ref trace_id runtime_version input_hash '
                   'state max_steps max_model_calls max_tool_calls max_retries step_count model_calls tool_calls retry_count attempt fence '
                   'owner lease_until ready_at deadline_at cancel_requested error_code result_ref created_at updated_at finished_at').split(),
     'agent_step': ('tenant_code run_id step_no step_key kind effect intent_hash intent_ref state fence result_ref created_at completed_at').split(),
     'agent_payload': ('tenant_code payload_id run_id step_no fence payload_schema payload_json payload_hash created_at expires_at').split(),
+    'agent_model_usage': ('tenant_code run_id step_no fence intent_hash payload_id payload_hash input_tokens chat_output_tokens recorded_at').split(),
     'agent_reply_reconciliation': ('tenant_code run_id step_no observed_fence source_event_id snapshot_id arguments_sha256 intent_hash '
                                   'message_id message_no message_seq operator_ref original_error_code original_step_result confirmed_at').split(),
     'agent_ticket_reconciliation': ('tenant_code run_id step_no observed_fence source_event_id snapshot_id operation schema_version arguments_sha256 intent_hash '
@@ -49,7 +51,8 @@ RUNTIME_COLUMNS = {
 
 def _runtime_source(table):
     return {'agent_payload': PAYLOAD_SOURCE, 'agent_reply_reconciliation': RECONCILIATION_SOURCE,
-            'agent_ticket_reconciliation': TICKET_RECONCILIATION_SOURCE, 'agent_approval': APPROVAL_SOURCE}.get(table, RUNTIME_SOURCE)
+            'agent_ticket_reconciliation': TICKET_RECONCILIATION_SOURCE, 'agent_approval': APPROVAL_SOURCE,
+            'agent_model_usage': MODEL_USAGE_SOURCE}.get(table, RUNTIME_SOURCE)
 
 
 def _kb_connect(**kwargs):
@@ -96,13 +99,13 @@ def runtime_missing(columns=None):
                    AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
                      AND has_column_privilege(current_user,c.oid,a.attnum,'UPDATE') <>
                      (a.attname IN ('status','decided_by','decided_at','closed_by','closed_at','consumed_step_no','consumed_at')))
-                  WHEN c.relname IN ('agent_payload','agent_reply_reconciliation','agent_ticket_reconciliation') THEN NOT has_table_privilege(current_user,c.oid,'UPDATE')
+                  WHEN c.relname IN ('agent_payload','agent_model_usage','agent_reply_reconciliation','agent_ticket_reconciliation') THEN NOT has_table_privilege(current_user,c.oid,'UPDATE')
                   ELSE has_table_privilege(current_user,c.oid,'UPDATE') END
               AND NOT has_table_privilege(current_user,c.oid,'DELETE')
               AND NOT has_table_privilege(current_user,c.oid,'TRUNCATE') AS usable
               FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
-              WHERE n.nspname='public' AND c.relname IN ('agent_run','agent_step','agent_payload','agent_reply_reconciliation','agent_ticket_reconciliation','agent_approval')
-            """).fetchall():
+              WHERE n.nspname='public' AND c.relname = ANY(%s)
+            """, (list(RUNTIME_COLUMNS),)).fetchall():
             if not row['usable']:
                 missing[f"ai_db.{row['relname']}.runtime_permissions"] = _runtime_source(row['relname'])
         role = connection.execute("""SELECT NOT (rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication)

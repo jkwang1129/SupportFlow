@@ -210,6 +210,121 @@
             }
           }
         },
+        "agent_model_usage": {
+          "columns": {
+            "chat_output_tokens": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "bigint"
+            },
+            "fence": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "input_tokens": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "intent_hash": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "payload_hash": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character(64)"
+            },
+            "payload_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "recorded_at": {
+              "default": "clock_timestamp()",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp with time zone"
+            },
+            "run_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "step_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            }
+          },
+          "constraints": {
+            "agent_model_usage_chat_output_tokens_check": "CHECK ((chat_output_tokens >= 0))",
+            "agent_model_usage_fence_check": "CHECK ((fence > 0))",
+            "agent_model_usage_input_tokens_check": "CHECK ((input_tokens >= 0))",
+            "agent_model_usage_intent_hash_check": "CHECK ((intent_hash ~ '^[0-9a-f]{64}$'::text))",
+            "agent_model_usage_payload_hash_check": "CHECK ((payload_hash ~ '^[0-9a-f]{64}$'::text))",
+            "agent_model_usage_pkey": "PRIMARY KEY (tenant_code, run_id, step_no)",
+            "agent_model_usage_step_no_check": "CHECK (((step_no >= 1) AND (step_no <= 100)))",
+            "agent_model_usage_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
+            "agent_model_usage_tenant_code_run_id_step_no_fkey": "FOREIGN KEY (tenant_code, run_id, step_no) REFERENCES agent_step(tenant_code, run_id, step_no)"
+          },
+          "indexes": {
+            "agent_model_usage_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_model_usage_pkey ON public.agent_model_usage USING btree (tenant_code, run_id, step_no)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_model_usage_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_model_usage_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "agent_payload": {
           "columns": {
             "created_at": {
@@ -13804,6 +13919,10 @@
       {
         "checksum": "3b70494833c5440a21537731a29b1666f16e2e6d8ea23d06ecbe76d47c442ea3",
         "version": "008"
+      },
+      {
+        "checksum": "430606292151a2d9b3a5e08ece50530f22244c99fbafd58bf4eb4c2160222f79",
+        "version": "009"
       }
     ],
     "billing_db": [

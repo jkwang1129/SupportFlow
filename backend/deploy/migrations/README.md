@@ -121,3 +121,7 @@ ReplyReconciler为显式可信宿主控制面，无公开路由/自动轮询/模
 008 只添加 `agent_run_trace_lookup_idx`。索引前两列匹配租户和请求号，后两列用于取最新的候选任务。沿用原账号、表权限和 RLS。建议在低写入窗口依序执行 migrate、provision、verify。索引创建使用迁移器已有的 2 秒锁等待和 30 秒语句上限，达到上限时事务回滚并可重试。已经应用后，应用回退应保留索引和迁移历史。
 
 在配置受限 Runtime 数据库账号的 AI 服务目录运行 `python -m ai.runtime.trace_export --tenant TENANT_A --trace-id REQUEST_ID`。每次精确匹配一个请求号，最多列出最新的 20 个任务并标记是否截断。找到任务后用同一租户的 `--run RUN_UUID` 导出步骤。请求号只用于查找，操作员需已有目标租户的授权，此入口为运维命令行。
+
+## AI 009 模型用量回执
+
+009 新增 `agent_model_usage`，以复合外键关联原租户、任务和模型步骤。回执和完成步骤同事务提交，检查点清理后继续保留已知 Token。按 migrate、provision、verify 升级，原记录逐字段保留。Runtime 就绪门禁要求新表和受限权限。应用版本回退时保留 009 和现有回执。详见 [ADR-0044](../../../docs/decisions/0044-durable-model-usage-receipts.md)。

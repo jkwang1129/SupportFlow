@@ -1,7 +1,8 @@
-"""Extract provider usage from an atomic model checkpoint."""
+"""Extract and verify provider usage evidence for a durable model step."""
 from .payloads import decode
 from .types import RuntimeConflict, fingerprint
 
+MODEL_OPERATIONS = ('model.chat', 'model.embedding')
 
 def checkpoint_usage(usage, *, chat):
     if type(usage) is not dict or type(usage.get('available')) is not bool:
@@ -17,25 +18,49 @@ def checkpoint_usage(usage, *, chat):
     return usage['input_tokens'], usage.get('output_tokens')
 
 
-def _step_usage(step):
-    if step['payload_id'] is None:
-        return None, None
-    schema = 'model-output-v1'
-    intent = step['intent_ref']
+def payload_usage(intent, value):
     operation = intent['operation']
     chat = operation == 'model.chat'
-    if (operation not in ('model.chat', 'model.embedding') or step['state'] != 'SUCCEEDED' or step['effect'] != 'NONE'
-            or step['payload_schema'] != schema or step['fence'] != step['payload_fence']
-            or step['result_ref'] != {'resource_ref': 'payload:' + str(step['payload_id'])}
-            or step['intent_hash'] != fingerprint(dict(kind='MODEL', effect='NONE', intent=intent))):
-        raise ValueError('Invalid model step binding')
-    value = decode(schema, step['payload_json'], step['payload_hash'])
     version_field = 'prompt_version' if chat else 'query_version'
-    if (value['schema_version'] != ('chat-result-v1' if chat else 'embedding-result-v1')
+    if (operation not in MODEL_OPERATIONS or value['schema_version'] != ('chat-result-v1' if chat else 'embedding-result-v1')
             or value[version_field] != intent['version'] or value['profile_ref'] != intent['model']
             or value['profile_hash'] != intent['input_ref'] or value['request_hash'] != intent['arguments_sha256']):
         raise ValueError('Invalid model checkpoint binding')
     return checkpoint_usage(value['usage'], chat=chat)
+
+
+def _step_usage(step):
+    payload_id, receipt_id = step['payload_id'], step['usage_payload_id']
+    if payload_id is None and receipt_id is None:
+        return None, None
+    intent = step['intent_ref']
+    if (intent['operation'] not in MODEL_OPERATIONS or step['state'] != 'SUCCEEDED' or step['effect'] != 'NONE'
+            or step['result_ref'] != {'resource_ref': 'payload:' + str(payload_id or receipt_id)}
+            or step['intent_hash'] != fingerprint(dict(kind='MODEL', effect='NONE', intent=intent))):
+        raise ValueError('Invalid model step binding')
+
+    observed = None
+    if payload_id is not None:
+        schema = 'model-output-v1'
+        if step['payload_schema'] != schema or step['fence'] != step['payload_fence']:
+            raise ValueError('Invalid model checkpoint binding')
+        observed = payload_usage(intent, decode(schema, step['payload_json'], step['payload_hash']))
+    if receipt_id is None:
+        return observed
+
+    chat = intent['operation'] == 'model.chat'
+    output_tokens = step['usage_chat_output_tokens']
+    if (step['usage_fence'] != step['fence'] or step['usage_intent_hash'] != step['intent_hash']
+            or (output_tokens is not None) != chat):
+        raise ValueError('Invalid model usage receipt binding')
+    usage = {'available': True, 'input_tokens': step['usage_input_tokens']}
+    if chat:
+        usage['output_tokens'] = output_tokens
+    durable = checkpoint_usage(usage, chat=chat)
+    if payload_id is not None and (receipt_id != payload_id or step['usage_payload_hash'] != step['payload_hash']
+                                   or durable != observed):
+        raise ValueError('Model usage receipt conflicts with the live checkpoint')
+    return durable
 
 
 def summarize(run, steps):

@@ -57,6 +57,21 @@ def seed(connect):
                 trace_id,runtime_version,input_hash,max_steps,max_model_calls,max_tool_calls,max_retries,deadline_at)
                 VALUES(%s,%s,%s,%s,1,%s,%s,'restore-drill','runtime-v1',repeat('a',64),12,4,8,2,clock_timestamp()+interval '1 hour')''',
                 (tenant, run_id, event_id, session_no, session_id+1, principal))
+            # Simulate a completed model step whose transient body has already been cleaned up.
+            payload_id = uuid4()
+            intent = {'operation': 'model.chat', 'version': 'restore-prompt', 'model': 'fixture-model',
+                      'input_ref': 'a'*64, 'arguments_sha256': 'b'*64}
+            intent_hash = hashlib.sha256(json.dumps({'kind': 'MODEL', 'effect': 'NONE', 'intent': intent},
+                sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            database.execute('''INSERT INTO agent_step(tenant_code,run_id,step_no,step_key,kind,effect,intent_hash,intent_ref,
+                state,fence,result_ref,completed_at) VALUES(%s,%s,1,'restore-model','MODEL','NONE',%s,%s::jsonb,
+                'SUCCEEDED',1,%s::jsonb,clock_timestamp())''',
+                (tenant, run_id, intent_hash, json.dumps(intent), json.dumps({'resource_ref': 'payload:'+str(payload_id)})))
+            database.execute("""UPDATE agent_run SET state='SUCCEEDED',fence=1,attempt=1,step_count=1,model_calls=1,
+                finished_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s""", (tenant, run_id))
+            database.execute('''INSERT INTO agent_model_usage(tenant_code,run_id,step_no,fence,intent_hash,payload_id,payload_hash,
+                input_tokens,chat_output_tokens) VALUES(%s,%s,1,1,%s,%s,repeat('c',64),%s,7)''',
+                (tenant, run_id, intent_hash, payload_id, 12+index))
 
 
 def projection(connect):
@@ -64,9 +79,11 @@ def projection(connect):
         outbox = database.execute('SELECT tenant_code,event_id,run_id,message_id,state,attempts FROM agent_event_outbox ORDER BY tenant_code').fetchall()
     with connect('ai_db') as database:
         runs = database.execute('SELECT tenant_code,source_event_id,run_id,message_id,state,model_calls FROM agent_run ORDER BY tenant_code').fetchall()
+        usages = database.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall()
     assert len(outbox) == len(runs) == 2
     assert [row[:4] for row in outbox] == [row[:4] for row in runs]
-    return outbox, runs
+    assert len(usages) == 2
+    return outbox, runs, usages
 
 
 def table_counts(connect, name):
@@ -85,6 +102,8 @@ def assert_restricted_restored_reads(environment, passwords):
                 connection.execute("SELECT set_config('app.tenant_code',%s,true)", (scope,))
                 rows = connection.execute(sql.SQL('SELECT tenant_code FROM public.{}').format(sql.Identifier(table))).fetchall()
                 assert rows == expected
+                if role == 'AI':
+                    assert connection.execute('SELECT tenant_code FROM agent_model_usage').fetchall() == expected
             assert connection.execute('SELECT has_table_privilege(current_user,%s,%s)', (table, 'TRUNCATE')).fetchone() == (False,)
 
 
@@ -126,6 +145,7 @@ def main():
                                  'tables_checked': len(expected_counts[name]), 'rows_checked': sum(expected_counts[name].values())} for name in names},
             'schema_tables_verified': sum(item['schema_verified']['tables'] for item in verified),
             'matched_outbox_run_pairs': len(expected_projection[0]),
+            'matched_model_usage_receipts': len(expected_projection[2]),
             'restricted_roles_verified': 2, 'invalid_archive_rejected': True,
         }
         path = ROOT/'.local/verification/database-restore-drill.json'

@@ -1,6 +1,7 @@
 """Tenant-bound durable execution primitives. All writes are fenced, not an Agent Loop."""
 from contextlib import contextmanager
 from datetime import timedelta
+import json
 from uuid import UUID, uuid4
 
 from psycopg import sql
@@ -11,7 +12,7 @@ from ..core.db import connect
 from .types import (RunInput, Limits, Lease, tenant_code, identifier, fingerprint, reference,
                     RuntimeConflict, LostLease, BudgetExceeded, QueueFull, ActionDenied)
 from .payloads import SCHEMAS,StepPayload,encode as encode_payload,decode as decode_payload
-from .model_usage import summarize as summarize_model_usage
+from .model_usage import MODEL_OPERATIONS, payload_usage, summarize as summarize_model_usage
 
 TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELLED'}
 TRACE_LOOKUP_LIMIT = 20
@@ -109,9 +110,13 @@ class RuntimeStore:
             if run is None:
                 return None
             steps = connection.execute("""SELECT s.state,s.effect,s.fence,s.intent_ref,s.intent_hash,s.result_ref,
-                    p.payload_id,p.fence AS payload_fence,p.payload_schema,p.payload_json,p.payload_hash
+                    p.payload_id,p.fence AS payload_fence,p.payload_schema,p.payload_json,p.payload_hash,
+                    u.payload_id AS usage_payload_id,u.fence AS usage_fence,u.intent_hash AS usage_intent_hash,
+                    u.payload_hash AS usage_payload_hash,u.input_tokens AS usage_input_tokens,
+                    u.chat_output_tokens AS usage_chat_output_tokens
                 FROM agent_step s LEFT JOIN agent_payload p ON p.tenant_code=s.tenant_code
                     AND p.run_id=s.run_id AND p.step_no=s.step_no AND p.expires_at>statement_timestamp()
+                LEFT JOIN agent_model_usage u ON u.tenant_code=s.tenant_code AND u.run_id=s.run_id AND u.step_no=s.step_no
                 WHERE s.tenant_code=%s AND s.run_id=%s AND s.kind='MODEL' ORDER BY s.step_no LIMIT 101""",
                 (tenant, run_id)).fetchall()
         return summarize_model_usage(run, steps)
@@ -459,6 +464,13 @@ class RuntimeStore:
             payload_id=uuid4();result={'resource_ref':'payload:'+str(payload_id)}
             connection.execute('''INSERT INTO agent_payload(tenant_code,payload_id,run_id,step_no,fence,payload_schema,payload_json,payload_hash)
                 VALUES(%s,%s,%s,%s,%s,%s,%s,%s)''',(lease.tenant,payload_id,lease.run_id,step['step_no'],lease.fence,schema,raw,digest))
+            if schema == 'model-output-v1' and step['intent_ref'].get('operation') in MODEL_OPERATIONS:
+                input_tokens, output_tokens = payload_usage(step['intent_ref'], json.loads(raw))
+                if input_tokens is not None:
+                    connection.execute("""INSERT INTO agent_model_usage
+                        (tenant_code,run_id,step_no,fence,intent_hash,payload_id,payload_hash,input_tokens,chat_output_tokens)
+                        VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (lease.tenant, lease.run_id, step['step_no'],
+                        lease.fence, step['intent_hash'], payload_id, digest, input_tokens, output_tokens))
             connection.execute("""UPDATE agent_step SET state='SUCCEEDED',result_ref=%s,completed_at=clock_timestamp()
                 WHERE tenant_code=%s AND run_id=%s AND step_no=%s""",(Jsonb(result),lease.tenant,lease.run_id,step['step_no']))
             self._owned(connection,lease)

@@ -1402,3 +1402,12 @@ Worker 在业务处理前绑定验证过的持久化请求号，作用域退出�
 提交 `65a44a4` 的远端完整服务验收在 AI 008 后仍断言迁移数为 7，实际为 8 且权限断言全部符合，导致验收失败。`test-security-flow.py` 现在从同一份版本清单读取六库预期版本数量，保留校验和与历史只读权限的原断言。这批改变验收脚本，无运行时行为或数据库变动。
 
 - JDK 25、隔离 PostgreSQL 17 及离线模型下执行 `python scripts/test-security-flow.py`。默认新库、旧库升级、空库 CLI 初始化三套真实服务场景全部通过。每套验证了六库迁移历史、五个受限 Java 运行账号、知识库和机器人实际调用及原租户权限边界。验收容器与卷已清理。原日志 `d7-migration-count-full-flows.log`。旧失败见 [CI 45003172825](https://github.com/jkwang1129/SupportFlow/actions/runs/45003172825)。
+
+## E5 模型用量回执（2026-11-22）
+
+AI 009 为模型步骤保存独立的 Token 回执。回执与原检查点原子提交，查询仍使用 `python -m ai.runtime.trace_export --tenant TENANT_A --run RUN_UUID --model-usage`。已清理正文可通过原步骤绑定核验回执，旧版任务仍可从未过期的检查点获取观测值。回滚应用代码时保留迁移和回执。未观测供应商用量保持未知，尚无价格和硬额度规则。设计与运维边界见 [ADR-0044](decisions/0044-durable-model-usage-receipts.md)。
+
+- `PYTEST_ADDOPTS='-k "runtime_model_usage or runtime_models or runtime_embeddings or runtime_trace or runtime_api_postgres or runtime_payloads"' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 通过 91 项。随后 `-k runtime_model_usage` 的 15 项通过，包含跨租户插入拒绝、不可变权限、异常事务回滚和角色重新配置后保留 1 条回执。原日志 `e5-model-usage-receipt-pg.log`、`e5-model-usage-receipt-final-pg.log`。
+- 合成模型超时后重新执行，3 次预留中 2 次已知，合计 21 个输入 Token、7 个 Chat 输出 Token。删除两种模型的原检查点后，原 CLI 查询结果相同。故障测试在事务内观察到回执和成功状态后注入失败，提交后无回执和正文，只保留 1 次未知预留。原报告 `runtime-model-usage.json`。
+- `python scripts/test-versioned-migrations.py` 的 17 项通过，AI 008 → 009 保留原任务和检查点。`python scripts/test-schema-drift.py` 与 `python scripts/test-database-init.py` 验证六库 98 张应用表。`python scripts/test-database-restore.py` 恢复两条模拟回执并逐字段比对。原日志 `e5-model-usage-migrate.log`、`e5-model-usage-schema.log`、`e5-model-usage-init.log`、`e5-model-usage-restore.log`。
+- 普通 AI 测试 1,045 项通过、433 项条件跳过。RAG 三组门禁共 54 项通过。日志 `e5-model-usage-ai.log`。

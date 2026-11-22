@@ -37,7 +37,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M05 RAG Engineering | 部分实现，已接访客返回前复核及可选逐句原文核查 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、改写、租户及发布过滤、越界拒答和逐句证据门禁 | 相关性、冲突决策、持久化发布版本及真实语义评测待补；混检重排先建基线。A/C |
 | M06 Evaluation | 部分实现，契约与工程故障门禁 | RAG 拒答、引用及配对原文契约，4 类故障轨迹基线，真实服务的恢复、审批、发布、写作业和回执测试 | 真实模型质量、业务事实评分、盲测和工具受控重演待补。自动判分需用人工标注校准。A/D |
 | M07 Trace/Observability | 部分实现，Runtime 可导出并离线复核受限轨迹 | 异步客服、工单 Outbox 到 Run 及模型重试关联；版本化轨迹、Python 图步骤、模型调用量、运营告警及故障基线 | 统一查询、完整跨服务覆盖、受控模型及工具重演尚待验收。A/B/D |
-| M08 Model Gateway/Prompt | 部分实现：共用有界Chat/查询Embedding与Runtime适配 | core.llm_chat单次HTTP/稳定错误/正文边界；显式租户ChatProfile、Prompt/请求Hash、MODEL原子正文/usage及预算恢复；实际协议TCP故障/进程验收；llm_gateway.py仍旧Mock占位 | 视觉/旧RAG同步Embedding、租户选择/Prompt发布/供应商权限和usage/Token金额结算治理仍缺；不造第二入口。E |
+| M08 Model Gateway/Prompt | 部分实现：共用有界 Chat/查询 Embedding 与 Runtime 适配 | 单次 HTTP、稳定错误、显式租户 Profile、Prompt/请求摘要、MODEL 检查点和持久化 Token 回执、实际协议故障与恢复 | 视觉和旧 RAG 同步 Embedding、租户选择、Prompt 发布、供应商权限和金额结算待验收。E |
 | M09 Streaming/交互 | 部分实现 | 既有 WebSocket、消息 seq/ACK/补拉、坐席审批、事件和任务绑定的进度查询与显示 | 任务事件推送、断线续传和用户取消还需验证。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
 | M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、`llm_usage.py` 实际 usage 与价格估算、计费日聚合；运营 `TenantCostBudget`、`ObservabilityService#costGuard/evaluate` 和客服 `CostGuardClient` 已有月预算告警/降级/暂停 | 复用既有预算配置；当前闸门缓存 60 秒且读取失败放行，不能当硬额度。已有跨Worker租约/fencing、Run调用/步骤/重试计数预算和租户积压上限；仍缺Token/费用并发预留结算和跨进程租户配额/公平性；计费去重 A4，运行预算随 M01，完整隔离压测 E。费用估算不是账单。B/E |
@@ -183,3 +183,5 @@ D6 让 Python Worker 在每次处理时使用持久化 Run 的请求号。模型
 D7 复用受限命令行入口，可按租户和请求号定位任务，再导出步骤或观察用量。新索引支持精确匹配和结果排序。运维页面、统一跨服务查询与 Span 瀑布图仍待验收。
 
 C7 支持客户在当前回合明确更正一个订单号，先更新模型看到的结构化记忆，再经原流程保存。歧义、否定及超长业务编号沿用普通回合处理；测试覆盖同会话号的双租户记录以及下一轮读取。
+
+E5 将模型步骤的已知 Token 保存为独立回执，在正文检查点过期或清理后仍可核对。Chat 和 Embedding 共用原子提交，历史检查点继续兼容。已核对回滚、重试、租户权限、旧库升级和六库恢复。接下来的费用规则需处理单价版本、并发额度和未知用量。见 [ADR-0044](decisions/0044-durable-model-usage-receipts.md)。

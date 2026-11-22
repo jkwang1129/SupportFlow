@@ -91,11 +91,18 @@ def main():
         with connect('ai_db') as connection:
             audit_rows = connection.execute('SELECT * FROM agent_ticket_reconciliation ORDER BY tenant_code,run_id').fetchall()
             approval_rows = connection.execute('SELECT * FROM agent_approval ORDER BY tenant_code,run_id').fetchall()
+            usage_rows = connection.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall()
         subprocess.run(command, env=provision_env, input=provisioning,
                        text=True, check=True, stdout=subprocess.DEVNULL)
         with connect('ai_db') as connection:
             assert connection.execute('SELECT * FROM agent_ticket_reconciliation ORDER BY tenant_code,run_id').fetchall() == audit_rows
             assert connection.execute('SELECT * FROM agent_approval ORDER BY tenant_code,run_id').fetchall() == approval_rows
+            assert connection.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall() == usage_rows
+            for privilege, allowed in (('SELECT', True), ('INSERT', True), ('UPDATE', False), ('DELETE', False), ('TRUNCATE', False)):
+                assert connection.execute("SELECT has_table_privilege('supportflow_ai','agent_model_usage',%s)",
+                                          (privilege,)).fetchone() == (allowed,)
+            for role in ('supportflow_customer', 'supportflow_kb'):
+                assert connection.execute("SELECT has_table_privilege(%s,'agent_model_usage','SELECT')", (role,)).fetchone() == (False,)
             privileges = connection.execute("""SELECT has_table_privilege('supportflow_ai','agent_ticket_reconciliation','SELECT'),
                 has_table_privilege('supportflow_ai','agent_ticket_reconciliation','INSERT'),
                 has_table_privilege('supportflow_ai','agent_ticket_reconciliation','UPDATE'),
@@ -111,6 +118,7 @@ def main():
             assert approval_permissions == (False, False, False, True, False)
         print(f'Ticket audit reprovision: {len(audit_rows)} rows preserved; AI SELECT/INSERT only, customer and KB SELECT denied', flush=True)
         print(f'Approval reprovision: {len(approval_rows)} rows preserved; only decision columns are writable', flush=True)
+        print(f'Model usage reprovision: {len(usage_rows)} rows preserved; AI SELECT/INSERT only, customer and KB SELECT denied', flush=True)
         if args.with_java_delivery:
             from runtime_delivery_fixture import verify_delivery
             verify_delivery(connect, environment, passwords, test_env)
