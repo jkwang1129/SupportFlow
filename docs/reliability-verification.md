@@ -1325,3 +1325,11 @@ AI 发现与访客只读登记分别通过 [CI 44896041748](https://github.com/j
 `PYTEST_ADDOPTS='-k other_tenant_progresses' python scripts/test-agent-runtime.py` 在 PostgreSQL 17 通过新增剧本。A 达到 12 项积压，4 个各自领取不同任务的 Worker 被合成模型暂挂。此时新增 A 请求被拒，重复事件仍返回原 Run。为 B 单独配置的 Worker 在这段时间完成了 3 项任务，结果和预算独立。释放 A 后四个任务各消耗一次模型预留，A 保留 8 项待处理。该批只加入测试，回滚可独立回退断言，无运行期变更。
 
 原始 `runtime-tenant-burst.json` 的单次记录中，B 三项任务从登记到完成合计 1,142.568 毫秒。该时间包含本地测试进程、数据库及合成处理，用于诊断这次实验。共享 Worker 池公平性、模型配额和生产吞吐仍未覆盖。日志 `e4-runtime-tenant-burst.log`。
+
+## C5 客服意图分析上下文与槽位恢复（2026-11-22）
+
+`SUPPORTFLOW_AI_BRAIN_CONTEXT_MAX_BYTES=2048` 开启一个可复现预算。完整问题和符合格式的订单号、手机号优先保留。按最近优先保留完整消息，系统角色历史与未声明槽位不传入新提示。必需上下文超限时沿用规则。设为 `0` 可回滚。设计与限制见 [ADR-0043](decisions/0043-bounded-brain-analysis-context.md)。
+
+- `PYTEST_ADDOPTS='-k brain_analysis_context' python scripts/test-agent-runtime.py` 在 PostgreSQL 17 通过 6 项用例。包括同一会话编号跨租户使用各自订单、软删除后停止恢复、超预算零模型请求、UTF-8 精确预算、保留重复询问与角色过滤。首轮传输替身使用已读响应体，改成流式夹具后通过。日志 `c5-brain-context-pg-final.log`。
+- 一个合成长对话样本的版本对照经过实际 Chat 传输序列化。`messages` 由 13,638 降至 1,632 字节，完整 HTTP 请求体由 13,693 降至 1,687 字节。两个策略各调用同一模型替身一次，结构化结果一致。原始统计 `brain-analysis-context.json`。该夹具固定输出，真实模型 Token 和语义正确率留待独立评测。
+- 普通 AI 套件 1,034 项通过、424 项条件跳过。拒答、引用和原文核查三组门禁共 54 项通过。日志 `c5-brain-context-ai.log`、报告 `c5-rag-contract.json`。
