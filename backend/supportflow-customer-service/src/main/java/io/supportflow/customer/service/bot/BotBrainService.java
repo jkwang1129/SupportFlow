@@ -1,6 +1,7 @@
 package io.supportflow.customer.service.bot;
 
 import io.supportflow.common.context.TenantContext;
+import io.supportflow.common.context.TraceContext;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.customer.dto.bot.BotProfile;
 import io.supportflow.customer.dto.session.EscalateResult;
@@ -50,6 +51,7 @@ import io.supportflow.customer.service.session.SessionService;
 public class BotBrainService {
 
     private static final Logger log = LoggerFactory.getLogger(BotBrainService.class);
+    private static final Pattern TRACE_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}");
 
     /** 传给大脑的历史消息条数：够模型看懂上下文，又不至于把 token 烧光 */
     private static final int MAX_HISTORY = 12;
@@ -168,7 +170,13 @@ public class BotBrainService {
             log.info("[机器人接待] 本轮带图片上下文 tenant={} sessionNo={} 上下文={}字",
                     tenantCode, sessionNo, extraContext.length());
         }
-        executor.execute(() -> handleCustomerMessage(tenantCode, sessionNo, extraContext));
+        String incomingTrace = TraceContext.get();
+        String traceId = incomingTrace != null && TRACE_ID.matcher(incomingTrace).matches()
+                ? incomingTrace : TraceContext.newTraceId();
+        executor.execute(() -> TraceContext.bind(traceId, () -> {
+            handleCustomerMessage(tenantCode, sessionNo, extraContext);
+            return null;
+        }));
     }
 
     /** 一轮接待的实际处理（同会话串行）。 */

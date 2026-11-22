@@ -1,16 +1,23 @@
 package io.supportflow.customer.service.bot;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.supportflow.common.context.TenantContext;
+import io.supportflow.common.context.TraceContext;
+import io.supportflow.customer.dto.cost.Guard;
 import io.supportflow.customer.entity.Session;
 import io.supportflow.customer.internal.BotAiClient;
+import io.supportflow.customer.internal.CostGuardClient;
 import io.supportflow.customer.internal.RealtimeNotifyClient;
+import io.supportflow.customer.service.metrics.BillingUsageCollector;
 import io.supportflow.customer.service.session.SessionService;
+import io.supportflow.customer.testkit.RuntimeReceiverStub;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.ObjectProvider;
 
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -23,6 +30,61 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class BotBrainConcurrencyTest {
+    @Test
+    void asynchronousTurnsSendTheirOwnRequestIdsToTheAiService() throws Exception {
+        var mapper = new ObjectMapper();
+        var arrived = new CountDownLatch(4);
+        var traceBySession = new ConcurrentHashMap<String, String>();
+        var sessions = mock(SessionService.class);
+        @SuppressWarnings("unchecked")
+        ObjectProvider<SessionService> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(sessions);
+        when(sessions.requireSession(eq("TENANT_A"), anyString())).thenAnswer(call ->
+                Session.builder().id(1L).sessionNo(call.getArgument(1)).status(SessionService.STATUS_BOT).build());
+        when(sessions.historyByTenant(eq("TENANT_A"), anyString(), isNull(), anyInt(), eq(false))).thenReturn(List.of());
+        var guard = mock(CostGuardClient.class);
+        when(guard.check("TENANT_A")).thenReturn(Guard.NORMAL);
+
+        try (var receiver = new RuntimeReceiverStub(request -> {
+            String session = mapper.readTree(request.body()).path("session_id").asText();
+            String trace = request.headers().entrySet().stream()
+                    .filter(header -> header.getKey().equalsIgnoreCase(TraceContext.HEADER_REQUEST_ID))
+                    .findFirst().orElseThrow().getValue().getFirst();
+            traceBySession.put(session, trace);
+            arrived.countDown();
+            return new RuntimeReceiverStub.Reply(200, "{\"reply\":\"\"}");
+        })) {
+            var ai = new BotAiClient("test-only-bot-signing-key-123456789", receiver.endpoint().resolve("/").toString(),
+                    false, 5, mock(BillingUsageCollector.class), guard);
+            var brain = new BotBrainService(ai, mock(RealtimeNotifyClient.class), provider, true, true, 5);
+            try {
+                TraceContext.bind("source-trace-A", () -> {
+                    brain.handleCustomerMessageAsync("TENANT_A", "S1");
+                    return null;
+                });
+                TraceContext.bind("source-trace-B", () -> {
+                    brain.handleCustomerMessageAsync("TENANT_A", "S2");
+                    return null;
+                });
+                TraceContext.bind("invalid request trace", () -> {
+                    brain.handleCustomerMessageAsync("TENANT_A", "S3");
+                    return null;
+                });
+                brain.handleCustomerMessageAsync("TENANT_A", "S4");
+                await(arrived);
+                assertEquals("source-trace-A", traceBySession.get("S1"));
+                assertEquals("source-trace-B", traceBySession.get("S2"));
+                assertTrue(traceBySession.get("S3").matches("[0-9a-f]{16}"));
+                assertTrue(traceBySession.get("S4").matches("[0-9a-f]{16}"));
+                assertNotEquals(traceBySession.get("S3"), traceBySession.get("S4"));
+                assertNull(TraceContext.get());
+                assertNull(receiver.failure.get());
+            } finally {
+                brain.shutdown();
+            }
+        }
+    }
+
     @Test
     void interruptedTurnPreservesTheSignalAndDoesNotCallTheModel() throws Exception {
         var ai = mock(BotAiClient.class);
