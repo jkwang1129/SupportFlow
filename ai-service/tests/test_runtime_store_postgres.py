@@ -24,6 +24,7 @@ def store():
     with admin() as connection:
         connection.execute('''TRUNCATE public.agent_approval,public.agent_ticket_reconciliation,public.agent_reply_reconciliation,
             public.agent_model_token_reservation,public.agent_model_usage,public.agent_model_quota,public.agent_model_token_day,
+            public.agent_model_cost_day,
             public.agent_payload,public.agent_step,public.agent_run''')
     return RuntimeStore(lambda: psycopg.connect(os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'],row_factory=dict_row))
 

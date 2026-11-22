@@ -6,6 +6,7 @@ from hashlib import sha256
 import json
 import re
 from types import MappingProxyType
+from typing import NamedTuple
 
 from .types import identifier, tenant_code
 
@@ -19,6 +20,17 @@ def _unique_object(pairs):
     if len(result) != len(pairs):
         raise ValueError('Duplicate price book field')
     return result
+
+
+class ReservationPrice(NamedTuple):
+    version: str
+    digest: str
+    currency: str
+    input_rate: int
+    output_rate: int | None
+
+    def reserve_picos(self, token_allowance):
+        return token_allowance * max(self.input_rate, self.output_rate or 0)
 
 
 @dataclass(frozen=True)
@@ -36,10 +48,19 @@ class PriceBook:
         input_rate, output_rate = rate
         return input_tokens * input_rate + (output_tokens or 0) * (output_rate or 0)
 
+    def reservation_price(self, profile_hash, *, chat):
+        rate = self.rates.get(profile_hash)
+        if rate is None or (chat and rate[1] is None):
+            return None
+        return ReservationPrice(self.version, self.digest, self.currency, rate[0], rate[1] if chat else None)
+
 
 def load_price_book(path):
     with path.open('rb') as file:
-        raw = file.read(MAX_PRICE_BOOK_BYTES + 1)
+        return parse_price_book(file.read(MAX_PRICE_BOOK_BYTES + 1))
+
+
+def parse_price_book(raw: bytes):
     if len(raw) > MAX_PRICE_BOOK_BYTES:
         raise ValueError('Price book exceeds limit')
     book = json.loads(raw, object_pairs_hook=_unique_object)

@@ -95,4 +95,10 @@ class LostLease(RuntimeError): pass
 class BudgetExceeded(RuntimeError): pass
 class ModelCapacityBusy(RuntimeError): pass
 class ModelTokenQuotaExceeded(RuntimeError): pass
+
+
+class ModelCostRejected(RuntimeError):
+    def __init__(self, code):
+        self.code = identifier(code)
+        super().__init__(self.code)
 class QueueFull(RuntimeError): pass

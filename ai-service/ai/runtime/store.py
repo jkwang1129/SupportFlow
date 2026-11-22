@@ -11,9 +11,10 @@ from psycopg.types.json import Jsonb
 from ..core.db import connect
 from .types import (RunInput, Limits, Lease, tenant_code, identifier, fingerprint, reference,
                     RuntimeConflict, LostLease, BudgetExceeded, ModelCapacityBusy, ModelTokenQuotaExceeded,
-                    QueueFull, ActionDenied)
+                    ModelCostRejected, QueueFull, ActionDenied)
 from .payloads import SCHEMAS,StepPayload,encode as encode_payload,decode as decode_payload
 from .model_usage import MODEL_OPERATIONS, payload_usage, summarize as summarize_model_usage
+from .usage_pricing import parse_price_book
 
 TERMINAL = {'SUCCEEDED', 'FAILED', 'CANCELLED'}
 TRACE_LOOKUP_LIMIT = 20
@@ -399,10 +400,11 @@ class RuntimeStore:
         connection.execute("SELECT pg_advisory_xact_lock(hashtextextended('supportflow:model-capacity:' || %s,0))", (tenant,))
 
     @staticmethod
-    def _check_model_capacity(connection, tenant):
-        # Lock before reading both active steps and the daily Token ledger.
+    def _check_model_capacity(connection, tenant, intent):
+        # Serialize admission, receipt settlement and operator policy changes per tenant.
         RuntimeStore._lock_model_budget(connection, tenant)
-        quota = connection.execute('''SELECT max_active_steps,daily_token_limit,monthly_token_limit,tokens_per_attempt
+        quota = connection.execute('''SELECT max_active_steps,daily_token_limit,monthly_token_limit,tokens_per_attempt,
+            daily_cost_limit_picos,monthly_cost_limit_picos,price_book
             FROM agent_model_quota WHERE tenant_code=%s''', (tenant,)).fetchone()
         if quota is None:
             return None
@@ -412,21 +414,55 @@ class RuntimeStore:
             ) AS active_steps""", (tenant, limit)).fetchone()['count']
         if active >= limit:
             raise ModelCapacityBusy('Tenant model capacity is full')
-        daily_limit, monthly_limit = quota['daily_token_limit'], quota['monthly_token_limit']
-        if daily_limit is None and monthly_limit is None:
+        allowance = quota['tokens_per_attempt']
+        if allowance is None:
             return None
         budget_day = connection.execute("SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date AS day").fetchone()['day']
+        daily_limit, monthly_limit = quota['daily_token_limit'], quota['monthly_token_limit']
+        if daily_limit is not None or monthly_limit is not None:
+            RuntimeStore._check_token_allowance(connection, tenant, budget_day, allowance, daily_limit, monthly_limit)
+        price = None
+        if quota['price_book'] is not None:
+            price = RuntimeStore._check_cost_allowance(connection, tenant, budget_day, intent, quota)
+        return budget_day, allowance, price
+
+    @staticmethod
+    def _check_token_allowance(connection, tenant, budget_day, allowance, daily_limit, monthly_limit):
         first_day = budget_day if monthly_limit is None else budget_day.replace(day=1)
         totals = connection.execute('''SELECT coalesce(max(charged_tokens) FILTER (WHERE budget_day=%s),0) AS today,
             coalesce(sum(charged_tokens),0) AS month_to_date
             FROM agent_model_token_day WHERE tenant_code=%s AND budget_day BETWEEN %s AND %s''',
             (budget_day, tenant, first_day, budget_day)).fetchone()
-        allowance = quota['tokens_per_attempt']
-        if daily_limit is not None and totals['today'] + allowance > daily_limit:
+        if daily_limit is not None and int(totals['today']) + allowance > daily_limit:
             raise ModelTokenQuotaExceeded('Tenant daily model Token allowance is exhausted')
-        if monthly_limit is not None and totals['month_to_date'] + allowance > monthly_limit:
+        if monthly_limit is not None and int(totals['month_to_date']) + allowance > monthly_limit:
             raise ModelTokenQuotaExceeded('Tenant monthly model Token allowance is exhausted')
-        return budget_day, allowance
+
+    @staticmethod
+    def _check_cost_allowance(connection, tenant, budget_day, intent, quota):
+        try:
+            book = parse_price_book(quota['price_book'].encode('utf-8'))
+        except (ValueError, RecursionError):
+            raise ModelCostRejected('MODEL_COST_POLICY_INVALID') from None
+        if book.tenant != tenant:
+            raise ModelCostRejected('MODEL_COST_POLICY_INVALID')
+        operation = intent.get('operation')
+        price = book.reservation_price(intent.get('input_ref'), chat=operation == 'model.chat')
+        if operation not in MODEL_OPERATIONS or price is None:
+            raise ModelCostRejected('MODEL_PRICE_UNAVAILABLE')
+        totals = connection.execute('''SELECT coalesce(sum(charged_picos) FILTER (WHERE budget_day=%s),0) AS today,
+            coalesce(sum(charged_picos),0) AS month_to_date,
+            coalesce(bool_or(currency<>%s),false) AS currency_conflict
+            FROM agent_model_cost_day WHERE tenant_code=%s AND budget_day BETWEEN %s AND %s''',
+            (budget_day, price.currency, tenant, budget_day.replace(day=1), budget_day)).fetchone()
+        if totals['currency_conflict']:
+            raise ModelCostRejected('MODEL_COST_CURRENCY_CONFLICT')
+        reserved = price.reserve_picos(quota['tokens_per_attempt'])
+        daily_limit, monthly_limit = quota['daily_cost_limit_picos'], quota['monthly_cost_limit_picos']
+        if ((daily_limit is not None and int(totals['today']) + reserved > daily_limit)
+                or (monthly_limit is not None and int(totals['month_to_date']) + reserved > monthly_limit)):
+            raise ModelCostRejected('MODEL_COST_QUOTA_EXCEEDED')
+        return price
 
     def reserve_step(self, lease: Lease, step_key, kind, effect, intent_ref):
         identifier(step_key)
@@ -465,7 +501,7 @@ class RuntimeStore:
             else:
                 token_reservation = None
                 if kind == 'MODEL':
-                    token_reservation = self._check_model_capacity(connection, lease.tenant)
+                    token_reservation = self._check_model_capacity(connection, lease.tenant, intent_ref)
                     self._owned(connection, lease)  # Capacity locking may have waited past the lease deadline.
                 updated = connection.execute("""UPDATE agent_run SET step_count=step_count+1,
                     model_calls=model_calls+%s,tool_calls=tool_calls+%s,updated_at=clock_timestamp()
@@ -475,9 +511,12 @@ class RuntimeStore:
                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
                     (lease.tenant,lease.run_id,updated['step_count'],step_key,kind,effect,digest,Jsonb(intent_ref),lease.fence)).fetchone()
                 if token_reservation is not None:
+                    budget_day, allowance, price = token_reservation
+                    cost_values = (*price, price.reserve_picos(allowance)) if price is not None else (None,) * 6
                     connection.execute('''INSERT INTO agent_model_token_reservation
-                        (tenant_code,run_id,step_no,budget_day,reserved_tokens) VALUES(%s,%s,%s,%s,%s)''',
-                        (lease.tenant, lease.run_id, step['step_no'], *token_reservation))
+                        (tenant_code,run_id,step_no,budget_day,reserved_tokens,price_book_version,price_book_sha256,
+                         currency,input_rate,output_rate,reserved_cost_picos) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
+                        (lease.tenant, lease.run_id, step['step_no'], budget_day, allowance, *cost_values))
                 if approval is not None:
                     outcome = connection.execute("""UPDATE agent_approval SET status='CONSUMED',consumed_step_no=%s,
                         consumed_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s AND expires_at>clock_timestamp()""",

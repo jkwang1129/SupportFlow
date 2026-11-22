@@ -75,6 +75,7 @@ def main():
                         'tests/test_runtime_model_usage_postgres.py',
                         'tests/test_runtime_model_quota_postgres.py',
                         'tests/test_runtime_model_token_budget_postgres.py',
+                        'tests/test_runtime_model_cost_budget_postgres.py',
                         'tests/test_brain_analysis_context.py',
                         'tests/test_knowledge_tools_postgres.py',
                         'tests/test_ticket_loop_postgres.py',
@@ -97,6 +98,7 @@ def main():
             quota_rows = connection.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall()
             token_rows = connection.execute('SELECT * FROM agent_model_token_reservation ORDER BY tenant_code,run_id,step_no').fetchall()
             token_days = connection.execute('SELECT * FROM agent_model_token_day ORDER BY tenant_code,budget_day').fetchall()
+            cost_days = connection.execute('SELECT * FROM agent_model_cost_day ORDER BY tenant_code,budget_day,currency').fetchall()
         subprocess.run(command, env=provision_env, input=provisioning,
                        text=True, check=True, stdout=subprocess.DEVNULL)
         with connect('ai_db') as connection:
@@ -106,8 +108,9 @@ def main():
             assert connection.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall() == quota_rows
             assert connection.execute('SELECT * FROM agent_model_token_reservation ORDER BY tenant_code,run_id,step_no').fetchall() == token_rows
             assert connection.execute('SELECT * FROM agent_model_token_day ORDER BY tenant_code,budget_day').fetchall() == token_days
+            assert connection.execute('SELECT * FROM agent_model_cost_day ORDER BY tenant_code,budget_day,currency').fetchall() == cost_days
             for privilege, allowed in (('SELECT', True), ('INSERT', False), ('UPDATE', False), ('DELETE', False), ('TRUNCATE', False)):
-                for table in ('agent_model_quota', 'agent_model_token_day'):
+                for table in ('agent_model_quota', 'agent_model_token_day', 'agent_model_cost_day'):
                     assert connection.execute("SELECT has_table_privilege('supportflow_ai',%s,%s)",
                                               (table, privilege)).fetchone() == (allowed,)
             for privilege, allowed in (('SELECT', True), ('INSERT', True), ('UPDATE', False), ('DELETE', False), ('TRUNCATE', False)):

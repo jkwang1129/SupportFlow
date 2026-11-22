@@ -72,10 +72,14 @@ def seed(connect):
             database.execute('''INSERT INTO agent_model_usage(tenant_code,run_id,step_no,fence,intent_hash,payload_id,payload_hash,
                 input_tokens,chat_output_tokens) VALUES(%s,%s,1,1,%s,%s,repeat('c',64),%s,7)''',
                 (tenant, run_id, intent_hash, payload_id, 12+index))
-            database.execute('''INSERT INTO agent_model_quota(tenant_code,max_active_steps,daily_token_limit,tokens_per_attempt,monthly_token_limit)
-                VALUES(%s,%s,100,25,1000)''', (tenant, index))
-            database.execute('''INSERT INTO agent_model_token_reservation(tenant_code,run_id,step_no,budget_day,reserved_tokens)
-                VALUES(%s,%s,1,(clock_timestamp() AT TIME ZONE 'UTC')::date,25)''', (tenant, run_id))
+            price_book = json.dumps(dict(schema_version='runtime-price-book-v1', tenant=tenant, version='restore-v1',
+                currency='USD', rates={'a'*64: {'input_micros_per_million': 2, 'output_micros_per_million': 7}}))
+            database.execute('''INSERT INTO agent_model_quota(tenant_code,max_active_steps,daily_token_limit,tokens_per_attempt,
+                monthly_token_limit,monthly_cost_limit_picos,price_book) VALUES(%s,%s,100,25,1000,1000,%s)''', (tenant, index, price_book))
+            database.execute('''INSERT INTO agent_model_token_reservation(tenant_code,run_id,step_no,budget_day,reserved_tokens,
+                price_book_version,price_book_sha256,currency,input_rate,output_rate,reserved_cost_picos)
+                VALUES(%s,%s,1,(clock_timestamp() AT TIME ZONE 'UTC')::date,25,'restore-v1',%s,'USD',2,7,175)''',
+                (tenant, run_id, hashlib.sha256(price_book.encode()).hexdigest()))
 
 
 def projection(connect):
@@ -87,13 +91,15 @@ def projection(connect):
         quotas = database.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall()
         token_reservations = database.execute('SELECT * FROM agent_model_token_reservation ORDER BY tenant_code').fetchall()
         token_days = database.execute('SELECT * FROM agent_model_token_day ORDER BY tenant_code,budget_day').fetchall()
+        cost_days = database.execute('SELECT * FROM agent_model_cost_day ORDER BY tenant_code,budget_day,currency').fetchall()
     assert len(outbox) == len(runs) == 2
     assert [row[:4] for row in outbox] == [row[:4] for row in runs]
     assert len(usages) == 2
-    assert quotas == [('RESTORE_A', 1, 100, 25, 1000), ('RESTORE_B', 2, 100, 25, 1000)]
+    assert [row[:-1] for row in quotas] == [('RESTORE_A', 1, 100, 25, 1000, None, 1000), ('RESTORE_B', 2, 100, 25, 1000, None, 1000)]
     assert len(token_reservations) == 2
     assert token_days == [('RESTORE_A', token_reservations[0][3], 20), ('RESTORE_B', token_reservations[1][3], 21)]
-    return outbox, runs, usages, quotas, token_reservations, token_days
+    assert cost_days == [('RESTORE_A', token_reservations[0][3], 'USD', 75), ('RESTORE_B', token_reservations[1][3], 'USD', 77)]
+    return outbox, runs, usages, quotas, token_reservations, token_days, cost_days
 
 
 def table_counts(connect, name):
@@ -117,6 +123,7 @@ def assert_restricted_restored_reads(environment, passwords):
                     assert connection.execute('SELECT tenant_code FROM agent_model_quota').fetchall() == expected
                     assert connection.execute('SELECT tenant_code FROM agent_model_token_reservation').fetchall() == expected
                     assert connection.execute('SELECT tenant_code FROM agent_model_token_day').fetchall() == expected
+                    assert connection.execute('SELECT tenant_code FROM agent_model_cost_day').fetchall() == expected
             assert connection.execute('SELECT has_table_privilege(current_user,%s,%s)', (table, 'TRUNCATE')).fetchone() == (False,)
 
 
@@ -162,6 +169,7 @@ def main():
             'matched_model_quotas': len(expected_projection[3]),
             'matched_model_token_reservations': len(expected_projection[4]),
             'matched_model_token_days': len(expected_projection[5]),
+            'matched_model_cost_days': len(expected_projection[6]),
             'restricted_roles_verified': 2, 'invalid_archive_rejected': True,
         }
         path = ROOT/'.local/verification/database-restore-drill.json'

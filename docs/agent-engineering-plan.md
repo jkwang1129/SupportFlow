@@ -40,7 +40,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M08 Model Gateway/Prompt | 部分实现：共用有界 Chat/查询 Embedding 与 Runtime 适配 | 单次 HTTP、稳定错误、显式租户 Profile、Prompt/请求摘要、MODEL 检查点和持久化 Token 回执、实际协议故障与恢复 | 视觉和旧 RAG 同步 Embedding、租户选择、Prompt 发布、供应商权限和金额结算待验收。E |
 | M09 Streaming/交互 | 部分实现 | 既有 WebSocket、消息 seq/ACK/补拉、坐席审批、事件和任务绑定的进度查询与显示 | 任务事件推送、断线续传和用户取消还需验证。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
-| M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、计费日聚合与月预算告警/降级/暂停；Runtime 有跨 Worker 租约、Run 预算、租户积压上限、模型并发额度、日月 Token 预留与回执结算 | 旧客服月预算读取仍有 60 秒缓存和失败放行；金额预留、真实账单对账与生产并发容量待验收。计费去重 A4，运行预算随 M01。B/E |
+| M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、计费日聚合与月预算告警/降级/暂停；Runtime 有跨 Worker 租约、Run 预算、租户积压上限、模型并发额度和按日、月的 Token 与金额预留及结算 | 旧客服月预算读取仍有 60 秒缓存和失败放行；真实账单对账与生产并发容量待验收。计费去重 A4，运行预算随 M01。B/E |
 | M12 Production Operations | 部分实现，六库备份恢复已本地演练 | Compose、CI、新旧库验收、迁移清单、受限凭据、两个 PostgreSQL 17 集群的六库恢复 | 生产部署、跨库一致性策略、WAL、对象存储恢复和 SLO 演练待验收。A5/E |
 
 ## 分阶段计划与退出条件
@@ -195,3 +195,5 @@ E8 新增可选的 UTC 每日 Token 额度，Chat 和 Embedding 按租户共用�
 E9 第一批从原始预留和用量回执建立按租户和 UTC 日期的汇总，迁移回填并检查逐日账目一致性。写入汇总与追加明细同事务。月度调用额度使用下一批接入的准入检查。见 [ADR-0048](decisions/0048-model-token-day-accounting.md)。
 
 E9 第二批在预留前核对可选的 UTC 月度额度。每日和月度判断共用 E9 日汇总，最多读取 31 个日期。已有任务继续按原预留日期进行结算。金额预留与实际供应商账单对账单独推进。配置和回滚见 [ADR-0049](decisions/0049-tenant-monthly-model-token-quota.md)。
+
+E10 在调用前按显式价目预留日度和月度估算金额，结算使用该次调用绑定的费率。配置、审核和回滚见 [ADR-0050](decisions/0050-tenant-model-cost-reservations.md)。真实供应商账单的导入与对账独立推进。

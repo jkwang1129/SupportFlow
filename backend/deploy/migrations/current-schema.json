@@ -5,7 +5,7 @@
       "format": 1,
       "functions": {
         "supportflow_agent_due_tenants(p_limit integer)": "CREATE OR REPLACE FUNCTION public.supportflow_agent_due_tenants(p_limit integer)\n RETURNS TABLE(tenant_code character varying)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n WITH due AS (\n   SELECT r.tenant_code,r.created_at FROM public.agent_run r\n   WHERE ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())\n      OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))\n   AND NOT EXISTS(SELECT 1 FROM public.agent_run earlier WHERE earlier.tenant_code=r.tenant_code AND earlier.session_no=r.session_no\n      AND earlier.run_id<>r.run_id AND (earlier.state='RUNNING' OR\n         (earlier.event_seq<r.event_seq AND (earlier.state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR earlier.error_code='SIDE_EFFECT_UNKNOWN'))))\n   UNION ALL\n   SELECT r.tenant_code,r.created_at FROM public.agent_approval a\n   JOIN public.agent_run r ON r.tenant_code=a.tenant_code AND r.run_id=a.run_id\n   WHERE a.status IN ('PENDING','APPROVED') AND a.expires_at<=clock_timestamp()\n     AND r.state IN ('WAITING_APPROVAL','PENDING','RETRY_WAIT','RUNNING')\n     AND NOT EXISTS(SELECT 1 FROM public.agent_step s WHERE s.tenant_code=r.tenant_code AND s.run_id=r.run_id\n       AND s.effect='WRITE' AND s.state IN ('RESERVED','UNKNOWN'))\n )\n SELECT due.tenant_code FROM due GROUP BY due.tenant_code\n ORDER BY min(due.created_at),due.tenant_code\n LIMIT greatest(1,least(coalesce(p_limit,32),100))\n$function$\n",
-        "supportflow_model_token_day_insert()": "CREATE OR REPLACE FUNCTION public.supportflow_model_token_day_insert()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\n SET row_security TO 'off'\nAS $function$\nDECLARE\n source_day date;\n expected_tokens integer;\n observed_tokens numeric;\nBEGIN\n IF TG_RELID = 'public.agent_model_token_reservation'::regclass THEN\n   SELECT input_tokens::numeric + coalesce(chat_output_tokens,0) INTO observed_tokens\n   FROM public.agent_model_usage\n   WHERE tenant_code=NEW.tenant_code AND run_id=NEW.run_id AND step_no=NEW.step_no;\n   INSERT INTO public.agent_model_token_day AS d(tenant_code,budget_day,charged_tokens)\n   VALUES(NEW.tenant_code,NEW.budget_day,coalesce(observed_tokens,NEW.reserved_tokens))\n   ON CONFLICT(tenant_code,budget_day) DO UPDATE\n   SET charged_tokens=d.charged_tokens+EXCLUDED.charged_tokens;\n ELSIF TG_RELID = 'public.agent_model_usage'::regclass THEN\n   SELECT budget_day,reserved_tokens INTO source_day,expected_tokens\n   FROM public.agent_model_token_reservation\n   WHERE tenant_code=NEW.tenant_code AND run_id=NEW.run_id AND step_no=NEW.step_no;\n   IF FOUND THEN\n     UPDATE public.agent_model_token_day\n     SET charged_tokens=charged_tokens-expected_tokens+NEW.input_tokens::numeric+coalesce(NEW.chat_output_tokens,0)\n     WHERE tenant_code=NEW.tenant_code AND budget_day=source_day;\n     IF NOT FOUND THEN\n       RAISE EXCEPTION 'Missing model Token day for reservation';\n     END IF;\n   END IF;\n ELSE\n   RAISE EXCEPTION 'Unexpected model Token day trigger relation';\n END IF;\n RETURN NULL;\nEND $function$\n"
+        "supportflow_model_token_day_insert()": "CREATE OR REPLACE FUNCTION public.supportflow_model_token_day_insert()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\n SET row_security TO 'off'\nAS $function$\nDECLARE\n reservation public.agent_model_token_reservation%ROWTYPE;\n input_count bigint;\n output_count bigint;\nBEGIN\n IF TG_RELID = 'public.agent_model_token_reservation'::regclass THEN\n   SELECT input_tokens,chat_output_tokens INTO input_count,output_count\n   FROM public.agent_model_usage\n   WHERE tenant_code=NEW.tenant_code AND run_id=NEW.run_id AND step_no=NEW.step_no;\n   INSERT INTO public.agent_model_token_day AS d(tenant_code,budget_day,charged_tokens)\n   VALUES(NEW.tenant_code,NEW.budget_day,coalesce(input_count::numeric + coalesce(output_count,0),NEW.reserved_tokens))\n   ON CONFLICT(tenant_code,budget_day) DO UPDATE\n   SET charged_tokens=d.charged_tokens+EXCLUDED.charged_tokens;\n   IF NEW.currency IS NOT NULL THEN\n     INSERT INTO public.agent_model_cost_day AS d(tenant_code,budget_day,currency,charged_picos)\n     VALUES(NEW.tenant_code,NEW.budget_day,NEW.currency,\n       coalesce(input_count::numeric * NEW.input_rate + coalesce(output_count,0)::numeric * coalesce(NEW.output_rate,0),\n         NEW.reserved_cost_picos))\n     ON CONFLICT(tenant_code,budget_day,currency) DO UPDATE\n     SET charged_picos=d.charged_picos+EXCLUDED.charged_picos;\n   END IF;\n ELSIF TG_RELID = 'public.agent_model_usage'::regclass THEN\n   SELECT * INTO reservation FROM public.agent_model_token_reservation\n   WHERE tenant_code=NEW.tenant_code AND run_id=NEW.run_id AND step_no=NEW.step_no;\n   IF FOUND THEN\n     UPDATE public.agent_model_token_day\n     SET charged_tokens=charged_tokens-reservation.reserved_tokens+NEW.input_tokens::numeric+coalesce(NEW.chat_output_tokens,0)\n     WHERE tenant_code=NEW.tenant_code AND budget_day=reservation.budget_day;\n     IF NOT FOUND THEN\n       RAISE EXCEPTION 'Missing model Token day for reservation';\n     END IF;\n     IF reservation.currency IS NOT NULL THEN\n       UPDATE public.agent_model_cost_day\n       SET charged_picos=charged_picos-reservation.reserved_cost_picos+NEW.input_tokens::numeric * reservation.input_rate\n          +coalesce(NEW.chat_output_tokens,0)::numeric * coalesce(reservation.output_rate,0)\n       WHERE tenant_code=NEW.tenant_code AND budget_day=reservation.budget_day AND currency=reservation.currency;\n       IF NOT FOUND THEN\n         RAISE EXCEPTION 'Missing model cost day for reservation';\n       END IF;\n     END IF;\n   END IF;\n ELSE\n   RAISE EXCEPTION 'Unexpected model Token day trigger relation';\n END IF;\n RETURN NULL;\nEND $function$\n"
       },
       "tables": {
         "agent_approval": {
@@ -211,8 +211,82 @@
             }
           }
         },
+        "agent_model_cost_day": {
+          "columns": {
+            "budget_day": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "date"
+            },
+            "charged_picos": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "numeric"
+            },
+            "currency": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(3)"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            }
+          },
+          "constraints": {
+            "agent_model_cost_day_charged_picos_check": "CHECK (((charged_picos >= (0)::numeric) AND (charged_picos < 'Infinity'::numeric)))",
+            "agent_model_cost_day_currency_check": "CHECK (((currency)::text ~ '^[A-Z]{3}$'::text))",
+            "agent_model_cost_day_pkey": "PRIMARY KEY (tenant_code, budget_day, currency)"
+          },
+          "indexes": {
+            "agent_model_cost_day_pkey": {
+              "definition": "CREATE UNIQUE INDEX agent_model_cost_day_pkey ON public.agent_model_cost_day USING btree (tenant_code, budget_day, currency)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "agent_model_cost_day_guard": {
+                "check": null,
+                "command": "r",
+                "permissive": false,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "agent_model_cost_day_tenant": {
+                "check": null,
+                "command": "r",
+                "permissive": true,
+                "roles": [
+                  "supportflow_agent_runtime"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "agent_model_quota": {
           "columns": {
+            "daily_cost_limit_picos": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "bigint"
+            },
             "daily_token_limit": {
               "default": null,
               "generated": "",
@@ -227,12 +301,26 @@
               "not_null": true,
               "type": "integer"
             },
+            "monthly_cost_limit_picos": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "bigint"
+            },
             "monthly_token_limit": {
               "default": null,
               "generated": "",
               "identity": "",
               "not_null": false,
               "type": "bigint"
+            },
+            "price_book": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "text"
             },
             "tenant_code": {
               "default": null,
@@ -250,10 +338,13 @@
             }
           },
           "constraints": {
+            "agent_model_quota_budget_limits": "CHECK ((((tokens_per_attempt IS NOT NULL) = ((daily_token_limit IS NOT NULL) OR (monthly_token_limit IS NOT NULL) OR (daily_cost_limit_picos IS NOT NULL) OR (monthly_cost_limit_picos IS NOT NULL))) AND ((tokens_per_attempt IS NULL) OR ((tokens_per_attempt >= 1) AND (tokens_per_attempt <= 1000000))) AND ((daily_token_limit IS NULL) OR ((daily_token_limit >= 0) AND (daily_token_limit <= '1000000000000'::bigint))) AND ((monthly_token_limit IS NULL) OR ((monthly_token_limit >= 0) AND (monthly_token_limit <= '1000000000000'::bigint))) AND ((price_book IS NOT NULL) = ((daily_cost_limit_picos IS NOT NULL) OR (monthly_cost_limit_picos IS NOT NULL)))))",
+            "agent_model_quota_daily_cost_limit_picos_check": "CHECK ((daily_cost_limit_picos >= 0))",
             "agent_model_quota_max_active_steps_check": "CHECK (((max_active_steps >= 0) AND (max_active_steps <= 100)))",
+            "agent_model_quota_monthly_cost_limit_picos_check": "CHECK ((monthly_cost_limit_picos >= 0))",
             "agent_model_quota_pkey": "PRIMARY KEY (tenant_code)",
-            "agent_model_quota_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))",
-            "agent_model_quota_token_limits": "CHECK ((((daily_token_limit IS NULL) AND (monthly_token_limit IS NULL) AND (tokens_per_attempt IS NULL)) OR (((daily_token_limit IS NOT NULL) OR (monthly_token_limit IS NOT NULL)) AND ((daily_token_limit IS NULL) OR ((daily_token_limit >= 0) AND (daily_token_limit <= '1000000000000'::bigint))) AND ((monthly_token_limit IS NULL) OR ((monthly_token_limit >= 0) AND (monthly_token_limit <= '1000000000000'::bigint))) AND (tokens_per_attempt IS NOT NULL) AND ((tokens_per_attempt >= 1) AND (tokens_per_attempt <= 1000000)))))"
+            "agent_model_quota_price_book_check": "CHECK (((octet_length(price_book) >= 1) AND (octet_length(price_book) <= 32768)))",
+            "agent_model_quota_tenant_code_check": "CHECK ((((tenant_code)::text ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'::text) AND (upper((tenant_code)::text) <> 'PLATFORM'::text)))"
           },
           "indexes": {
             "agent_model_quota_pkey": {
@@ -354,6 +445,48 @@
               "not_null": true,
               "type": "date"
             },
+            "currency": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "character varying(3)"
+            },
+            "input_rate": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "bigint"
+            },
+            "output_rate": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "bigint"
+            },
+            "price_book_sha256": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "character(64)"
+            },
+            "price_book_version": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "character varying(32)"
+            },
+            "reserved_cost_picos": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "bigint"
+            },
             "reserved_tokens": {
               "default": null,
               "generated": "",
@@ -384,6 +517,7 @@
             }
           },
           "constraints": {
+            "agent_model_reservation_price": "CHECK ((((price_book_version IS NULL) AND (price_book_sha256 IS NULL) AND (currency IS NULL) AND (input_rate IS NULL) AND (output_rate IS NULL) AND (reserved_cost_picos IS NULL)) OR ((price_book_version IS NOT NULL) AND ((price_book_version)::text ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,31}$'::text) AND (price_book_sha256 IS NOT NULL) AND (price_book_sha256 ~ '^[0-9a-f]{64}$'::text) AND (currency IS NOT NULL) AND ((currency)::text ~ '^[A-Z]{3}$'::text) AND (input_rate IS NOT NULL) AND ((input_rate >= 0) AND (input_rate <= '1000000000000'::bigint)) AND ((output_rate IS NULL) OR ((output_rate >= 0) AND (output_rate <= '1000000000000'::bigint))) AND (reserved_cost_picos IS NOT NULL) AND (reserved_cost_picos = (reserved_tokens * GREATEST(input_rate, output_rate))))))",
             "agent_model_token_reservation_pkey": "PRIMARY KEY (tenant_code, run_id, step_no)",
             "agent_model_token_reservation_reserved_tokens_check": "CHECK (((reserved_tokens >= 1) AND (reserved_tokens <= 1000000)))",
             "agent_model_token_reservation_tenant_code_run_id_step_no_fkey": "FOREIGN KEY (tenant_code, run_id, step_no) REFERENCES agent_step(tenant_code, run_id, step_no)"
@@ -14156,6 +14290,10 @@
       {
         "checksum": "e5244a9757291790b3cf254d586fc97ed5cd53b28d54a3ffc466bb0dd9e851e5",
         "version": "013"
+      },
+      {
+        "checksum": "17e49c1815a5e190f75b619d1e88740726f8e664eeb1efc8766974bcad957315",
+        "version": "014"
       }
     ],
     "billing_db": [

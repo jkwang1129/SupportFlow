@@ -24,6 +24,7 @@
     {"database":"ai_db","version":"011","name":"tenant daily model token reservations","source":"backend/deploy/migrations/sql/ai_db_011_agent_model_token_budget.sql"},
     {"database":"ai_db","version":"012","name":"model token day accounting","source":"backend/deploy/migrations/sql/ai_db_012_agent_model_token_days.sql"},
     {"database":"ai_db","version":"013","name":"tenant monthly model token quota","source":"backend/deploy/migrations/sql/ai_db_013_agent_model_monthly_quota.sql"},
+    {"database":"ai_db","version":"014","name":"tenant model cost reservations","source":"backend/deploy/migrations/sql/ai_db_014_agent_model_cost_budget.sql"},
     {"database":"user_db","version":"001","name":"adopt canonical user baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/user_db.json"},
     {"database":"tenant_db","version":"001","name":"adopt canonical tenant baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/tenant_db.json"},
     {"database":"ops_db","version":"001","name":"adopt canonical operations baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/ops_db.json"}

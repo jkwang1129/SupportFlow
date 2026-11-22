@@ -141,3 +141,7 @@ ReplyReconciler为显式可信宿主控制面，无公开路由/自动轮询/模
 ## AI 013 租户模型月度 Token 额度
 
 013 扩展额度配置，保留现有日度策略和账目。升级后月度策略初始留空。先完成迁移与权限核验，再升级处理目标租户的全部 Worker，最后配置预算。回退应用前先停用月度策略。详见 [ADR-0049](../../../docs/decisions/0049-tenant-monthly-model-token-quota.md)。
+
+## AI 014 租户模型金额预留
+
+014 增加按日、月选择启用的金额上限、调用时的费率记录和只读金额汇总。已有 Token 记录保留，新的金额策略默认未启用。先完成迁移与权限核验，待目标租户的 Worker 全部升级后再配置价目和额度。停用和回退步骤见 [ADR-0050](../../../docs/decisions/0050-tenant-model-cost-reservations.md)。

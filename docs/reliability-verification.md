@@ -1450,3 +1450,11 @@ AI 013 支持独立配置月度额度或同时执行日度和月度上限。Runt
 - E9 第一批的定向命令在 PostgreSQL 17 通过 49 项。包含月度仅配置下的 Worker 并发竞争、另租户继续、当月累计、忽略往月、两个额度各自拒绝和无效策略拒绝。测试中当月保留 4 个未知 Token 后，新调用结算 12 个 Token 达到月度额度 16，后续调用在触达供应商前结束。原日志 `e9b-token-month-pg.log`。
 - AI 012 → 013 保留原日额度、明细和汇总，月额初始留空。六库恢复比对两条日月策略、两条日汇总及对应原始记录。普通 AI 测试 1,052 项通过、454 项按环境条件跳过。原日志 `e9b-token-month-upgrade.log`、`e9b-token-month-restore.log` 和 `e9b-token-month-ai.log`。
 - 同一隔离 PostgreSQL 实例放入 50,000 条合成预留和 25,000 条合成回执，回填对齐为 425,000 Token。每组预热 10 次、采样 60 次。原日明细与新日汇总交替执行，日额度检查 P50 从 38.58 ms 降到 4.31 ms，P95 从 45.11 ms 降到 5.84 ms。月度只读样本含一个日期，P95 为 6.38 ms。测量覆盖单连接的额度检查，受控环境、复现脚本和原始样本保存在 `.local/implementation/e9b-token-month-probe.py` 与 `.json`。
+
+## E10 模型金额预留与按原费率结算（2026-11-22）
+
+AI 014 提供可选的 UTC 日度和月度估算金额上限。调用前在租户锁内查价、预留并持久化费率。收到用量回执时按该次预留的费率结算。配置、对账明细及回滚见 [ADR-0050](decisions/0050-tenant-model-cost-reservations.md)。
+
+- `PYTEST_ADDOPTS='-k "runtime_model_cost_budget or runtime_model_token_budget or runtime_model_usage or runtime_model_quota or knowledge_tools_postgres"' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 通过 61 项。两路 Worker 争用同租户额度时只有一路发出模型请求，其他租户仍可执行。旧价预留 84,000,000 pico 后在途换价，回执按原价结算为 13,000,000 pico。新价预留 96,000,000 pico 恰好达到月预算。超限、失效价目、错租户、缺价、跨币种、未知用量、回滚、重复回执、Embedding 与外租户读取均验收。原日志 `e10-cost-final-pg.log`。
+- `python scripts/test-versioned-migrations.py` 的 17 项通过，AI 013 → 014 保留日月 Token 配置、原始预留与回执，新增金额策略初始关闭。六库 102 张应用表通过初始化与结构核对，六库恢复比对两条金额汇总及对应费率记录。原日志 `e10-cost-upgrade.log`、`e10-cost-init.log`、`e10-cost-drift.log` 与 `e10-cost-restore.log`。
+- 普通 AI 测试 1,052 项通过、466 项按环境条件跳过。费用案例使用合成价目和合成供应商回执。原日志 `e10-cost-ai.log`。

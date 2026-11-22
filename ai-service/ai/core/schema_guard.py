@@ -37,7 +37,10 @@ MODEL_QUOTA_SOURCE = 'backend/deploy/migrations/sql/ai_db_010_agent_model_quota.
 MODEL_TOKEN_BUDGET_SOURCE = 'backend/deploy/migrations/sql/ai_db_011_agent_model_token_budget.sql'
 MODEL_TOKEN_DAY_SOURCE = 'backend/deploy/migrations/sql/ai_db_012_agent_model_token_days.sql'
 MODEL_MONTHLY_QUOTA_SOURCE = 'backend/deploy/migrations/sql/ai_db_013_agent_model_monthly_quota.sql'
+MODEL_COST_BUDGET_SOURCE = 'backend/deploy/migrations/sql/ai_db_014_agent_model_cost_budget.sql'
 MODEL_TOKEN_POLICY_COLUMNS = ('daily_token_limit', 'tokens_per_attempt')
+MODEL_COST_POLICY_COLUMNS = ('daily_cost_limit_picos', 'monthly_cost_limit_picos', 'price_book')
+MODEL_COST_RESERVATION_COLUMNS = ('price_book_version', 'price_book_sha256', 'currency', 'input_rate', 'output_rate', 'reserved_cost_picos')
 RUNTIME_COLUMNS = {
     'agent_run': ('tenant_code run_id source_event_id session_no event_seq message_id principal_ref trace_id runtime_version input_hash '
                   'state max_steps max_model_calls max_tool_calls max_retries step_count model_calls tool_calls retry_count attempt fence '
@@ -45,9 +48,10 @@ RUNTIME_COLUMNS = {
     'agent_step': ('tenant_code run_id step_no step_key kind effect intent_hash intent_ref state fence result_ref created_at completed_at').split(),
     'agent_payload': ('tenant_code payload_id run_id step_no fence payload_schema payload_json payload_hash created_at expires_at').split(),
     'agent_model_usage': ('tenant_code run_id step_no fence intent_hash payload_id payload_hash input_tokens chat_output_tokens recorded_at').split(),
-    'agent_model_quota': ('tenant_code', 'max_active_steps', *MODEL_TOKEN_POLICY_COLUMNS, 'monthly_token_limit'),
-    'agent_model_token_reservation': ('tenant_code', 'run_id', 'step_no', 'budget_day', 'reserved_tokens'),
+    'agent_model_quota': ('tenant_code', 'max_active_steps', *MODEL_TOKEN_POLICY_COLUMNS, 'monthly_token_limit', *MODEL_COST_POLICY_COLUMNS),
+    'agent_model_token_reservation': ('tenant_code', 'run_id', 'step_no', 'budget_day', 'reserved_tokens', *MODEL_COST_RESERVATION_COLUMNS),
     'agent_model_token_day': ('tenant_code', 'budget_day', 'charged_tokens'),
+    'agent_model_cost_day': ('tenant_code', 'budget_day', 'currency', 'charged_picos'),
     'agent_reply_reconciliation': ('tenant_code run_id step_no observed_fence source_event_id snapshot_id arguments_sha256 intent_hash '
                                   'message_id message_no message_seq operator_ref original_error_code original_step_result confirmed_at').split(),
     'agent_ticket_reconciliation': ('tenant_code run_id step_no observed_fence source_event_id snapshot_id operation schema_version arguments_sha256 intent_hash '
@@ -62,11 +66,14 @@ def _runtime_source(table, column=None):
         return MODEL_TOKEN_BUDGET_SOURCE
     if table == 'agent_model_quota' and column == 'monthly_token_limit':
         return MODEL_MONTHLY_QUOTA_SOURCE
+    if ((table == 'agent_model_quota' and column in MODEL_COST_POLICY_COLUMNS)
+            or (table == 'agent_model_token_reservation' and column in MODEL_COST_RESERVATION_COLUMNS)):
+        return MODEL_COST_BUDGET_SOURCE
     return {'agent_payload': PAYLOAD_SOURCE, 'agent_reply_reconciliation': RECONCILIATION_SOURCE,
             'agent_ticket_reconciliation': TICKET_RECONCILIATION_SOURCE, 'agent_approval': APPROVAL_SOURCE,
             'agent_model_usage': MODEL_USAGE_SOURCE, 'agent_model_quota': MODEL_QUOTA_SOURCE,
             'agent_model_token_reservation': MODEL_TOKEN_BUDGET_SOURCE,
-            'agent_model_token_day': MODEL_TOKEN_DAY_SOURCE}.get(table, RUNTIME_SOURCE)
+            'agent_model_token_day': MODEL_TOKEN_DAY_SOURCE, 'agent_model_cost_day': MODEL_COST_BUDGET_SOURCE}.get(table, RUNTIME_SOURCE)
 
 
 def _kb_connect(**kwargs):
@@ -108,9 +115,10 @@ def runtime_missing(columns=None):
             SELECT c.relname, c.relrowsecurity AND c.relforcerowsecurity
               AND NOT pg_has_role(current_user,c.relowner,'MEMBER')
               AND has_table_privilege(current_user,c.oid,'SELECT')
-              AND CASE WHEN c.relname IN ('agent_model_quota','agent_model_token_day') THEN NOT has_any_column_privilege(current_user,c.oid,'INSERT')
+              AND CASE WHEN c.relname IN ('agent_model_quota','agent_model_token_day','agent_model_cost_day')
+                  THEN NOT has_any_column_privilege(current_user,c.oid,'INSERT')
                   ELSE has_table_privilege(current_user,c.oid,'INSERT') END
-              AND CASE WHEN c.relname IN ('agent_model_quota','agent_model_token_day','agent_model_token_reservation')
+              AND CASE WHEN c.relname IN ('agent_model_quota','agent_model_token_day','agent_model_token_reservation','agent_model_cost_day')
                   THEN NOT has_any_column_privilege(current_user,c.oid,'UPDATE')
                   WHEN c.relname='agent_approval' THEN NOT has_table_privilege(current_user,c.oid,'UPDATE')
                    AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped

@@ -44,7 +44,7 @@ def existing_ai_step(url,*,payload=False):
     from ai.runtime.types import RunInput,Lease
     class PreQuotaStore(RuntimeStore):
         @staticmethod
-        def _check_model_capacity(connection, tenant):
+        def _check_model_capacity(connection, tenant, intent):
             # This fixture represents a worker before the quota table existed.
             pass
 
@@ -187,7 +187,7 @@ def main():
                     assert upgrade008['applied']==['008'] and read()==before and read_kb()==before_kb
                     read_ticket=existing_ticket(connection);before_ticket=read_ticket()
                 if database=='ai_db':
-                    assert [m.version for m in plan]==['001','002','003','004','005','006','007','008','009','010','011','012','013']
+                    assert [m.version for m in plan]==['001','002','003','004','005','006','007','008','009','010','011','012','013','014']
                     applied=run_plan(connection,plan[:2])["applied"]
                     read_ai=existing_ai_step(dsn(database));before_ai=read_ai()
                     applied+=run_plan(connection,plan[:3])['applied']
@@ -248,6 +248,11 @@ def main():
                     assert before_days==[('PAYLOAD_UP','2026-01-31',17),('PAYLOAD_UP','2026-02-01',12)]
                     print('AI 011 -> 012 backfilled two UTC dates from settled and unknown usage',flush=True)
                     connection.execute("UPDATE agent_model_quota SET daily_token_limit=88,tokens_per_attempt=12 WHERE tenant_code='PAYLOAD_UP'")
+                    upgrade013=run_plan(connection,plan[:13]);applied+=upgrade013['applied']
+                    assert upgrade013['applied']==['013']
+                    assert connection.execute('SELECT * FROM agent_model_quota').fetchone()==('PAYLOAD_UP',4,88,12,None)
+                    print('AI 012 -> 013 retained daily quota; monthly policy defaults to NULL',flush=True)
+                    connection.execute("UPDATE agent_model_quota SET monthly_token_limit=1000 WHERE tenant_code='PAYLOAD_UP'")
                 result=run_plan(connection,plan)
                 assert applied+result["applied"]==[migration.version for migration in plan]
                 if database=='customer_db':
@@ -268,13 +273,15 @@ def main():
                     print('007 -> 008 preserved existing business/source/draft/chunk data; granted only index_status SELECT; 3 unsafe capability states rejected',flush=True)
                     print('008 -> 009 preserved every existing ticket/source/message/knowledge field; immutable ticket receipt initially empty; old global ticket PK retained',flush=True)
                 if database=='ai_db':
-                    assert result['applied']==['013'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
+                    assert result['applied']==['014'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
                     assert read_approval()==before_approval
-                    assert connection.execute('SELECT * FROM agent_model_quota').fetchone()==('PAYLOAD_UP',4,88,12,None)
-                    assert connection.execute('SELECT * FROM agent_model_token_reservation ORDER BY run_id,step_no').fetchall()==before_reservations
+                    assert connection.execute('SELECT * FROM agent_model_quota').fetchone()==('PAYLOAD_UP',4,88,12,1000,None,None,None)
+                    after_reservations=connection.execute('SELECT * FROM agent_model_token_reservation ORDER BY run_id,step_no').fetchall()
+                    assert after_reservations==[row+(None,)*6 for row in before_reservations]
                     assert connection.execute('SELECT * FROM agent_model_usage ORDER BY run_id,step_no').fetchall()==before_usage
                     assert connection.execute('SELECT tenant_code,budget_day::text,charged_tokens FROM agent_model_token_day ORDER BY budget_day').fetchall()==before_days
-                    print('AI 012 -> 013 retained existing daily configuration and exact ledger; monthly policy defaults to NULL',flush=True)
+                    assert connection.execute('SELECT count(*) FROM agent_model_cost_day').fetchone()==(0,)
+                    print('AI 013 -> 014 preserved daily and monthly Token budgets and source ledgers; cost policy starts disabled',flush=True)
                 assert run_plan(connection,plan)["applied"]==[]
                 run_plan(connection,plan,verify=True)
         runtime_password=secrets.token_hex(24)

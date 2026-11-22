@@ -14,7 +14,7 @@ from collections.abc import Callable
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .payloads import encode
-from .types import ModelCapacityBusy, ModelTokenQuotaExceeded, RunInput, fingerprint, identifier, reference
+from .types import ModelCapacityBusy, ModelCostRejected, ModelTokenQuotaExceeded, RunInput, fingerprint, identifier, reference
 from .worker import PermanentFailure, TransientFailure
 
 
@@ -236,7 +236,7 @@ class ToolExecutor:
             raise TransientFailure('TOOL_TIMEOUT') from None
         except ToolUnavailable as error:
             raise TransientFailure(error.code) from None
-        except (ModelCapacityBusy, ModelTokenQuotaExceeded, PermanentFailure, TransientFailure):
+        except (ModelCapacityBusy, ModelCostRejected, ModelTokenQuotaExceeded, PermanentFailure, TransientFailure):
             # Existing bounded SDKs already expose stable classified failures.
             raise
         except Exception:

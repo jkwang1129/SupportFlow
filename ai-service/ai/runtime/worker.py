@@ -9,7 +9,7 @@ import psycopg
 from ..core.trace import bind_trace_id
 from .store import RuntimeStore
 from .types import (ActionDenied, Lease, LostLease, BudgetExceeded, ModelCapacityBusy, ModelTokenQuotaExceeded,
-                    RuntimeConflict, identifier, fingerprint, reference, tenant_code)
+                    ModelCostRejected, RuntimeConflict, identifier, fingerprint, reference, tenant_code)
 from .payloads import SCHEMAS,encode as encode_payload
 
 
@@ -198,6 +198,8 @@ class RuntimeWorker:
                 return self._transition(context, 'defer_model_capacity', 'MODEL_CAPACITY_BUSY')
             except ModelTokenQuotaExceeded:
                 return self._transition(context, 'fail', 'MODEL_TOKEN_QUOTA_EXCEEDED')
+            except ModelCostRejected as failure:
+                return self._transition(context, 'fail', failure.code)
             except (psycopg.OperationalError,psycopg.InterfaceError):
                 # No DB/provider detail enters persistence. retry() retains all
                 # counters, reuses committed steps, and holds uncertain WRITE.
