@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from contextvars import ContextVar
 
 from fastapi import Header
@@ -18,6 +19,16 @@ def set_trace_id(trace_id: str) -> None:
 
 def get_trace_id() -> str:
     return _trace_id.get()
+
+
+@contextmanager
+def bind_trace_id(trace_id: str):
+    """Scope one background task without retaining its ID on a reused worker."""
+    token = _trace_id.set(trace_id)
+    try:
+        yield
+    finally:
+        _trace_id.reset(token)
 
 
 def new_trace_id() -> str:

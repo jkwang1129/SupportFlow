@@ -6,6 +6,7 @@ from uuid import UUID
 
 import psycopg
 
+from ..core.trace import bind_trace_id
 from .store import RuntimeStore
 from .types import ActionDenied, Lease, LostLease, BudgetExceeded, RuntimeConflict, identifier, fingerprint, reference, tenant_code
 from .payloads import SCHEMAS,encode as encode_payload
@@ -184,7 +185,8 @@ class RuntimeWorker:
                 if handler is None:
                     raise PermanentFailure('UNSUPPORTED_RUNTIME_VERSION')
                 context.check_active()
-                result = reference(handler(context))
+                with bind_trace_id(identifier(run['trace_id'])):
+                    result = reference(handler(context))
                 context.check_active()
                 return self.store.finish(lease, result)
             except (LostLease, BudgetExceeded, ApprovalPending):

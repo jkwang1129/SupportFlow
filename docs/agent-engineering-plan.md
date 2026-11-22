@@ -36,7 +36,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权、操作专属许可、工单限时审批和回执绑定；客服大脑和知识库客户端已补日志内容保护 | 仍需完整的直接/间接注入评测、其他写操作的审批和防重放、全链路日志与审计保留。无任意代码需求，暂不建 Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，已接访客返回前复核及可选逐句原文核查 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、改写、租户及发布过滤、越界拒答和逐句证据门禁 | 相关性、冲突决策、持久化发布版本及真实语义评测待补；混检重排先建基线。A/C |
 | M06 Evaluation | 部分实现，契约与工程故障门禁 | RAG 拒答、引用及配对原文契约，4 类故障轨迹基线，真实服务的恢复、审批、发布、写作业和回执测试 | 真实模型质量、业务事实评分、盲测和工具受控重演待补。自动判分需用人工标注校准。A/D |
-| M07 Trace/Observability | 部分实现，Runtime 可导出并离线复核受限轨迹 | Java `TraceContext`、Python 图步骤、模型调用量、既有运营 Trace 与告警、版本化 Runtime 元数据及固定故障基线 | 待接统一查询、跨服务链路与受控模型及工具重演。A/B/D |
+| M07 Trace/Observability | 部分实现，Runtime 可导出并离线复核受限轨迹 | 异步客服、工单 Outbox 到 Run 及模型重试关联；版本化轨迹、Python 图步骤、模型调用量、运营告警及故障基线 | 统一查询、完整跨服务覆盖、受控模型及工具重演尚待验收。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界Chat/查询Embedding与Runtime适配 | core.llm_chat单次HTTP/稳定错误/正文边界；显式租户ChatProfile、Prompt/请求Hash、MODEL原子正文/usage及预算恢复；实际协议TCP故障/进程验收；llm_gateway.py仍旧Mock占位 | 视觉/旧RAG同步Embedding、租户选择/Prompt发布/供应商权限和usage/Token金额结算治理仍缺；不造第二入口。E |
 | M09 Streaming/交互 | 部分实现 | 既有 WebSocket、消息 seq/ACK/补拉、坐席审批、事件和任务绑定的进度查询与显示 | 任务事件推送、断线续传和用户取消还需验证。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
@@ -177,3 +177,5 @@ D4 为 Java 异步客服接待保留提交时已有的合法请求号，直到 A
 D5 在真实 Java 投递、独立 Python Worker 和受限 PostgreSQL 的工单验收中验证原请求号。重复访客请求使用不同请求号，Outbox 和 Run 仍保留第一次的关联号。查询、接管失败、审批等待和恢复后可按原有导出入口观察步骤，外租户读不到轨迹。
 
 M04 接着处理 Java 知识库客户端。文件名、检索请求、回答、预览片段及上游错误原文从所测应用日志移除，索引和问答继续返回原业务结果。索引、检索和问答错误按原业务错误码及稳定提示返回。
+
+D6 让 Python Worker 在每次处理时使用持久化 Run 的请求号。模型 503、另一租户的成功和原任务恢复分别记录正确的关联号，处理结束后自动恢复调用方上下文。该编号用于内部排障，模型供应商 HTTP 请求仍沿用原有协议。

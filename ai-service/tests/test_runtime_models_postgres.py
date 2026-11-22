@@ -10,6 +10,7 @@ import httpx
 import psycopg
 import pytest
 
+from ai.core.trace import bind_trace_id,get_trace_id
 from ai.runtime.models import RuntimeChatClient
 from ai.runtime.payloads import encode
 from ai.runtime.types import Limits
@@ -89,6 +90,45 @@ def test_permanent_provider_denial_is_not_retried(store):
     result=worker(store,lambda ctx:api.complete(ctx,'plan-1',MESSAGES)).run_once('TENANT_A')
     assert result['state']=='FAILED' and result['error_code']=='MODEL_AUTHORIZATION_DENIED'
     assert calls==[1] and result['retry_count']==0 and payload_count()==0
+
+
+def test_model_diagnostics_use_the_persisted_trace_during_retry_and_worker_reuse(store, caplog):
+    caplog.set_level('INFO', logger='ai.core.llm_chat')
+    store.enqueue(replace(request(), trace_id='persisted-first'))
+    store.enqueue(replace(request(tenant='TENANT_B'), trace_id='persisted-second'))
+    requests = []
+
+    def server(request):
+        requests.append(request)
+        if len(requests) == 1:
+            return response(b'PRIVATE_PROVIDER_ERROR', status=503)
+        return response(answer())
+
+    clients = {tenant: client(server, profile(tenant=tenant)) for tenant in ('TENANT_A', 'TENANT_B')}
+
+    def handler(context):
+        clients[context.lease.tenant].complete(context, 'plan-1', MESSAGES)
+        return {'outcome': 'done'}
+
+    executor = worker(store, handler)
+    with bind_trace_id('unrelated-caller'):
+        assert executor.run_once('TENANT_A')['state'] == 'RETRY_WAIT'
+        assert get_trace_id() == 'unrelated-caller'
+        ready()
+        assert executor.run_once('TENANT_B')['state'] == 'SUCCEEDED'
+        assert get_trace_id() == 'unrelated-caller'
+        resumed = executor.run_once('TENANT_A')
+        assert (resumed['state'], resumed['model_calls'], resumed['retry_count']) == ('SUCCEEDED', 2, 1)
+        assert get_trace_id() == 'unrelated-caller'
+
+    assert len(requests) == 3 and get_trace_id() == ''
+    assert all('X-Request-Id' not in request.headers for request in requests)
+    logs = [message for message in caplog.messages if 'trace=' in message]
+    assert [message.split('trace=')[1].split()[0] for message in logs] == [
+        'persisted-first', 'persisted-second', 'persisted-first',
+    ]
+    assert 'code=MODEL_UNAVAILABLE status=503' in logs[0]
+    assert 'PRIVATE_PROVIDER_ERROR' not in caplog.text
 
 
 @pytest.mark.parametrize('fault',['length','credential'])

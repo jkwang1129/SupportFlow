@@ -1373,3 +1373,10 @@ Java 在提交机器人接待任务时记录原请求号，在任务范围内绑
 
 - 使用 `KbAiClientDiagnosticsTest` 等五个客服测试类定向验证 11 项，全部通过。两项新增回环 HTTP 用例覆盖四种正常路径及 503 和不可解析的 JSON。原日志 `m04-kb-client-diagnostics.log`。
 - JDK 25 下 `mvn -B -f backend/pom.xml verify` 成功，147 项通过、173 项数据库条件跳过。原日志 `m04-kb-client-backend-verify.log`。
+
+## D6 Python Worker 模型日志关联（2026-11-22）
+
+Worker 在业务处理前绑定验证过的持久化请求号，作用域退出时恢复外层上下文。模型成功、503 和重试复用现有日志，拒绝记录上游错误正文。该关联号留在内部诊断，未发送给模型提供方。租户鉴权、确认、预算及重试逻辑沿用原实现。可单独回退这批，无迁移。心跳进程、外部供应商日志和完整 Span 瀑布图各自验收。
+
+- `PYTEST_ADDOPTS='-k "runtime_models or runtime_worker or runtime_trace"' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 上通过 51 项。新增 1 项令租户 A 的实际 Chat 适配器收到合成 503，随后同一 Worker 处理租户 B 成功，再恢复 A。共 3 次替身 HTTP 请求，日志关联号顺序为 A、B、A，A 总模型预留为 2 且只有 1 次重试，错误原文未进入日志，外层上下文完整恢复。日志 `d6-model-runtime-trace-pg.log`。
+- 普通 AI 测试 1,041 项通过、425 项条件跳过。拒答、引用与逐句原文三组门禁 54 项全部通过。日志 `d6-runtime-trace-ai.log`，报告 `d6-runtime-trace-rag-contract.json`。
