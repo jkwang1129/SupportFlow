@@ -6,11 +6,13 @@ from pathlib import Path
 import subprocess
 import sys
 
+import psycopg
 import pytest
 
 from ai.runtime.types import RuntimeConflict
 from ai.runtime.trace_export import _metadata
 from ai.runtime.trace_replay import replay
+from ai.runtime.trace_timeline import reader
 from ai.runtime.worker import PermanentFailure, RuntimeWorker, TransientFailure
 from test_runtime_store_postgres import admin, request, store
 
@@ -92,6 +94,25 @@ def test_incomplete_trace_is_rejected_without_correcting_the_database(store):
     with pytest.raises(RuntimeConflict, match='inconsistent'):
         store.trace_snapshot(source.tenant, run)
     assert store.get(source.tenant, run)['step_count'] == 1 and store.steps(source.tenant, run) == []
+
+
+def test_timeline_reader_refuses_roles_without_rls_and_forces_read_only(store):
+    with pytest.raises(RuntimeConflict, match='active row security'):
+        with reader(os.environ['SUPPORTFLOW_RUNTIME_ADMIN_TEST_DSN'], ('public.agent_run',))():
+            pytest.fail('administrative connector was returned')
+
+    source = request()
+    run = store.enqueue(source)['run_id']
+    safe = reader(os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'], ('public.agent_run', 'public.agent_step'))
+    with safe() as connection, connection.transaction():
+        connection.execute("SELECT set_config('app.tenant_code',%s,true)", (source.tenant,))
+        assert connection.execute('SHOW transaction_read_only').fetchone()['transaction_read_only'] == 'on'
+        with pytest.raises(psycopg.errors.ReadOnlySqlTransaction):
+            connection.execute('UPDATE agent_run SET cancel_requested=TRUE WHERE run_id=%s', (run,))
+
+    snapshot = store.trace_delivery_snapshot(source.tenant, source.source_event_id, by_event=True)
+    assert snapshot['trace']['run']['run_id'] == run and snapshot['delivery']['event_seq'] == source.event_seq
+    assert store.trace_delivery_snapshot('TENANT_B', source.source_event_id, by_event=True) is None
 
 
 def test_replay_real_unknown_write_trace_and_detect_a_changed_outcome(store):

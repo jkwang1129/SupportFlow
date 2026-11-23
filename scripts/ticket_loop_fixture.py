@@ -21,6 +21,7 @@ from uuid import uuid4
 
 import httpx
 import psycopg
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import dict_row
 
 from local_env import runtime_environment
@@ -128,6 +129,34 @@ def _send_shadow_message(connect, base, secret, store, session_no, text):
     raise AssertionError('Shadow message did not reach the Runtime through the scheduled dispatcher')
 
 
+def _queue_timeline_cases(connect, store, timeline):
+    from ai.runtime.types import RunInput
+
+    tenant, session, trace = 'TL_QUEUE', 'TIMELINE_QUEUE', 'timeline-queue-fixture'
+    session_id, message_id, event_id = 21_800_001, 21_800_002, uuid4()
+    source = RunInput(tenant, event_id, session, 1, message_id, f'visitor-session:{session_id}', trace)
+    with connect('customer_db') as db:
+        db.execute('''INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
+            VALUES(%s,%s,%s,1,2,1,CURRENT_TIMESTAMP)''', (session_id, tenant, session))
+        db.execute('''INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,visible_to,content,send_time)
+            VALUES(%s,%s,%s,'TIMELINE_QUEUE_MSG',1,1,1,1,'synthetic timeline message',CURRENT_TIMESTAMP)''',
+            (message_id, tenant, session_id))
+        db.execute('''INSERT INTO agent_event_outbox(tenant_code,event_id,message_id,session_id,session_no,event_seq,
+            principal_ref,trace_id,runtime_version) VALUES(%s,%s,%s,%s,%s,1,%s,%s,'runtime-v1')''',
+            (tenant,event_id,message_id,session_id,session,source.principal_ref,trace))
+    queued = timeline.for_event(tenant, event_id)
+    assert queued['binding_status'] == 'outbox_only' and queued['customer_delivery']['state'] == 'PENDING'
+    assert timeline.for_request(tenant, trace)['timelines'] == []
+    assert timeline.for_event('LP_FOREIGN', event_id) is None
+    # Only AI admission is committed in this controlled fixture, without the Java acknowledgment.
+    run = store.enqueue(source)
+    waiting = timeline.for_event(tenant, event_id)
+    assert waiting['binding_status'] == 'awaiting_receipt' and waiting['run_id'] == run['run_id']
+    assert waiting['customer_delivery']['delivered_at'] is None and waiting['python_runtime']['run']['state'] == 'PENDING'
+    assert timeline.for_request(tenant, trace)['timelines'] == [waiting]
+    return {'outbox_before_admission': queued, 'admitted_before_receipt': waiting}
+
+
 def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env):
     from ai.runtime.customer_tools import current_message_tool,ticket_status_tool
     from ai.runtime.models import ChatProfile,RuntimeChatClient
@@ -136,6 +165,8 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
     from ai.runtime.ticket_loop import TicketReadLoop
     from ai.runtime.tickets import TicketClient
     from ai.runtime.tools import ToolExecutor,ToolRegistry
+    from ai.runtime.trace_export import _metadata
+    from ai.runtime.trace_timeline import AI_DSN, CUSTOMER_DSN, TimelineReader, reader
     from ai.runtime.types import RunInput
     from ai.runtime.worker import RuntimeWorker
 
@@ -150,6 +181,12 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
     java=Path(os.environ['JAVA_HOME'])/'bin'/('java.exe' if os.name=='nt' else 'java');jar,=(ROOT/'backend/supportflow-customer-service/target').glob('*.jar')
     logs=ROOT/'.local/runtime-loop-service';logs.mkdir(parents=True,exist_ok=True);failed=False
     store=RuntimeStore(lambda:psycopg.connect(runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'],row_factory=dict_row))
+    trace_ai_dsn = runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN']
+    trace_customer_dsn = make_conninfo(host='127.0.0.1', port=environment['SUPPORTFLOW_DB_PORT'],
+                                       dbname='customer_db', user='supportflow_customer', password=passwords['CUSTOMER'])
+    timeline = TimelineReader(reader(trace_customer_dsn, ('public.agent_event_outbox',)), RuntimeStore(reader(
+        trace_ai_dsn, ('public.agent_run', 'public.agent_step', 'public.agent_approval'))))
+    timeline_cases = _queue_timeline_cases(connect, store, timeline)
     with approval_role_server(SHADOW_TENANT) as role_base, (logs/'customer-service.log').open('wb') as log:
         process=subprocess.Popen([str(java),'-Xms32m','-Xmx384m','-jar',str(jar),f'--server.port={port}',
             '--supportflow.bot.runtime-source-enabled=true','--supportflow.bot.runtime-read-tools-enabled=true',
@@ -205,6 +242,10 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         assert tenant == SHADOW_TENANT
                         source, run = _send_shadow_message(connect, base, child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'],
                                                            store, source.session_no, text)
+                        admitted = timeline.for_event(tenant, source.source_event_id)
+                        assert admitted['binding_status'] == 'matched' and admitted['trace_id'] == source.trace_id
+                        assert admitted['python_runtime']['run']['state'] == 'PENDING' and not admitted['python_runtime']['steps']
+                        timeline_cases['visitor_admitted'] = admitted
                     model_key='fixture-loop-'+tenant+'-model-credential'
                     scenario=dict(mode=mode,ticket_no=ticket_no,customer_id=customer_id,ticket_id=ticket_id,model_http_calls=0,decisions=0)
                     scenarios['Bearer '+model_key]=scenario
@@ -265,6 +306,11 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     else:result=worker.run_once(tenant)
                     if mode=='model503':
                         assert result['state']=='RETRY_WAIT' and result['model_calls']==1
+                        transient = timeline.for_run(tenant, run)
+                        assert transient['python_runtime']['run']['error_code'] == 'MODEL_UNAVAILABLE'
+                        assert any(step['operation'] == 'model.chat' and step['state'] == 'UNKNOWN'
+                                   for step in transient['python_runtime']['steps'])
+                        timeline_cases['model_503_wait'] = transient
                         deadline=time.monotonic()+5
                         while time.monotonic()<deadline:
                             resumed=worker.run_once(tenant)
@@ -282,6 +328,24 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     assert trace['run']['trace_id'] == source.trace_id
                     assert trace['run']['state'] == result['state'] and len(trace['steps']) == result['step_count']
                     assert store.trace_snapshot('LP_FOREIGN', run) is None
+                    if mode in {'owner_revoked', 'model503', 'process_restart', 'configured_worker'}:
+                        track = timeline.for_run(tenant, run)
+                        assert track['binding_status'] == 'matched' and track['trace_id'] == source.trace_id
+                        assert len(track['python_runtime']['steps']) == result['step_count']
+                        assert track['python_runtime']['run']['state'] == result['state']
+                        assert track['customer_delivery']['elapsed_to_receipt_ms'] >= 0
+                        timeline_cases['visitor_finished' if mode == 'configured_worker' else mode] = track
+                    if mode == 'configured_worker':
+                        call_env = {name: os.environ[name] for name in ('PATH','SystemRoot','WINDIR','TEMP','TMP') if name in os.environ}
+                        call_env.update({AI_DSN: trace_ai_dsn, CUSTOMER_DSN: trace_customer_dsn, 'PYTHONUTF8': '1'})
+                        command = [sys.executable, '-m', 'ai.runtime.trace_timeline', '--trace-id', source.trace_id, '--tenant']
+                        options = dict(cwd=ROOT/'ai-service', env=call_env, capture_output=True, encoding='utf-8', timeout=15)
+                        visible = subprocess.run(command + [tenant], **options)
+                        foreign = subprocess.run(command + ['LP_FOREIGN'], **options)
+                        assert visible.returncode == foreign.returncode == 0, (visible.stderr, foreign.stderr)
+                        assert json.loads(visible.stdout)['timelines'] == [json.loads(json.dumps(track, default=_metadata))]
+                        assert json.loads(foreign.stdout)['timelines'] == []
+                        assert all(secret_value not in visible.stdout for secret_value in (text, secret, model_key, 'PRIVATE LOOP', source.principal_ref))
                     with connect('ai_db') as db:
                         reports=[json.loads(row[0]) for row in db.execute("SELECT payload_json FROM agent_payload WHERE tenant_code=%s AND run_id=%s AND payload_schema='working-state-v1'",(tenant,run)).fetchall()]
                     with connect('customer_db') as db:
@@ -307,10 +371,17 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v5',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
                 source_enrollment='SIGNED_VISITOR_APPEND_FOR_CONFIGURED_WORKER',publication='REPORT_ONLY',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
             print('Actual signed visitor append -> shadow Outbox -> scheduled AI delivery -> scoped worker CLI -> bounded MCP SSE/Java ticket read passed; 10 read-loop cases passed with synthetic model TCP and restricted PG',flush=True)
-            verify_ticket_approval(connect, base, child['SUPPORTFLOW_JWT_SECRET'], secret, store,
+            approval_tracks = verify_ticket_approval(connect, base, child['SUPPORTFLOW_JWT_SECRET'], secret, store,
                                    runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'], visitor_tenant=SHADOW_TENANT,
                                    append_visitor=lambda session_no, text: _send_shadow_message(
-                                       connect, base, child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'], store, session_no, text))
+                                       connect, base, child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'], store, session_no, text),
+                                   timeline=timeline)
+            timeline_cases.update(approval_tracks)
+            (report.parent/'runtime-cross-service-trace.json').write_text(json.dumps({
+                'schema_version': 'cross-service-trace-qualification-v1',
+                'mode': 'REAL_JAVA_AI_POSTGRES_SYNTHETIC_PROVIDER', 'cases': timeline_cases},
+                default=_metadata, indent=2)+'\n', encoding='utf-8')
+            print(f'Cross-service read-only timeline: {len(timeline_cases)} snapshots and tenant CLI isolation passed', flush=True)
             from knowledge_tool_fixture import verify_knowledge_tools
             verify_knowledge_tools(connect,base,secret,store)
             from ticket_creation_api_fixture import verify_ticket_creation_api

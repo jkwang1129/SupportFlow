@@ -1563,3 +1563,20 @@ Windows 11、Python 3.11.5、Temurin JDK 25 与临时 PostgreSQL 17。`agent-bou
 - 知识问答的固定系统规则与 JSON 问题及资料字段分开。混合范围只保留当前租户已发布且索引就绪的文档。只有外租户、草稿和索引失败资料时，接口拒答，模型调用为 0。结构化候选的 25 题确定性配对回归全部通过。D12 的真实模型语义分数对应其原请求格式，本批验收服务端边界与确定性行为。
 - 删除真实 JUnit 副本中的一条已执行记录后，门禁返回退出码 `1`，结果由 10/10 变为 9/10，缺失项标为 `not_executed`。原始报告保存在 `.local/implementation/d13-boundary-evidence/`，汇总和负面结果分别为 `d13-agent-boundary-contract.json` 和 `d13-agent-boundary-negative.json`。
 - 本地普通 AI 回归 1,095 项通过、471 项按环境条件跳过。JDK 25 下 Java 客服数据库组合测试 159 项通过。评测脚本 66 项中 56 项通过，10 项按数据库条件跳过。新增报告测试覆盖缺失、同名不同模块、重复、失败、跳过、损坏文件和摘要不符。
+
+## D14 Java 与 Python 跨服务时间线（2026-11-23）
+
+在 Windows 11、Temurin JDK 25、Python 3.11.5 和临时 PostgreSQL 17 运行 `python scripts/test-agent-runtime.py --with-java-delivery`，设置 `PYTEST_ADDOPTS='-k runtime_trace'`。真实 Java 服务、签名 Python HTTP、Worker 及受限账号验收。模型使用本地协议替身。CLI 支持事件 UUID、Run UUID 和已接收任务的原请求号查询。只读可重复读保持同库状态一致，跨库字段逐项匹配。设计、命令与回退见 [ADR-0057](decisions/0057-cross-service-trace-timeline.md)。
+
+| 联调范围 | 观察结果 |
+|---|---|
+| 受控队列快照 | 同一个事件从 `outbox_only` 到 `awaiting_receipt`。Java 尚无回执，AI Run 已处于 `PENDING`。 |
+| 真实访客入口与派发 | 原请求号沿着 Java Outbox、AI 接收和独立 Worker 保留。原请求号可查到最终 `SUCCEEDED` 和 10 个步骤，另一租户查询为空。 |
+| 资源撤权、模型失败与恢复 | 分别观察到 `TICKET_REVOKED`、模型 503 对应的 `MODEL_UNAVAILABLE` 和 `RETRY_WAIT`。重试正常结束保留 12 个步骤，进程接管后完成保留 11 个步骤。 |
+| 签名访客提案与实际坐席审批 | 同一请求号从 `WAITING_APPROVAL` 到 `SUCCEEDED`，审批从 `PENDING` 到 `CONSUMED`。已消费步骤与唯一成功写步骤一致。 |
+
+合计 10 份时间点。原始快照在 `.local/implementation/d14-runtime-cross-service-trace.json`，SHA-256 为 `22e949218e4947bb5173bc4afb95946673fad5ac0fd4c44e3d98f7868fae166e`。CI 生成 `runtime-cross-service-trace.json`。快照只含已持久化字段，时间来自各自数据库。浏览器瀑布图、入口入库前耗时与跨节点分位统计后续单独验收。
+
+- `python -m pytest -q tests/test_runtime_trace_timeline.py tests/test_runtime_trace_replay.py` 通过 23 项，含 9 项新增对照，覆盖六类绑定字段不一致、开放区间、缺失回执及不泄露核对字段。
+- 运行时 PostgreSQL 定向 6 项通过，受限账号查询行级安全处于活动状态，写语句在该连接中被数据库拒绝。管理角色不能用于联合查询。真实 Java 投递 2 项测试通过。组合联调日志 `d14-cross-service-trace.log`。
+- 本地 AI 全量 1,104 项通过、472 项按环境跳过。评测脚本 66 项中 56 项通过，10 项按数据库环境跳过。

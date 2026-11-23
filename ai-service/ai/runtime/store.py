@@ -28,12 +28,14 @@ class RuntimeStore:
         self.backlog_limit = backlog_limit
 
     @contextmanager
-    def _scope(self, tenant, *, read_committed=False):
+    def _scope(self, tenant, *, read_committed=False, trace_read_only=False):
         tenant_code(tenant)
         with self.connector() as connection:
             connection.row_factory = dict_row
             with connection.transaction():
-                if read_committed:
+                if trace_read_only:
+                    connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+                elif read_committed:
                     connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
                 connection.execute("SELECT set_config('app.tenant_code',%s,true),set_config('lock_timeout','2000',true),set_config('statement_timeout','5000',true)", (tenant,))
                 yield connection
@@ -90,20 +92,37 @@ class RuntimeStore:
 
     def trace_snapshot(self, tenant, run_id):
         """Export one tenant-bound trace without loading checkpoint or business content."""
-        run_id = UUID(str(run_id))
-        with self._scope(tenant) as connection:
-            # Writers fence against this same Run before reserving or completing
-            # steps. Keep metadata and recorded steps from the same state.
-            run = connection.execute("""SELECT run_id,trace_id,runtime_version,state,error_code,attempt,
-                    step_count,model_calls,tool_calls,retry_count,cancel_requested,created_at,finished_at,deadline_at
-                FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR SHARE""", (tenant, run_id)).fetchone()
+        result = self._trace_snapshot(tenant, 'run_id', run_id)
+        return result['trace'] if result else None
+
+    def trace_delivery_snapshot(self, tenant, reference_id, *, by_event=False):
+        """Read one consistent trace and the immutable columns used to correlate Outbox delivery."""
+        return self._trace_snapshot(tenant, 'source_event_id' if by_event else 'run_id', reference_id, timeline=True)
+
+    def _trace_snapshot(self, tenant, column, reference_id, *, timeline=False):
+        reference_id = UUID(str(reference_id))
+        with self._scope(tenant, trace_read_only=True) as connection:
+            # Repeatable read keeps the Run and Steps consistent without locking a worker's row.
+            run = connection.execute(sql.SQL("""SELECT run_id,source_event_id,message_id,event_seq,
+                    trace_id,runtime_version,state,error_code,attempt,step_count,model_calls,tool_calls,
+                    retry_count,cancel_requested,created_at,finished_at,deadline_at
+                FROM agent_run WHERE tenant_code=%s AND {}=%s""").format(sql.Identifier(column)), (tenant, reference_id)).fetchone()
             if run is None:
                 return None
-            steps = connection.execute("""SELECT step_no,kind,effect,state,created_at,completed_at
-                FROM agent_step WHERE tenant_code=%s AND run_id=%s ORDER BY step_no LIMIT 101""", (tenant, run_id)).fetchall()
+            details = sql.SQL(",intent_ref->>'operation' AS operation,intent_ref->>'version' AS version,"
+                              "result_ref->>'error_code' AS error_code") if timeline else sql.SQL('')
+            steps = connection.execute(sql.SQL("""SELECT step_no,kind,effect,state,created_at,completed_at{}
+                FROM agent_step WHERE tenant_code=%s AND run_id=%s ORDER BY step_no LIMIT 101""").format(details),
+                (tenant, run['run_id'])).fetchall()
             if len(steps) != run['step_count'] or len(steps) > 100:
                 raise RuntimeConflict('Runtime trace steps are inconsistent')
-            return {'schema_version': 'runtime-trace-v1', 'run': run, 'steps': steps}
+            delivery = {key: run.pop(key) for key in ('source_event_id', 'message_id', 'event_seq')}
+            snapshot = {'trace': {'schema_version': 'runtime-trace-v1', 'run': run, 'steps': steps}, 'delivery': delivery}
+            if timeline:
+                snapshot['approval'] = connection.execute("""SELECT status,requested_at,expires_at,
+                        decided_at,closed_at,consumed_at,consumed_step_no FROM agent_approval
+                    WHERE tenant_code=%s AND run_id=%s""", (tenant, run['run_id'])).fetchone()
+            return snapshot
 
     def model_usage(self, tenant, run_id, *, price_book=None):
         """Observe model attempts without calling the provider or altering accounting state."""

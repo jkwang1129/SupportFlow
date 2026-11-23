@@ -152,7 +152,7 @@ def _run_ticket_worker(tenant, base, secret, runtime_dsn, *, propose=False, auth
                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
 
 
-def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *, visitor_tenant, append_visitor):
+def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *, visitor_tenant, append_visitor, timeline):
     from ai.runtime.approvals import TicketApprovals
     from ai.runtime.source import SourceClient
     from ai.runtime.ticket_creation import TicketCreationClient
@@ -161,6 +161,7 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
     source_client, tickets = SourceClient(base, secret), TicketCreationClient(base, secret)
     approved_title, approved_body = '审批工单🙂', 'synthetic approved body\n原始内容 '
     observations = []
+    timelines = {}
     for index, mode in enumerate(('accepted', 'taken_over_after_approval', 'expired_before_resume')):
         signed_admission = mode == 'accepted'
         tenant = visitor_tenant if signed_admission else 'TC_APPROVAL_'+str(index)
@@ -193,6 +194,10 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         assert asyncio.run(tickets.receipt(source, run)) is None
         if signed_admission:
             _assert_progress(base, jwt_key, source, run, waiting)
+            track = timeline.for_event(tenant, source.source_event_id)
+            assert track['binding_status'] == 'matched' and track['python_runtime']['approval']['status'] == 'PENDING'
+            assert track['python_runtime']['run']['state'] == 'WAITING_APPROVAL'
+            timelines['approval_wait'] = track
         with httpx.Client(trust_env=False, follow_redirects=False, timeout=3) as client:
             _staff_review(client, base, jwt_key, source, run, row, approved_title, approved_body)
         assert approvals.get(tenant, run)['decided_by'] == 'staff:123'
@@ -241,6 +246,12 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             assert facts == [(receipt.ticket_id, receipt.ticket_no, approved_title, approved_body, session_id)] and events == 1
             assert (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count']) == (7, 4, 0, 0)
             _assert_progress(base, jwt_key, source, run, result)
+            track = timeline.for_run(tenant, run)
+            assert track['trace_id'] == timelines['approval_wait']['trace_id']
+            assert track['python_runtime']['approval']['status'] == 'CONSUMED'
+            assert track['python_runtime']['approval']['consumed_step_no'] == writes[0]['step_no']
+            assert track['python_runtime']['run']['state'] == 'SUCCEEDED'
+            timelines['approval_consumed'] = track
         else:
             expected_error = 'SOURCE_REVOKED' if mode == 'taken_over_after_approval' else 'APPROVAL_EXPIRED'
             assert result['state'] == 'FAILED' and result['error_code'] == expected_error
@@ -257,3 +268,4 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         cases=observations), indent=2)+'\n', encoding='utf-8')
     print('Signed visitor append -> Outbox -> proposal worker -> authenticated staff review -> approval-only worker: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
           'duplicate approval preserved, one approved ticket/receipt, zero writes after takeover or expiry', flush=True)
+    return timelines
