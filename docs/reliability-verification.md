@@ -1599,3 +1599,21 @@ Windows 11、Python 3.11.5、Temurin JDK 25 和临时 PostgreSQL 17。执行 `py
 - 首次组合运行末尾，既有的 `cancel_after_commit` 用例未观察到提交确认，得到 `SIDE_EFFECT_UNKNOWN`，且多执行一次回执读取，断言失败。使用 `PYTEST_ADDOPTS='-k runtime_trace'` 复跑，通过 6 项 PostgreSQL 轨迹测试，并通过原有 10 项实际建单工具用例。初次失败的原因未复现。日志保存在 `.local/implementation/d15-ticket-read-replay.log` 和 `.local/implementation/d15-replay-integration-retry.log`。
 
 回放输入为测试录制的合成数据，覆盖单次只读规划尝试。线上鉴权、持久化、取消、跨尝试重试、审批和业务写入仍使用各自的服务或数据库验收。回放测试不消耗真实模型费用，结果仅衡量执行一致性。
+
+## D16 访客查询与审批建单闭环（2026-11-23）
+
+Windows 11、Python 3.11.5、Temurin JDK 25.0.5 和临时 PostgreSQL 17。设置 `PYTEST_ADDOPTS='-k "ticket_loop or runtime_approval_review or cross_tenant_status_cancel"'`，执行 `python scripts/test-agent-runtime.py --with-java-delivery`。41 项数据库定向测试和 2 项真实 Java 投递测试通过。评测脚本 56 项通过、10 项按数据库条件跳过。[设计、复现与回退](decisions/0059-signed-ticket-journey.md)
+
+| 签名访客流程 | Run 终态 | 审批状态 | 工单 / 事件 / 回执 |
+|---|---|---|---|
+| 同会话先查历史工单，再批准新申请 | `SUCCEEDED` | `CONSUMED` | 1 / 1 / 1 |
+| 批准后确认丢失，按回执恢复 | `SUCCEEDED` | `CONSUMED` | 1 / 1 / 1 |
+| 批准后会话被坐席接管 | `FAILED`，`SOURCE_REVOKED` | `APPROVED`，未消费 | 0 / 0 / 0 |
+| 批准后、执行前审批到期 | `FAILED`，`APPROVAL_EXPIRED` | `EXPIRED` | 0 / 0 / 0 |
+| 批准后、执行前由坐席撤回 | `FAILED`，`APPROVAL_REVOKED` | `REVOKED` | 0 / 0 / 0 |
+
+- 5/5 达到预期。正例同一访客的两次请求按序持久化为不同 Run，另外四案各有一条真实入站请求。每条请求用原客户端消息号重发一次，最终只有六条访客消息、六条送达事件。各案等待审批时零写入，重复批准或重跑批准 Worker 未新增工单。外租户管理员的会话查找、提案读取、状态读取及审批提交均被拒绝。
+- 丢失确认时，代理在 Java 提交后断开原响应，Worker 只发 1 次建单 POST 和 1 次回执 GET，在当前尝试内恢复。Run 的工单引用与签名回执及数据库中的工单、事件、消费步骤和审批参数摘要匹配。
+- 本地原始报告 `.local/implementation/d16-ticket-journey-evidence/runtime-ticket-approval.json` 使用 `ticket-approval-boundary-v11`，SHA-256 为 `b277e0746ce578dd1baa09456d6cc864050522c1401ab975337313ee7df3492b`。完整日志 `.local/implementation/d16-signed-ticket-journey.log`。
+
+查询模型和用户角色查询使用本地替身，工单、会话、权限、签名消息、审批及回执流转在实际服务和隔离数据库中执行。工作台或 Widget 浏览器交互、工单号向访客发布、生产流量下的成功率和成本不在本次验收范围内。

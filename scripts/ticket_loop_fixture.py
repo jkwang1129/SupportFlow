@@ -96,12 +96,12 @@ def planner_server(scenarios,connect,*,mcp_secret=None,mcp_call=None):
     finally:server.shutdown();server.server_close();thread.join(timeout=2)
 
 
-def _send_shadow_message(connect, base, secret, store, session_no, text):
+def _send_shadow_message(connect, base, secret, store, session_no, text, *, expected_seq=1):
     from ai.runtime.types import RunInput
 
     path = f'/api/customer/internal/sessions/{session_no}/messages'
     payload = dict(tenantCode=SHADOW_TENANT, senderType=1, msgType=1, visibleTo=1,
-                   content=text, clientMsgNo='fixture-shadow-idempotency')
+                   content=text, clientMsgNo=f'fixture-shadow-{uuid4().hex}')
     expires = str(int(time.time()) + 20)
     canonical = '\n'.join(('supportflow-customer:v1', 'REALTIME', expires, 'POST', path, '', SHADOW_TENANT))
     signature = hmac.digest(secret.encode(), canonical.encode(), 'sha256').hex()
@@ -121,14 +121,15 @@ def _send_shadow_message(connect, base, secret, store, session_no, text):
     while time.monotonic() < deadline:
         with connect('customer_db') as db:
             rows = db.execute("""SELECT message_id,run_id,state,event_id,trace_id FROM agent_event_outbox
-                WHERE tenant_code=%s AND session_no=%s""", (SHADOW_TENANT, session_no)).fetchall()
+                WHERE tenant_code=%s AND session_no=%s AND event_seq=%s""",
+                (SHADOW_TENANT, session_no, expected_seq)).fetchall()
         assert len(rows) == 1
         message_id, run_id, state, event_id, stored_trace = rows[0]
         assert stored_trace == original_trace
         if state == 'DELIVERED':
             row = store.get(SHADOW_TENANT, run_id)
             assert row['state'] == 'PENDING' and row['source_event_id'] == event_id
-            assert row['message_id'] == message_id == int(message['msgId']) and row['event_seq'] == 1
+            assert row['message_id'] == message_id == int(message['msgId']) and row['event_seq'] == expected_seq
             assert row['trace_id'] == original_trace
             return RunInput.from_run(row), run_id
         time.sleep(.05)
@@ -230,6 +231,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     time.sleep(.25)
                 else:raise RuntimeError('Disposable Loop customer service not ready')
             observations=[];scenarios={};replay_cases={}
+            previous_read = None
             mcp_key, mcp_runs = secrets.token_urlsafe(48), []
             direct_tickets = TicketClient(base, secret)
 
@@ -386,6 +388,8 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         assert reports[0]['text']==f"工单 {ticket_no} 当前状态：{'已解决' if fact==4 else '处理中'}。"
                         assert 'PRIVATE' not in json.dumps(reports)
                     else:assert reports==[]
+                    if mode == 'configured_worker':
+                        previous_read = source, run, session_id
                     if mode in REPLAY_CASES:
                         events = scenario['replay_events']
                         replay_cases[mode] = dict(schema_version=TAPE_VERSION, loop_version=LOOP_VERSION,
@@ -418,11 +422,13 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             assert replay.returncode == 0, replay.stdout + replay.stderr
             (report.parent/'runtime-ticket-read-replay-result.json').write_text(replay.stdout, encoding='utf-8')
             print(f'Offline ticket planner replay: {len(replay_cases)} actual synthetic service recordings matched', flush=True)
+            assert previous_read is not None
             approval_tracks = verify_ticket_approval(connect, base, child['SUPPORTFLOW_JWT_SECRET'], secret, store,
-                                   runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'], visitor_tenant=SHADOW_TENANT,
-                                   append_visitor=lambda session_no, text: _send_shadow_message(
-                                       connect, base, child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'], store, session_no, text),
-                                   timeline=timeline)
+                                   runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'],
+                                   append_visitor=lambda session_no, text, seq: _send_shadow_message(
+                                       connect, base, child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'], store, session_no,
+                                       text, expected_seq=seq),
+                                   previous_read=previous_read, timeline=timeline)
             timeline_cases.update(approval_tracks)
             (report.parent/'runtime-cross-service-trace.json').write_text(json.dumps({
                 'schema_version': 'cross-service-trace-qualification-v1',

@@ -1,7 +1,7 @@
 """Approved ticket execution against real Runtime, customer and AI authority services."""
 import asyncio
 from base64 import urlsafe_b64encode
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -17,18 +17,10 @@ from uuid import uuid4
 
 import httpx
 
+from ticket_write_tool_fixture import ticket_proxy
+
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _seed_source(connect, source, run, session_id, request_text):
-    with connect('customer_db') as db:
-        db.execute("""INSERT INTO session_message(id,tenant_code,session_id,msg_no,seq,msg_type,sender_type,visible_to,content,send_time)
-            VALUES(%s,%s,%s,%s,1,1,1,1,%s,CURRENT_TIMESTAMP)""",
-            (source.message_id, source.tenant, session_id, 'APPROVAL_MESSAGE_'+source.tenant, request_text))
-        db.execute("""INSERT INTO agent_event_outbox(tenant_code,event_id,run_id,message_id,session_id,session_no,event_seq,
-            principal_ref,trace_id,runtime_version,state,attempts,fence,delivered_at)
-            VALUES(%s,%s,%s,%s,%s,%s,1,%s,%s,'runtime-v1','DELIVERED',1,1,clock_timestamp())""",
-            (source.tenant, source.source_event_id, run, source.message_id, session_id, source.session_no, source.principal_ref, source.trace_id))
+FOREIGN_TENANT = 'LP_FOREIGN'
 
 
 @contextmanager
@@ -37,7 +29,7 @@ def approval_role_server(visitor_tenant):
         def do_GET(self):
             request = urlsplit(self.path)
             tenant = parse_qs(request.query).get('tenantCode', [])
-            if tenant not in ([visitor_tenant], ['TC_APPROVAL_1'], ['TC_APPROVAL_2']):
+            if tenant not in ([visitor_tenant], [FOREIGN_TENANT]):
                 self.send_error(404)
                 return
             roles = {
@@ -89,20 +81,25 @@ def _assert_progress(base, key, source, run, facts):
     path = _review_path(base, source, run) + '/progress'
     admin = {'Authorization': _fixture_token(key, source.tenant, 123)}
     agent = {'Authorization': _fixture_token(key, source.tenant, 124)}
+    foreign = {'Authorization': _fixture_token(key, FOREIGN_TENANT, 123)}
     with httpx.Client(trust_env=False, timeout=3) as client:
         assert client.get(path).status_code == 401
         assert client.get(path, headers=agent).status_code == 403
+        missing = client.get(path, headers=foreign)
+        assert missing.status_code == 404 and missing.json().get('data') is None
         response = client.get(path, headers=admin)
         assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
         assert response.json()['data'] == {name: facts[name] for name in ('state', 'attempt', 'step_count')}
 
 
-def _staff_review(client, base, key, source, run, row, title, content):
+def _staff_review(client, base, key, source, run, row, title, content, *, revoke=False):
     auth = {'Authorization': _fixture_token(key, source.tenant, 123)}
     agent = {'Authorization': _fixture_token(key, source.tenant, 124)}
+    foreign = {'Authorization': _fixture_token(key, FOREIGN_TENANT, 123)}
     active = base + f'/api/customer/agent-approvals/sessions/{source.session_no}/active'
     assert client.get(active).status_code == 401
     assert client.get(active, headers=agent).status_code == 403
+    assert client.get(active, headers=foreign).status_code == 404
     found = client.get(active, headers=auth)
     assert found.status_code == 200 and found.headers['cache-control'] == 'no-store'
     reference = found.json()['data']
@@ -111,26 +108,33 @@ def _staff_review(client, base, key, source, run, row, title, content):
     path = base + f"/api/customer/agent-approvals/events/{reference['source_event_id']}/runs/{reference['run_id']}"
     assert client.get(path+'/proposal').status_code == 401
     assert client.get(path+'/proposal', headers=agent).status_code == 403
+    missing = client.get(path+'/proposal', headers=foreign)
+    assert missing.status_code == 404 and missing.json().get('data') is None
     response = client.get(path+'/proposal', headers=auth)
     assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
     proposal = response.json()['data']
     assert proposal['title'] == title and proposal['content'] == content and proposal['status'] == 'PENDING'
     assert proposal['approval_id'] == str(row['approval_id']) and proposal['arguments_sha256'] == row['arguments_sha256']
 
-    def request(digest, headers):
+    def request(digest, headers, decision='approve'):
         return client.post(path+'/decisions', headers=headers, json={
-            'approval_id': proposal['approval_id'], 'arguments_sha256': digest, 'decision': 'approve',
+            'approval_id': proposal['approval_id'], 'arguments_sha256': digest, 'decision': decision,
         })
 
     digest = proposal['arguments_sha256']
     assert request(digest, {}).status_code == 401
     assert request(digest, agent).status_code == 403
+    assert request(digest, foreign).status_code == 404
     conflict = request('0'*64, auth)
     assert conflict.status_code == 409, (conflict.status_code, conflict.json().get('code'))
     for _ in range(2):
         result = request(digest, auth)
         assert result.status_code == 200, (result.status_code, result.json().get('code'))
         assert result.json()['data'] == {'approval_id': str(row['approval_id']), 'status': 'APPROVED'}
+    if revoke:
+        result = request(digest, auth, 'revoke')
+        assert result.status_code == 200
+        assert result.json()['data'] == {'approval_id': str(row['approval_id']), 'status': 'REVOKED'}
 
 
 def _run_ticket_worker(tenant, base, secret, runtime_dsn, *, propose=False, authority_enabled=False):
@@ -152,7 +156,7 @@ def _run_ticket_worker(tenant, base, secret, runtime_dsn, *, propose=False, auth
                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
 
 
-def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *, visitor_tenant, append_visitor, timeline):
+def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *, append_visitor, previous_read, timeline):
     from ai.runtime.approvals import TicketApprovals
     from ai.runtime.source import SourceClient
     from ai.runtime.ticket_creation import TicketCreationClient
@@ -160,24 +164,31 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
 
     source_client, tickets = SourceClient(base, secret), TicketCreationClient(base, secret)
     approved_title, approved_body = '审批工单🙂', 'synthetic approved body\n原始内容 '
+    read_source, read_run, read_session_id = previous_read
+    tenant = read_source.tenant
+    read_result = store.get(tenant, read_run)
+    assert read_result['state'] == 'SUCCEEDED' and read_result['result_ref']['outcome'] == 'ticket-status-ready'
+    failures = {
+        'taken_over_after_approval': ('SOURCE_REVOKED', 'APPROVED'),
+        'expired_before_resume': ('APPROVAL_EXPIRED', 'EXPIRED'),
+        'revoked_before_resume': ('APPROVAL_REVOKED', 'REVOKED'),
+    }
     observations = []
     timelines = {}
-    for index, mode in enumerate(('accepted', 'taken_over_after_approval', 'expired_before_resume')):
-        signed_admission = mode == 'accepted'
-        tenant = visitor_tenant if signed_admission else 'TC_APPROVAL_'+str(index)
-        session_id = 20500001 + index * 10
-        session_no = 'TICKET_APPROVAL_'+str(index)
+    for index, mode in enumerate(('accepted', 'lost_create_ack', *failures)):
         request_text = '/ticket-request\n' + approved_title + '\n' + approved_body
-        with connect('customer_db') as db:
-            db.execute('''INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
-                VALUES(%s,%s,%s,1,2,%s,CURRENT_TIMESTAMP)''', (session_id, tenant, session_no, int(not signed_admission)))
-        if signed_admission:
-            source, run = append_visitor(session_no, request_text)
+        has_previous_read = mode == 'accepted'
+        if has_previous_read:
+            session_id, session_no = read_session_id, read_source.session_no
+            source, run = append_visitor(session_no, request_text, read_source.event_seq + 1)
+            assert (source.principal_ref, source.session_no) == (read_source.principal_ref, read_source.session_no)
+            assert source.source_event_id != read_source.source_event_id and run != read_run and source.trace_id != read_source.trace_id
         else:
-            source = RunInput(tenant, uuid4(), session_no, 1, session_id+1,
-                              'visitor-session:'+str(session_id), 'approval-jar-'+str(index))
-            run = store.enqueue(source)['run_id']
-            _seed_source(connect, source, run, session_id, request_text)
+            session_id, session_no = 20500001 + index * 10, 'TICKET_APPROVAL_'+str(index)
+            with connect('customer_db') as db:
+                db.execute('''INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
+                    VALUES(%s,%s,%s,1,2,0,CURRENT_TIMESTAMP)''', (session_id, tenant, session_no))
+            source, run = append_visitor(session_no, request_text, 1)
         approvals = TicketApprovals(store)
         proposal = _run_ticket_worker(tenant, base, secret, runtime_dsn, propose=True)
         assert proposal.returncode == 0 and secret not in proposal.stderr
@@ -192,14 +203,15 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         assert store.claim_next(tenant, 'must-wait') is None
         assert not any(step['effect'] == 'WRITE' for step in store.steps(tenant, run))
         assert asyncio.run(tickets.receipt(source, run)) is None
-        if signed_admission:
-            _assert_progress(base, jwt_key, source, run, waiting)
+        _assert_progress(base, jwt_key, source, run, waiting)
+        if has_previous_read:
             track = timeline.for_event(tenant, source.source_event_id)
             assert track['binding_status'] == 'matched' and track['python_runtime']['approval']['status'] == 'PENDING'
             assert track['python_runtime']['run']['state'] == 'WAITING_APPROVAL'
             timelines['approval_wait'] = track
         with httpx.Client(trust_env=False, follow_redirects=False, timeout=3) as client:
-            _staff_review(client, base, jwt_key, source, run, row, approved_title, approved_body)
+            _staff_review(client, base, jwt_key, source, run, row, approved_title, approved_body,
+                          revoke=mode == 'revoked_before_resume')
         assert approvals.get(tenant, run)['decided_by'] == 'staff:123'
 
         if mode == 'taken_over_after_approval':
@@ -210,7 +222,7 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
                 db.execute("""UPDATE agent_approval SET requested_at=clock_timestamp()-interval '3 minutes',
                     decided_at=clock_timestamp()-interval '150 seconds',expires_at=clock_timestamp()-interval '2 minutes'
                     WHERE tenant_code=%s AND run_id=%s""", (tenant, run))
-        if mode != 'accepted':
+        if mode in ('taken_over_after_approval', 'expired_before_resume'):
             with httpx.Client(trust_env=False, timeout=3) as client:
                 unavailable = client.get(_review_path(base, source, run)+'/proposal',
                     headers={'Authorization': _fixture_token(jwt_key, source.tenant, 123)})
@@ -218,20 +230,25 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
                 assert approved_title not in unavailable.text
         other = store.enqueue(RunInput(tenant, uuid4(), 'READ_ONLY_COLLEAGUE_'+str(index), 1, session_id+3000,
                                        'visitor-session:'+str(session_id+3000), 'approval-worker-ordinary'))
-        if mode == 'accepted':
+        if has_previous_read:
             approved = store.get(tenant, run)
             disabled = _run_ticket_worker(tenant, base, secret, runtime_dsn)
             assert disabled.returncode == 1 and store.get(tenant, run) == approved
-        worker = _run_ticket_worker(tenant, base, secret, runtime_dsn, authority_enabled=True)
-        assert worker.returncode == 0 and secret not in worker.stderr, (mode, worker.returncode)
-        result = store.get(tenant, run)
-        repeated = _run_ticket_worker(tenant, base, secret, runtime_dsn, authority_enabled=True)
-        assert repeated.returncode == 0 and store.get(tenant, run) == result
+        transport = ticket_proxy(base, 'lost_ack', None) if mode == 'lost_create_ack' else nullcontext((base, None))
+        with transport as (worker_base, network):
+            worker = _run_ticket_worker(tenant, worker_base, secret, runtime_dsn, authority_enabled=True)
+            assert worker.returncode == 0 and secret not in worker.stderr, (mode, worker.returncode)
+            result = store.get(tenant, run)
+            repeated = _run_ticket_worker(tenant, worker_base, secret, runtime_dsn, authority_enabled=True)
+            assert repeated.returncode == 0 and store.get(tenant, run) == result
+            if network is not None:
+                assert (network['committed'], network['posts'], network['gets']) == (True, 1, 1), network
         assert store.get(tenant, other['run_id']) == other
+        store.cancel(tenant, other['run_id'])  # keep the next case's read worker isolated
         final_trace = store.trace_snapshot(tenant, run)
         assert final_trace['run']['trace_id'] == waiting_trace['run']['trace_id']
         assert final_trace['run']['state'] == result['state'] and len(final_trace['steps']) == result['step_count']
-        assert store.trace_snapshot('LP_FOREIGN', run) is None
+        assert store.trace_snapshot(FOREIGN_TENANT, run) is None
         audit = approvals.get(tenant, run)
         writes = [step for step in store.steps(tenant, run) if step['effect'] == 'WRITE']
         receipt = asyncio.run(tickets.receipt(source, run, expected_snapshot_id=snapshot.snapshot_id, expected_hash=row['arguments_sha256']))
@@ -240,32 +257,57 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
                                (tenant, session_id)).fetchall()
             events = db.execute('''SELECT count(*) FROM ticket_event e JOIN ticket t ON t.id=e.ticket_id AND t.tenant_code=e.tenant_code
                 WHERE e.tenant_code=%s AND t.source_session_id=%s''', (tenant, session_id)).fetchone()[0]
-        if mode == 'accepted':
+            stored_receipts = db.execute('''SELECT event_id,snapshot_id,arguments_sha256,ticket_id,ticket_no,step_no
+                FROM agent_ticket_receipt WHERE tenant_code=%s AND run_id=%s''', (tenant, run)).fetchall()
+            ordered_sources = db.execute('''SELECT o.event_seq,o.message_id,o.event_id,o.run_id,o.state
+                  FROM agent_event_outbox o JOIN session_message m ON m.tenant_code=o.tenant_code
+                   AND m.session_id=o.session_id AND m.id=o.message_id AND m.seq=o.event_seq
+                  WHERE o.tenant_code=%s AND o.session_id=%s ORDER BY o.event_seq''', (tenant, session_id)).fetchall()
+            message_count = db.execute('SELECT count(*) FROM session_message WHERE tenant_code=%s AND session_id=%s',
+                                       (tenant, session_id)).fetchone()[0]
+        expected_sources = [(source.event_seq, source.message_id, source.source_event_id, run, 'DELIVERED')]
+        if has_previous_read:
+            expected_sources.insert(0, (read_source.event_seq, read_source.message_id, read_source.source_event_id,
+                                        read_run, 'DELIVERED'))
+            assert store.get(tenant, read_run) == read_result
+        assert ordered_sources == expected_sources and message_count == len(expected_sources)
+        if mode not in failures:
             assert result['state'] == 'SUCCEEDED' and audit['status'] == 'CONSUMED'
             assert len(writes) == 1 and writes[0]['state'] == 'SUCCEEDED' and audit['consumed_step_no'] == writes[0]['step_no']
+            assert receipt is not None
             assert facts == [(receipt.ticket_id, receipt.ticket_no, approved_title, approved_body, session_id)] and events == 1
-            assert (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count']) == (7, 4, 0, 0)
+            assert stored_receipts == [(source.source_event_id, snapshot.snapshot_id, row['arguments_sha256'],
+                                        receipt.ticket_id, receipt.ticket_no, writes[0]['step_no'])]
+            assert result['result_ref']['business_ref'] == f'ticket:{receipt.ticket_id}'
+            assert result['result_ref']['resource_ref'] == receipt.ticket_no
+            recovery_reads = int(network is not None)
+            assert (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count']) == (
+                7 + recovery_reads, 4 + recovery_reads, 0, 0)
+        else:
+            expected_error, expected_status = failures[mode]
+            assert (result['state'], result['error_code'], audit['status']) == ('FAILED', expected_error, expected_status)
+            assert writes == [] and receipt is None and stored_receipts == [] and facts == [] and events == 0
+            assert audit['consumed_step_no'] is None
+        if mode not in ('taken_over_after_approval', 'expired_before_resume'):
             _assert_progress(base, jwt_key, source, run, result)
+        if has_previous_read:
             track = timeline.for_run(tenant, run)
             assert track['trace_id'] == timelines['approval_wait']['trace_id']
             assert track['python_runtime']['approval']['status'] == 'CONSUMED'
             assert track['python_runtime']['approval']['consumed_step_no'] == writes[0]['step_no']
             assert track['python_runtime']['run']['state'] == 'SUCCEEDED'
             timelines['approval_consumed'] = track
-        else:
-            expected_error = 'SOURCE_REVOKED' if mode == 'taken_over_after_approval' else 'APPROVAL_EXPIRED'
-            assert result['state'] == 'FAILED' and result['error_code'] == expected_error
-            assert writes == [] and receipt is None and facts == [] and events == 0
-            assert audit['consumed_step_no'] is None
-        observations.append(dict(case=mode, source_enrollment='SIGNED_VISITOR_APPEND' if signed_admission else 'SYNTHETIC_STORED_EVENT',
+        observations.append(dict(case=mode, source_enrollment='SIGNED_VISITOR_APPEND',
+            session_messages=message_count, delivered_source_events=len(ordered_sources), continued_from_ticket_read=has_previous_read,
             waiting_state=waiting['state'], before_review_writes=0, final_state=result['state'], error_code=result['error_code'],
             trace_id=final_trace['run']['trace_id'],
-            approval_status=audit['status'], progress_checks=2 if signed_admission else 0,
+            approval_status=audit['status'], write_requests=network['posts'] if network is not None else None,
+            recovery_receipt_requests=network['gets'] if network is not None else None,
             steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
-            tickets=len(facts), receipts=int(receipt is not None), events=events))
-    artifact = Path(__file__).resolve().parents[1] / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v10', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+            tickets=len(facts), receipts=len(stored_receipts), events=events))
+    artifact = ROOT / '.local/verification/runtime-ticket-approval.json'
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v11', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
-    print('Signed visitor append -> Outbox -> proposal worker -> authenticated staff review -> approval-only worker: 3 cases passed; anonymous, ordinary staff and wrong digest rejected; '
-          'duplicate approval preserved, one approved ticket/receipt, zero writes after takeover or expiry', flush=True)
+    print('Signed visitor -> Outbox -> proposal -> staff review -> approval Worker: 5 cases passed; '
+          'same-session read then create, receipt recovery after one POST, and zero writes after takeover, expiry or revocation', flush=True)
     return timelines
