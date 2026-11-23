@@ -1,6 +1,7 @@
 """Actual publication/index predicates intersect scope, RLS and deletion."""
 import asyncio
 from itertools import count
+import json
 import os
 from types import SimpleNamespace
 
@@ -116,3 +117,49 @@ def test_published_evidence_must_still_belong_to_the_same_tenant_and_document_sc
     assert store.published_evidence_is_current(tenant, hits, None)
     assert not store.published_evidence_is_current(tenant, hits, [docs['draft']])
     assert not store.published_evidence_is_current(tenant.replace('KP', 'KQ'), hits, None)
+
+
+@pytest.mark.parametrize('include_ready', [True, False], ids=['local-ready', 'excluded-only'])
+def test_guardrail_grounded_context_uses_only_published_local_sources(corpus, monkeypatch, include_ready):
+    tenant, docs = corpus
+    text = '退款到账：合成政策。\n资料备注「普通文本」SOURCE-DATA-01。'
+    title = '合成政策 "编号"'
+    markers = {'foreign': 'FOREIGN-SOURCE-01', 'draft': 'DRAFT-SOURCE-01', 'failed': 'FAILED-SOURCE-01'}
+    question = '退款到账\n访客备注「普通文本」QUESTION-DATA-01'
+    with psycopg.connect(os.environ['SUPPORTFLOW_KB_ADMIN_TEST_DSN']) as db:
+        db.execute('UPDATE kb_document SET title=%s WHERE id=%s', (title, docs['ready']))
+        db.execute('UPDATE kb_chunk SET content=%s WHERE id=%s', (text, docs['ready']))
+        for label, marker in markers.items():
+            db.execute('UPDATE kb_chunk SET content=%s WHERE id=%s', ('退款到账 ' + marker, docs[label]))
+
+    settings = SimpleNamespace(rag_vector_min_score=.35, rag_keyword_min_score=.12,
+                               llm_timeout=1, rag_require_grounded_reply=True)
+    monkeypatch.setattr(graph, '_graph', None)
+    monkeypatch.setattr(graph, 'get_settings', lambda: settings)
+    monkeypatch.setattr(rag, 'get_settings', lambda: settings)
+    monkeypatch.setattr(pipeline.llama_engine, 'available', lambda: False)
+    monkeypatch.setattr(pipeline.embedding_module, 'embed_texts', lambda *a, **kw: ([VECTOR], 'local-hash'))
+    monkeypatch.setattr(rag, 'resolve_provider', lambda _: ({'model': 'synthetic-model'}, 'fixture'))
+    payloads = []
+
+    async def complete(_chosen, payload, *_args, **_kwargs):
+        payloads.append(payload)
+        reply = {'decision': 'answer', 'claims': [{'text': '退款到账：合成政策。',
+                  'sources': [{'index': 1, 'quote': '退款到账：合成政策。'}]}]}
+        return {'choices': [{'message': {'content': json.dumps(reply, ensure_ascii=False)}}]}
+
+    monkeypatch.setattr(rag, 'call_chat', complete)
+    scope = [docs[label] for label in markers] + ([docs['ready']] if include_ready else [])
+    result = asyncio.run(graph.ask(question, tenant, doc_ids=scope, published_only=True))
+    if include_ready:
+        payload, = payloads
+        system, data = payload['messages']
+        assert system['role'] == 'system' and 'DATA-01' not in system['content']
+        assert data['role'] == 'user' and json.loads(data['content']) == {
+            'question': question, 'sources': [{'index': 1, 'doc_title': title, 'chunk_no': 0, 'content': text}],
+        }
+        assert result['decision'] == 'answer'
+        assert [citation['doc_id'] for citation in result['citations']] == [str(docs['ready'])]
+    else:
+        assert result['decision'] == 'abstain' and result['abstention_reason'] == 'insufficient_evidence'
+        assert result['citations'] == [] and payloads == []

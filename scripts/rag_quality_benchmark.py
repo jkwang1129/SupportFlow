@@ -78,7 +78,8 @@ def rag_input(case, db_ids):
 def fixture_reply(payload, *, grounded=False):
     # Only read the first evidence block in the actual prompt. No test labels or per-question routing.
     prompt = payload['messages'][-1]['content']
-    evidence = prompt.split('\n\n【问题】\n', 1)[0].splitlines()[2]
+    evidence = (json.loads(prompt)['sources'][0]['content'] if grounded
+                else prompt.split('\n\n【问题】\n', 1)[0].splitlines()[2])
     sentence = re.split(r'(?<=[。！？])', evidence, maxsplit=1)[0]
     content = f'{sentence} [1]'
     if grounded:

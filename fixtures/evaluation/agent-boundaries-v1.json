@@ -1,0 +1,15 @@
+{
+  "version": "agent-boundaries-v1",
+  "cases": [
+    {"id": "visitor-data-required-receipt", "report": "runtime-store.xml", "module": "test_ticket_loop_postgres", "test": "test_guardrail_visitor_text_stays_data_and_cannot_supply_a_report_receipt"},
+    {"id": "read-planner-write-capability", "report": "runtime-store.xml", "module": "test_ticket_loop_postgres", "test": "test_guardrail_read_planner_has_no_ticket_creation_capability"},
+    {"id": "projected-tool-data", "report": "runtime-store.xml", "module": "test_ticket_loop_postgres", "test": "test_guardrail_ticket_transport_metadata_is_not_forwarded_to_next_model_turn"},
+    {"id": "revoked-owner-no-stale-release", "report": "runtime-store.xml", "module": "test_ticket_loop_postgres", "test": "test_revoked_owner_after_model_report_decision_does_not_turn_old_fact_into_success"},
+    {"id": "write-scope-required", "report": "runtime-store.xml", "module": "test_ticket_write_tool_postgres", "test": "test_missing_scope_does_not_even_reserve_a_source_authorization"},
+    {"id": "approval-tenant-reviewer-boundary", "report": "runtime-store.xml", "module": "test_approval_lifecycle_postgres", "test": "test_foreign_scope_wrong_approval_or_bad_reviewer_cannot_decide"},
+    {"id": "approval-consumption-required", "report": "runtime-store.xml", "module": "test_approval_lifecycle_postgres", "test": "test_missing_consumption_marker_blocks_permit_even_for_a_reserved_write"},
+    {"id": "grounded-local-published-source", "report": "knowledge-isolation.xml", "module": "test_rag_published_policy_postgres", "test": "test_guardrail_grounded_context_uses_only_published_local_sources[local-ready]"},
+    {"id": "grounded-no-prompt-without-visible-source", "report": "knowledge-isolation.xml", "module": "test_rag_published_policy_postgres", "test": "test_guardrail_grounded_context_uses_only_published_local_sources[excluded-only]"},
+    {"id": "source-final-tenant-and-scope-check", "report": "knowledge-isolation.xml", "module": "test_rag_published_policy_postgres", "test": "test_published_evidence_must_still_belong_to_the_same_tenant_and_document_scope"}
+  ]
+}

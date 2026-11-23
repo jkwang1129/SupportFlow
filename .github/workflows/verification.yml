@@ -41,6 +41,8 @@ jobs:
         run: python scripts/test-usage-batches.py
       - name: Verify runtime recovery and Java-to-AI durable delivery
         run: python scripts/test-agent-runtime.py --with-java-delivery
+      - name: Require agent input and permission boundary regressions
+        run: python scripts/agent_boundary_report.py --reports .local/verification --output .local/verification/agent-boundary-contract.json
       - name: Verify versioned SQL migrations and rollback
         run: python scripts/test-versioned-migrations.py
       - name: Verify four database baseline adoption and incompatibility rejection

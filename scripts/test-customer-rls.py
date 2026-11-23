@@ -128,8 +128,11 @@ def main():
             env=subprocess_env,
         )
         if args.with_ai:
+            report = ROOT / '.local/verification/knowledge-isolation.xml'
+            report.parent.mkdir(parents=True, exist_ok=True)
             subprocess.run(
-                [sys.executable, "-m", "pytest", "-q", "tests/test_kb_console_status.py", "tests/test_rag_document_scope_postgres.py", "tests/test_rag_published_policy_postgres.py"],
+                [sys.executable, "-m", "pytest", "-q", "tests/test_kb_console_status.py", "tests/test_rag_document_scope_postgres.py",
+                 "tests/test_rag_published_policy_postgres.py", f"--junitxml={report}"],
                 cwd=ROOT / "ai-service", check=True,
                 env={
                     **os.environ,

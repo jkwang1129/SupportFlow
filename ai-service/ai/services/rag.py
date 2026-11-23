@@ -151,12 +151,15 @@ async def compose_answer_details(question: str, hits: list[dict[str, Any]], tena
     prompt = SYSTEM_PROMPT + (EXTRACTIVE_INSTRUCTIONS if extractive_only else "")
     if require_grounded_reply:
         prompt = grounded_reply.PROMPT + (grounded_reply.EXTRACTIVE_PROMPT if extractive_only else "")
+        model_input = grounded_reply.build_input(question, citations)
+    else:
+        model_input = build_prompt(question, hits)
     payload = {
         "model": chosen["model"],
         "temperature": 0.2,
         "messages": [
             {"role": "system", "content": prompt},
-            {"role": "user", "content": build_prompt(question, hits)},
+            {"role": "user", "content": model_input},
         ],
     }
     logger.info("知识问答请求 trace=%s tenant=%s 模型=%s 资料条数=%d",

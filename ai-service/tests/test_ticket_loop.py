@@ -25,7 +25,7 @@ REPORT={'action':'report','evidence':'tool-0'}
 
 
 def fixture(actions,*,max_turns=4,after_model=None,wrong_source=False,source_input=INPUT,run_id=RUN,model_faults=None,
-            canonical_history=False,source_text=None):
+            canonical_history=False,source_text=None,ticket_message=None):
     source=source_envelope();state={'status':2,'owner':True};http=[];models=[];reports=[]
     payload=json.loads(source['data']['payload_json'])
     if source_text is not None:
@@ -40,6 +40,8 @@ def fixture(actions,*,max_turns=4,after_model=None,wrong_source=False,source_inp
         if request.url.path.endswith('/snapshot'):return response(source)
         if not state['owner']:return response(dict(code=40404,message='private foreign owner',data=None),status=404)
         data=ticket_envelope();value=data['data']
+        if ticket_message is not None:
+            data['message'] = ticket_message
         value.update(tenant_code=source_input.tenant,source_event_id=str(source_input.source_event_id),run_id=str(run_id),
                      snapshot_id=source['data']['snapshot_id'],source_hash='b'*64 if wrong_source else source['data']['payload_hash'],status=state['status'])
         value['resource_version']=ticket_digest(source_input,run_id,value['snapshot_id'],value['source_hash'],'TK-1',value['status'],value['updated_at'])

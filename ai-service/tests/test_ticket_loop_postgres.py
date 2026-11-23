@@ -65,6 +65,49 @@ def test_revoked_owner_after_model_report_decision_does_not_turn_old_fact_into_s
     assert result['state']=='FAILED' and result['error_code']=='TICKET_REVOKED' and artifacts()==[]
 
 
+def test_guardrail_visitor_text_stays_data_and_cannot_supply_a_report_receipt(store):
+    note = '合成访客备注「普通文本」\n边界标记 USER-DATA-01'
+    row, loop, http, models, _ = prepare(store, [REPORT], source_text=note)
+    result = runner(store, loop).run_once('TENANT_A')
+    assert (result['state'], result['error_code'], result['model_calls']) == ('FAILED', 'REPORT_EVIDENCE_INVALID', 1)
+    policy, user_data = models[0]['messages']
+    assert policy['role'] == 'system' and note not in policy['content']
+    assert user_data['role'] == 'user'
+    assert json.loads(user_data['content']) == {'kind': 'untrusted_user_input', 'text': note}
+    assert http and all(request.url.path.endswith('/snapshot') for request in http)
+    assert artifacts() == []
+    assert all(step['effect'] != 'WRITE' for step in store.steps('TENANT_A', row['run_id']))
+
+
+def test_guardrail_read_planner_has_no_ticket_creation_capability(store):
+    model_decision = {'action': 'tool', 'call': {'name': 'create_ticket', 'version': 'ticket-create-v1', 'arguments': {}}}
+    row, loop, http, models, _ = prepare(store, [model_decision])
+    result = runner(store, loop).run_once('TENANT_A')
+    assert (result['state'], result['error_code'], result['model_calls']) == ('FAILED', 'TOOL_UNKNOWN', 1)
+    assert 'create_ticket' not in models[0]['messages'][0]['content']
+    assert http and all(request.url.path.endswith('/snapshot') for request in http)
+    assert artifacts() == []
+    assert all(step['effect'] != 'WRITE' for step in store.steps('TENANT_A', row['run_id']))
+
+
+def test_guardrail_ticket_transport_metadata_is_not_forwarded_to_next_model_turn(store):
+    notice = '合成工具返回说明 TOOL-DATA-01\n包含"引号"'
+    row, loop, http, models, _ = prepare(store, ticket_message=notice)
+    result = runner(store, loop).run_once('TENANT_A')
+    assert result['state'] == 'SUCCEEDED' and result['result_ref']['outcome'] == 'ticket-status-ready'
+    assert len(models) == 2 and 'TOOL-DATA-01' not in json.dumps(models)
+    message = models[1]['messages'][-1]
+    assert message['role'] == 'user'
+    observed = json.loads(message['content'])
+    assert observed['kind'] == 'untrusted_tool_result' and observed['slot'] == 'tool-0'
+    assert observed['name'] == 'get_ticket_status' and observed['value']['ticket_no'] == 'TK-1'
+    assert set(observed['value']) == {'ticket_no', 'status', 'updated_at'}
+    report, = artifacts()
+    assert report['status'] == 2 and notice not in report['text']
+    assert any('/tickets/' in request.url.path for request in http)
+    assert all(step['effect'] != 'WRITE' for step in store.steps('TENANT_A', row['run_id']))
+
+
 @pytest.mark.parametrize('proposal,code',[
     ({'action':'report','evidence':'tool-99'},'REPORT_EVIDENCE_INVALID'),
     ({'action':'tool','call':{'name':'shell','version':'v1','arguments':{'cmd':'arbitrary-code'}}},'TOOL_UNKNOWN'),
