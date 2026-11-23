@@ -58,6 +58,8 @@ jobs:
         run: python scripts/report-rag-contract.py --junit .local/verification/ai-tests.xml --require-citations --require-extractive --output .local/verification/rag-contract.json
       - name: Compare single-pass and Agentic RAG on the frozen corpus
         run: python scripts/rag_quality_benchmark.py --output .local/verification/rag-quality-benchmark.json
+      - name: Compare intent context budgets and session recovery on the frozen corpus
+        run: python scripts/brain_context_benchmark.py --output .local/verification/brain-context-benchmark.json
       - name: Verify evaluation gate negative cases
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
       - name: Verify fresh and legacy runtime database privileges

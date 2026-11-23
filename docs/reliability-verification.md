@@ -1508,3 +1508,27 @@ AI 014 提供可选的 UTC 日度和月度估算金额上限。调用前在租�
 原始响应与回执保存在 `.local/implementation/d10-rag-qwen-live.json`，SHA-256 为 `8e60cbc5cf17928c82221fc4b08eb7ed4ac486bfb189797a917817dddac88412`。逐题复核在 `d10-rag-qwen-review.json`，离线复评分在 `d10-rag-qwen-reviewed-summary.json`。原报告记录开跑时的基准 Git HEAD 和各执行文件的内容摘要。指标来自一次合成样本对照和单评审，无独立人工复核，延迟包含本地网络，仅用于比较本次运行。
 
 - AI 全量通过 1,060 项，466 项按环境条件跳过。评测脚本 51 项中 41 项通过、10 项按数据库条件跳过。新增 10 项用例覆盖超限、供应商拒绝、截断、用量缺失、评分数据被修改或缺项、错误引用和异常执行。固定生成替身模式复跑 50 次，结构门禁继续通过。
+
+## D11 客服意图上下文预算与会话恢复（2026-11-23）
+
+Windows 11、Python 3.11.5、Docker 内 PostgreSQL 17.12。9 道合成题分别运行原版、2 KiB 和 4 KiB，共 27 次意图识别。25 次 `qwen-plus` 调用均返回用量回执。每组均通过订单号核对和数据库恢复检查，未观察到同租户其他会话、外租户或已删除订单号泄漏。测量口径、配置与回退见 [ADR-0054](decisions/0054-brain-context-qualification.md)。
+
+| 指标 | 原版 | 2 KiB | 4 KiB |
+|---|---:|---:|---:|
+| 全部样本的意图和订单号同时正确 | 9/9 | 7/9 | 8/9 |
+| 订单号核对 | 9/9 | 9/9 | 9/9 |
+| 标注历史线索保留 | 4/4 | 3/4 | 4/4 |
+| 真实调用次数 | 9 | 8 | 8 |
+| 已发出的 `messages` 字节合计 | 27,046 | 12,608 | 16,815 |
+| 全部样本输入 / 输出 / 合计 Token | 5,747 / 876 / 6,623 | 3,035 / 783 / 3,818 | 3,807 / 855 / 4,662 |
+| 共同调用的 8 题同时正确 | 8/8 | 7/8 | 8/8 |
+| 共同调用 8 题的合计 Token | 5,461 | 3,818 | 4,662 |
+| 意图识别 P50 / P95 | 3,302.665 / 3,752.653 ms | 3,342.797 / 3,840.315 ms | 3,574.620 / 4,155.455 ms |
+
+共同调用样本中，2 KiB 节省 30.09% Token，漏掉长消息前的退款主题并判成物流。4 KiB 节省 14.63% Token，保持该样本上的 8/8 意图及订单号正确。两个预算均在 `mandatory-input-over-budget` 保护当前输入并跳过模型，仍恢复订单号，规则输出为“其他”。全样本用量下降中包含跳过该次调用的影响。延迟包含远程网络和本地读取，来自每组每题一次试跑。合成样本与结果适用于对照此处的识别节点，完整客服业务成功率、真实金额和生产容量另行验收。
+
+原始 `d11-brain-context-qwen-live.json` 保存在 `.local/implementation/`，SHA-256 为 `7d6e7c74c7f4600fc97f6c1e6b301eeff40ed056bfcf604165b50134eaa3e3e5`，逐题含实际请求消息、历史线索、恢复结果、意图、耗时和用量。共同指标可从 `cases[].profiles` 筛出三组 `receipt.attempted` 都为 true 的 8 题，再汇总 `receipt.usage.total_tokens` 与 `score`。固定替身复跑同样通过 27 次结构检查，原始报告 `d11-brain-context-stub.json`。
+
+- `python -m unittest discover -s scripts/tests -p 'test_*.py'` 执行 58 项，48 项通过，10 项按数据库环境条件跳过。新增 7 项覆盖数据摘要、标签隔离、意外历史丢失、会话记忆越界、超预算、槽位更正和替身评分隔离。
+- `python -m pytest -q tests/test_ticket_loop.py tests/test_brain_analysis_context.py` 通过 29 项，两项依赖 PostgreSQL 的测试在此命令中条件跳过。
+- 用 `$env:PYTEST_ADDOPTS='-k "brain_analysis_context or ticket_loop_postgres"'` 运行 `python scripts/test-agent-runtime.py`。真实受限角色 PostgreSQL 组合验收通过 37 项，包括会话软删除、同名跨租户恢复、订单号更正、丢失响应后的规划检查点接管与旧绑定拒绝。原日志 `d11-context-recovery-pg.log`。

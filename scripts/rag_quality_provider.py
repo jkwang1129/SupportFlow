@@ -48,7 +48,7 @@ class QwenGeneration:
                 'timeout_seconds': TIMEOUT_SECONDS, 'attempts': self.attempts,
                 'temperature': 0.2, 'enable_thinking': False, 'repeats_per_profile': 1}
 
-    async def generate(self, payload, receipt):
+    async def generate(self, payload, receipt, *, scene='RAG评测'):
         payload = {**payload, 'max_tokens': MAX_OUTPUT_TOKENS, 'enable_thinking': False}
         if self.stopped or self.attempts >= MAX_CALLS:
             raise ModelCallFailure('EVAL_PROVIDER_STOPPED', attempted=False)
@@ -58,7 +58,7 @@ class QwenGeneration:
         receipt.update(attempted=True, request_sha256=canonical_digest(payload))
         started = perf_counter()
         try:
-            data = await call_chat(self.chosen, payload, TIMEOUT_SECONDS, scene='RAG评测', meter_usage=False)
+            data = await call_chat(self.chosen, payload, TIMEOUT_SECONDS, scene=scene, meter_usage=False)
         except ModelCallFailure as error:
             if not error.attempted:
                 self.attempts -= 1

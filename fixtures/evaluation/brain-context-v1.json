@@ -1,0 +1,73 @@
+{
+  "version": "brain-context-v1",
+  "intents": ["物流查询", "退款进度", "电子发票"],
+  "noise": "刚才页面加载了一会儿，颜色和布局看起来正常，我先把其他页面关闭了。",
+  "cases": [
+    {
+      "id": "short-reference",
+      "question": "这单有新的进展吗？",
+      "history": [{"role": "user", "content": "我想查快递物流。订单号：CTX-SMALL1。"}],
+      "expected": {"intent": "物流查询", "order": "CTX-SMALL1", "anchors": ["我想查快递物流"], "restored_order": null}
+    },
+    {
+      "id": "long-restored-order",
+      "question": "前面说的那单有新的进展吗？",
+      "history": [{"role": "assistant", "noise_repeats": 35}, {"role": "user", "content": "我问的是快递签收进度。"}],
+      "memory": {"order_no": "CTX-LONG01"},
+      "expected": {"intent": "物流查询", "order": "CTX-LONG01", "anchors": ["快递签收进度"], "restored_order": "CTX-LONG01"}
+    },
+    {
+      "id": "older-topic-behind-long-turn",
+      "question": "刚才那笔现在到哪一步了？",
+      "history": [{"role": "user", "content": "我正在申请退货退款，想确认款项进度。"}, {"role": "assistant", "noise_repeats": 18}],
+      "memory": {"order_no": "CTX-OLDER1"},
+      "expected": {"intent": "退款进度", "order": "CTX-OLDER1", "anchors": ["想确认款项进度"], "restored_order": "CTX-OLDER1", "allow_anchor_loss_at_2048": true}
+    },
+    {
+      "id": "latest-topic-switch",
+      "question": "那它要在哪里申请？",
+      "history": [{"role": "user", "content": "我刚才咨询了退款。"}, {"role": "assistant", "noise_repeats": 30}, {"role": "user", "content": "现在换成电子发票的问题。"}],
+      "expected": {"intent": "电子发票", "order": null, "anchors": ["换成电子发票"], "restored_order": null}
+    },
+    {
+      "id": "same-session-across-tenants",
+      "question": "之前那笔快递有动静吗？",
+      "history": [],
+      "memory": {"order_no": "CTX-LOCAL1"},
+      "foreign_order": "CTX-FOREIGN1",
+      "expected": {"intent": "物流查询", "order": "CTX-LOCAL1", "anchors": [], "restored_order": "CTX-LOCAL1"}
+    },
+    {
+      "id": "absent-local-memory",
+      "question": "帮我查一下物流进度，我还没提供订单编号。",
+      "history": [],
+      "foreign_order": "CTX-FOREIGN2",
+      "neighbor_order": "CTX-NEIGHBOR2",
+      "expected": {"intent": "物流查询", "order": null, "anchors": [], "restored_order": null}
+    },
+    {
+      "id": "deleted-session-memory",
+      "question": "我想查派送进度，还没告诉你单号。",
+      "history": [],
+      "memory": {"order_no": "CTX-DELETED1"},
+      "delete_memory": true,
+      "expected": {"intent": "物流查询", "order": null, "anchors": [], "restored_order": null}
+    },
+    {
+      "id": "corrected-order-followup",
+      "question": "那笔订单现在送到哪儿了？",
+      "history": [{"role": "user", "content": "之前报的订单号：CTX-OLD001。"}, {"role": "assistant", "noise_repeats": 22}],
+      "memory": {"order_no": "CTX-OLD001"},
+      "prior_question": "订单号更正为：CTX-NEW001。",
+      "expected": {"intent": "物流查询", "order": "CTX-NEW001", "anchors": [], "restored_order": "CTX-NEW001"}
+    },
+    {
+      "id": "mandatory-input-over-budget",
+      "question": "请查配送进度。还有这些无关的页面描述：",
+      "question_noise_repeats": 40,
+      "history": [],
+      "memory": {"order_no": "CTX-OVER01"},
+      "expected": {"intent": "物流查询", "order": "CTX-OVER01", "anchors": [], "restored_order": "CTX-OVER01", "bounded_fallback": true}
+    }
+  ]
+}

@@ -31,7 +31,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | 模块 | 当前状态 | 可复用实现/证据 | 必须补齐及依赖 |
 | --- | --- | --- | --- |
 | M01 Reliable Runtime | 部分实现，已验单租户可选工单闭环 | Run/Step/Worker、签名访客登记、跨进程恢复、坐席审批、实际回复和工单回执、未知写核销 | 多租户运营策略、默认业务切换、其他写操作与独立回执待补。B |
-| M02 Context Engineering | 部分实现，工单规划与意图分析已有可选预算策略 | 最近会话、工单检查点恢复、结构化规划历史、意图模型有界上下文、真实库恢复和显式订单号更正 | 待验收记忆过期、其他记忆更正、选择性摘要、真实模型 Token 与质量。C |
+| M02 Context Engineering | 部分实现，已完成意图上下文三组实测 | 工单检查点及结构化规划历史、意图字节预算、同会话状态恢复和订单号更正、真实模型 Token 与意图质量对照 | 用留出集验证压缩和长输入兜底，继续验收大工具结果、更多记忆字段和过期策略。C |
 | M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、来源/工单/知识工具与签名SDK，实际Worker/受限PG核权/刷新/共享Embedding预算；有界工单Loop；宿主报告原子发布与回执核销；固定工单 MCP 客户端 | 原子建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE/知识决策Loop、通用未知写及 MCP 服务端部署和更广接入待完善。B |
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权、操作专属许可、工单限时审批和回执绑定；客服大脑和知识库客户端已补日志内容保护 | 仍需完整的直接/间接注入评测、其他写操作的审批和防重放、全链路日志与审计保留。无任意代码需求，暂不建 Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，访客来源复核、可选逐句原文核查及真实语义基线 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、改写、租户及发布过滤、越界拒答和逐句证据门禁 | 改进相关性与权威证据判定、冲突决策、持久化发布版本；混检重排需在配对基线上验证收益。A/C |
@@ -203,3 +203,5 @@ D8 固定 RAG 质量对照语料和 25 题标注，覆盖拒答、转人工、�
 D9 使用同一张生产 RAG 图、隔离 PostgreSQL 的实际关键词检索和固定生成替身完成 25 题配对运行，逐轮检索、引用、拒答及预算结果可复现，报告进入 CI。后续批次测量真实模型答案质量和已观测用量，并按人工事实标注校准语义评分。见 [ADR-0052](decisions/0052-paired-rag-benchmark.md) 和 [本地验收](reliability-verification.md#d9-单次检索与-agentic-rag-对照运行2026-11-23)。
 
 D10 复用同一固定样本，完成 `qwen-plus` 的 25 题配对试跑、33 次用量回执和 50 条逐题语义复核。结构引用均通过，两组仍有 3 条引用不能支撑结论。把程序的回答状态与正文拒答或建议人工分开报告。已测范围和剩余风险见 [ADR-0053](decisions/0053-live-rag-evaluation.md) 和 [本地验收](reliability-verification.md#d10-真实模型配对与语义复核2026-11-23)。
+
+D11 用 9 道固定题对照原版、2 KiB 和 4 KiB 意图上下文策略。`qwen-plus` 共返回 25 份用量回执。共同执行的 8 题中，4 KiB 保留 8/8 的意图与订单号结果，合计 Token 减少 14.63%。2 KiB 丢失一个早期话题。两个预算均保留超长当前问题场景的订单号，但该场景的意图兜底未命中。见 [ADR-0054](decisions/0054-brain-context-qualification.md) 和 [本地验收](reliability-verification.md#d11-客服意图上下文预算与会话恢复2026-11-23)。
