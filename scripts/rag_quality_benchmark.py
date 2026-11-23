@@ -2,6 +2,7 @@
 import argparse
 import asyncio
 from collections import Counter
+from datetime import datetime, timezone
 from hashlib import sha256
 from importlib.metadata import version
 import json
@@ -11,6 +12,7 @@ from pathlib import Path
 import platform
 import re
 import secrets
+import subprocess
 import sys
 from time import perf_counter
 from types import SimpleNamespace
@@ -30,6 +32,7 @@ sys.path.insert(0, str(ROOT / 'ai-service'))
 
 from ai.rag import embedding, graph, llama_engine, pipeline, retriever, store
 from ai.services import rag
+from rag_quality_provider import ModelCallFailure, QwenGeneration
 
 TOP_K = 5
 PROFILES = {'single_pass': 0, 'agentic': graph.MAX_REWRITE_ROUNDS}
@@ -94,9 +97,10 @@ def summarize_hit(hit, logical_ids):
             'chunk_no': hit['chunk_no'], 'score': hit['score'], 'content': hit['content']}
 
 
-async def observe(question, arguments, profile, logical_ids):
+async def observe(question, arguments, profile, logical_ids, live=None):
     rounds = []
     model_calls = 0
+    receipt = None
     retrieve_real = retriever.retrieve_with_meta
 
     def record_retrieval(**request):
@@ -106,8 +110,11 @@ async def observe(question, arguments, profile, logical_ids):
         return result
 
     async def record_generation(_provider, payload, _timeout, **_metadata):
-        nonlocal model_calls
+        nonlocal model_calls, receipt
         model_calls += 1
+        if live is not None:
+            receipt = {'attempted': False}
+            return await live.generate(payload, receipt)
         return fixture_reply(payload)
 
     start = perf_counter()
@@ -116,6 +123,8 @@ async def observe(question, arguments, profile, logical_ids):
     with patch.object(retriever, 'retrieve_with_meta', record_retrieval), patch.object(rag, 'call_chat', record_generation):
         try:
             result = await graph.ask(question, **arguments, max_rewrite_rounds=PROFILES[profile])
+        except ModelCallFailure as failure:
+            error = failure.code
         except Exception as failure:
             error = type(failure).__name__
     elapsed_ms = (perf_counter() - start) * 1000
@@ -131,7 +140,8 @@ async def observe(question, arguments, profile, logical_ids):
         'citations': [
             item | {'document_id': logical_ids.get(int(item['doc_id']))} for item in result.get('citations', [])
         ],
-        'model_calls': model_calls, 'provider_tokens': None,
+        'model_calls': model_calls, 'generation_receipt': receipt,
+        'provider_tokens': receipt.get('usage') if receipt else None,
     }
 
 
@@ -173,7 +183,7 @@ def percentile(values, fraction):
     return sorted(values)[math.ceil(len(values) * fraction) - 1]
 
 
-def aggregate(rows):
+def aggregate(rows, *, live=False):
     recalls = [row['scores']['recall_at_5'] for row in rows if row['scores']['recall_at_5'] is not None]
     citations = [item['valid'] for row in rows for item in row['scores']['citation_pairs']]
     decisions = Counter(row['decision'] or 'no_decision' for row in rows)
@@ -181,6 +191,14 @@ def aggregate(rows):
     expected_refusals = [row for row in rows if row['expected_outcome'] == 'abstain']
     expected_answers = [row for row in rows if row['expected_outcome'] == 'answer']
     false_refusals = sum(row['decision'] == 'abstain' and not row['error'] for row in expected_answers)
+    provider_tokens = None
+    if live:
+        attempted = [row for row in rows if (row['generation_receipt'] or {}).get('attempted')]
+        receipts = [row['provider_tokens'] for row in attempted if row['provider_tokens'] is not None]
+        provider_tokens = {'attempted': len(attempted), 'with_usage': len(receipts),
+                           'unknown': len(attempted) - len(receipts),
+                           'observed': {name: sum(usage[name] for usage in receipts)
+                                        for name in ('prompt_tokens', 'completion_tokens', 'total_tokens')} if receipts else None}
     return {
         'observations': len(rows), 'decisions': dict(decisions), 'errors': sum(bool(row['error']) for row in rows),
         'recall_at_5': {'sum': round(sum(recalls), 6), 'eligible': len(recalls),
@@ -196,7 +214,7 @@ def aggregate(rows):
         'forbidden_output_marker_cases': sum(bool(row['scores']['forbidden_output_markers']) for row in rows),
         'latency_ms': {'p50': percentile(latencies, 0.50), 'p95': percentile(latencies, 0.95)},
         'retrieval_calls': sum(len(row['retrievals']) for row in rows),
-        'model_calls': sum(row['model_calls'] for row in rows), 'provider_tokens': None,
+        'model_calls': sum(row['model_calls'] for row in rows), 'provider_tokens': provider_tokens,
         'answer_correctness': None, 'citation_semantic_support': None, 'handoff_accuracy': None,
     }
 
@@ -221,7 +239,7 @@ def violations(case, observations):
     return failures
 
 
-async def run_cases(dataset, db_ids):
+async def run_cases(dataset, db_ids, live=None):
     rows = []
     failures = []
     logical_ids = {value: key for key, value in db_ids.items()}
@@ -231,7 +249,7 @@ async def run_cases(dataset, db_ids):
         order = list(PROFILES) if offset % 2 == 0 else list(reversed(PROFILES))
         observations = []
         for profile in order:
-            row = await observe(question, arguments, profile, logical_ids)
+            row = await observe(question, arguments, profile, logical_ids, live)
             row['expected_outcome'] = case['expected']['outcome']
             row['scores'] = score(case, allowed, row)
             observations.append(row)
@@ -241,11 +259,12 @@ async def run_cases(dataset, db_ids):
     return rows, failures
 
 
-def benchmark(dataset, fixture):
+def benchmark(dataset, fixture, live=None):
     if not graph.langgraph_available():
         raise RuntimeError('Install the AI test requirements to run both LangGraph profiles')
     db_ids = {document['id']: 28_000_001 + offset for offset, document in enumerate(dataset['documents'])}
     password = secrets.token_hex(24)
+    started = datetime.now(timezone.utc).isoformat()
     with disposable_postgres() as (connect, environment):
         with connect('customer_db') as connection:
             run_plan(connection, load_plan()['customer_db'])
@@ -261,6 +280,7 @@ def benchmark(dataset, fixture):
 
         graph_settings = SimpleNamespace(rag_vector_min_score=VECTOR_THRESHOLD, rag_keyword_min_score=KEYWORD_THRESHOLD,
                                          rag_require_extractive_support=False)
+        generation = (live.chosen, 'qwen live') if live is not None else ({'model': 'fixture-first-sentence-v1'}, 'local fixture')
         with (tracing_context(enabled=False),
               patch.object(store, 'connect', connect_reader),
               patch.object(llama_engine, 'available', return_value=False),
@@ -268,26 +288,31 @@ def benchmark(dataset, fixture):
               patch.object(graph, 'get_settings', return_value=graph_settings),
               patch.object(graph, '_graph', graph._build_graph()),
               patch.object(rag, 'get_settings', return_value=SimpleNamespace(llm_timeout=5)),
-              patch.object(rag, 'resolve_provider', return_value=({'model': 'fixture-first-sentence-v1'}, 'local fixture'))):
-            rows, failures = asyncio.run(run_cases(dataset, db_ids))
+              patch.object(rag, 'resolve_provider', return_value=generation)):
+            rows, failures = asyncio.run(run_cases(dataset, db_ids, live))
 
     return {
-        'schema_version': 1, 'fixture': fixture, 'violations': failures, 'cases': rows,
+        'schema_version': 2, 'fixture': fixture, 'violations': failures, 'cases': rows,
         'configuration': {
             'profile_rewrite_limits': PROFILES, 'top_k': TOP_K, 'published_only': True,
-            'embedding': 'local-hash', 'retrieval': 'postgres-keyword', 'generation': 'fixture-first-sentence-v1',
+            'embedding': 'local-hash', 'retrieval': 'postgres-keyword',
+            'generation': 'qwen-live' if live is not None else 'fixture-first-sentence-v1',
+            'live_profile': live.configuration() if live is not None else None,
             'keyword_threshold': KEYWORD_THRESHOLD, 'vector_threshold': VECTOR_THRESHOLD, 'extractive_only': False,
             'history': 'shared prompt prefix', 'timing': 'sequential graph calls, alternating profile order, no warmup',
         },
         'environment': {
             'platform': platform.platform(), 'python': platform.python_version(), 'postgres': postgres,
+            'started_at_utc': started,
+            'git_head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
             'langgraph': version('langgraph'), 'psycopg': version('psycopg'),
             'source_sha256': {
                 path.relative_to(ROOT).as_posix(): sha256(path.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
-                for path in (Path(__file__), *(Path(module.__file__) for module in (graph, pipeline, store, embedding, rag)))
+                for path in (Path(__file__), Path(__file__).with_name('rag_quality_provider.py'),
+                             *(Path(module.__file__) for module in (graph, pipeline, store, embedding, rag)))
             },
         },
-        'metrics': {profile: aggregate([row for case in rows for row in case['observations'] if row['profile'] == profile])
+        'metrics': {profile: aggregate([row for case in rows for row in case['observations'] if row['profile'] == profile], live=live is not None)
                     for profile in PROFILES},
     }
 
@@ -295,12 +320,24 @@ def benchmark(dataset, fixture):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True, help='Path for the JSON report with paired observations')
+    parser.add_argument('--live-qwen', action='store_true', help='Send the fixed synthetic prompts to paid Qwen Chat')
     args = parser.parse_args()
     logging.basicConfig(level=logging.ERROR)
     dataset, fixture = load_fixture()
-    report = benchmark(dataset, fixture)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    if args.live_qwen:
+        try:
+            live = QwenGeneration.from_local_config(ROOT / 'ai-service/.env')
+            # Reserve a new path before any paid call. Existing raw evidence must survive a repeat.
+            output = args.output.open('x', encoding='utf-8')
+        except (ValueError, OSError) as error:
+            parser.error(str(error))
+    else:
+        live = None
+        output = args.output.open('w', encoding='utf-8')
+    with output:
+        report = benchmark(dataset, fixture, live)
+        output.write(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps({'metrics': report['metrics'], 'violations': report['violations']}, sort_keys=True))
     return 1 if report['violations'] else 0
 
