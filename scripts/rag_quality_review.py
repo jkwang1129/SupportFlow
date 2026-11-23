@@ -5,9 +5,8 @@ import json
 from pathlib import Path
 import re
 
-from rag_quality_dataset import load_fixture, reject_duplicate_keys
+from rag_quality_dataset import COMPARISONS, load_fixture, reject_duplicate_keys
 
-PROFILES = {'single_pass', 'agentic'}
 DECISIONS = {'answer', 'abstain', 'handoff', 'error'}
 
 
@@ -23,6 +22,8 @@ def citation_indexes(row):
 
 
 def observations(dataset, raw):
+    comparison = raw.get('configuration', {}).get('comparison', 'rewrite')
+    require(comparison in COMPARISONS, 'unknown comparison in raw report')
     cases = {case['id']: case for case in dataset['cases']}
     indexed = {}
     for case in raw['cases']:
@@ -30,7 +31,7 @@ def observations(dataset, raw):
             key = (case['id'], row['profile'])
             require(key not in indexed, f'duplicate result {key}')
             indexed[key] = row
-    require(indexed.keys() == {(case_id, profile) for case_id in cases for profile in PROFILES},
+    require(indexed.keys() == {(case_id, profile) for case_id in cases for profile in COMPARISONS[comparison]},
             'benchmark must contain both profiles for every frozen case')
     return cases, indexed
 
@@ -110,9 +111,10 @@ def apply_review(cases, indexed, review, source_sha256):
             'decision_disagrees': decision != (observation['decision'] or 'error'),
         })
     require(seen == indexed.keys(), 'review must cover every paired observation')
+    profiles = sorted({profile for _, profile in indexed})
     return {'schema_version': 1, 'raw_sha256': source_sha256, 'reviewer': review['reviewer'], 'rows': rows,
             'metrics': {profile: summarize([row for row in rows if row['profile'] == profile])
-                        for profile in sorted(PROFILES)}}
+                        for profile in profiles}}
 
 
 def main():

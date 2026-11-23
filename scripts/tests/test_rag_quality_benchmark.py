@@ -92,3 +92,11 @@ class BenchmarkTest(unittest.TestCase):
             f"{self.case['id']}/single_pass: execution budget or empty scope violation",
             f"{self.case['id']}: initial retrieval differs between profiles",
         ], benchmark.violations(self.case, [single, agentic]))
+
+    def test_grounding_comparison_rejects_later_retrieval_differences(self):
+        baseline, candidate = self.observation('agentic'), self.observation('grounded')
+        candidate['retrievals'].append(deepcopy(candidate['retrievals'][0]))
+        for row in (baseline, candidate):
+            row['scores'] = benchmark.score(self.case, self.allowed, row)
+        self.assertEqual([f"{self.case['id']}: later retrieval differs despite equal rewrite budgets"],
+                         benchmark.violations(self.case, [baseline, candidate]))

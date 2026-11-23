@@ -45,6 +45,21 @@ class SemanticReviewTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'unmodified raw report'):
             self.evaluate()
 
+    def test_grounding_report_expects_the_paired_candidate_and_control(self):
+        self.raw['configuration'] = {'comparison': 'grounding'}
+        with self.assertRaisesRegex(ValueError, 'both profiles'):
+            observations({'cases': list(self.cases.values())}, self.raw)
+        raw = deepcopy(self.raw)
+        for case in raw['cases']:
+            case['observations'][0]['profile'] = 'grounded'
+        cases, indexed = observations({'cases': list(self.cases.values())}, raw)
+        review = self.review
+        for item in review['judgments']:
+            if item['profile'] == 'single_pass':
+                item['profile'] = 'grounded'
+        metrics = apply_review(cases, indexed, review, 'fixture-source-hash')['metrics']
+        self.assertEqual({'agentic', 'grounded'}, set(metrics))
+
     def test_missing_or_duplicate_judgments_are_rejected(self):
         original = deepcopy(self.review['judgments'])
         self.review['judgments'].pop()

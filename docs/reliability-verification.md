@@ -1532,3 +1532,25 @@ Windows 11、Python 3.11.5、Docker 内 PostgreSQL 17.12。9 道合成题分别�
 - `python -m unittest discover -s scripts/tests -p 'test_*.py'` 执行 58 项，48 项通过，10 项按数据库环境条件跳过。新增 7 项覆盖数据摘要、标签隔离、意外历史丢失、会话记忆越界、超预算、槽位更正和替身评分隔离。
 - `python -m pytest -q tests/test_ticket_loop.py tests/test_brain_analysis_context.py` 通过 29 项，两项依赖 PostgreSQL 的测试在此命令中条件跳过。
 - 用 `$env:PYTEST_ADDOPTS='-k "brain_analysis_context or ticket_loop_postgres"'` 运行 `python scripts/test-agent-runtime.py`。真实受限角色 PostgreSQL 组合验收通过 37 项，包括会话软删除、同名跨租户恢复、订单号更正、丢失响应后的规划检查点接管与旧绑定拒绝。原日志 `d11-context-recovery-pg.log`。
+
+## D12 访客结构化答复和原文引用对照（2026-11-23）
+
+在 Windows 11、Python 3.11.5、LangGraph 1.2.22 与 PostgreSQL 17.12 上，采用同一套 25 题和 `qwen-plus`。每组均实际调用 17 次，34 次用量回执齐全。逐题检查两组所有检索轮次的查询、排序与切片均一致，无运行错误、越权检索或禁用标记输出。设计、复现与回退见 [ADR-0055](decisions/0055-grounded-visitor-rag-replies.md)。
+
+| 指标 | 原版 Agentic RAG | 结构化答复候选 |
+|---|---:|---:|
+| Recall@5（16 道有相关性标注的题） | 97.92% | 97.92% |
+| 接口应拒答命中 | 8/10 | 10/10 |
+| 应答题正确 | 9/13 | 12/13 |
+| 全集语义正确 | 20/25 | 23/25 |
+| 引用支持对应结论 | 17/19（89.47%） | 14/15（93.33%） |
+| 正文建议人工命中 | 2/2 | 1/2 |
+| Chat 输入 / 输出 / 合计 Token | 4,809 / 475 / 5,284 | 6,730 / 838 / 7,568 |
+| P50 / P95 | 1,184.528 / 1,937.973 ms | 1,717.748 / 2,574.858 ms |
+
+候选把无法保证签收时间和仅有回帖这两题改成明确拒答并清空引用。应答题改善出现在周末自提的限定条件、密码重置时避免猜测页面路径、申请退货时避免猜测其他办理材料。候选仍在 `current-over-expired` 省略未使用和签收次日起算的前提，引用原文通过了结构校验但未支撑完整结论。候选对 `conflicting-repair-policy` 返回通用拒答，原版明确建议人工核对版本。合计 Token 增加 2,284（43.22%），主要来自结构提示和回传原文。实际转人工与账单金额留空。评分是 Codex 单评审，本次包含同一组开发样本，无独立人工复核或独立留出集。
+
+初版逐条只接受一句原文，`return-window` 和 `pickup-weekend` 两题因模型复制了连续原文而误拒。修正后原始输出回放通过两题，实时复跑的 13 道可答题无格式误拒。初版与修正版系两轮分别采样，各轮两组采用相同配置与预算，比较依次记录在 `.local/implementation/d12-rag-grounding-qwen-live.json` 和 `d12-rag-grounding-qwen-final.json`。末次原始报告 SHA-256 为 `d6a2429fbbc6a9dd0191a54eea9ccecec630c5aaf2181a3b1b58fa62bc3202c5`。逐题复核 `d12-rag-grounding-review.json` 与离线汇总 `d12-rag-grounding-reviewed-summary.json` 绑定原报告摘要。
+
+- AI 全量 `python -m pytest -q --junitxml=../.local/verification/d12-ai-tests.xml` 通过 1,095 项，466 项按环境条件跳过。新增 35 项候选测试覆盖双引擎、缺模型、错位与不完整原文、超限、异常结构和过期来源，原拒答 24 项、引用 10 项、原文支持 20 项契约均通过。
+- 评测脚本 60 项中 50 项通过，10 项按数据库条件跳过。原改写对照和新结构对照均通过固定替身的 25 题配对门禁。候选对照的检索等价和报告配对列入负面测试。

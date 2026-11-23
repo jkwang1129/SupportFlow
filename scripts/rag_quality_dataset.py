@@ -9,6 +9,7 @@ import sys
 
 
 FIXTURE = Path(__file__).resolve().parents[1] / 'fixtures/evaluation/rag-quality-v1.json'
+COMPARISONS = {'rewrite': ('single_pass', 'agentic'), 'grounding': ('agentic', 'grounded')}
 IDENTIFIER = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*')
 TENANT = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,15}')
 OUTCOMES = {'answer', 'abstain', 'handoff'}

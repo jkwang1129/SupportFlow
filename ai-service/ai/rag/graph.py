@@ -67,8 +67,9 @@ class RagState(TypedDict, total=False):
     answer: str
     answer_generated: bool
     extractive_only: bool
+    require_grounded_reply: bool
     citations: list[dict]
-    abstention_reason: str
+    abstention_reason: str | None
     steps: list[dict]     # 每一步的执行记录，前端展示"编排过程"用
 
 
@@ -152,11 +153,14 @@ async def node_answer(state: RagState) -> dict:
         hits=state.get("hits") or [],
         tenant_code=state.get("tenant_code") or "",
         extractive_only=state.get("extractive_only", False),
+        require_grounded_reply=state.get("require_grounded_reply", False),
     )
     return {
         "answer": answer.text,
         "answer_generated": answer.generated,
         "citations": answer.citations,
+        "enough": answer.abstention_reason is None,
+        "abstention_reason": answer.abstention_reason,
         "steps": _step(state, "answer",
                        f"使用 {len(answer.citations)} 条资料生成回答或展示原文",
                        citationCount=len(answer.citations)),
@@ -169,6 +173,8 @@ def node_verify(state: RagState) -> dict:
 
     answer = state.get("answer") or ""
     citations = state.get("citations") or []
+    if reason := state.get('abstention_reason'):
+        return {"steps": _step(state, "verify", "停止返回生成正文", kept=0, reason=reason)}
     if state.get("answer_generated") is False:
         return {"steps": _step(state, "verify", "保留检索原文和来源", kept=len(citations), dropped=[])}
 
@@ -271,13 +277,15 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
     published_only=published_policy(published_only)
     if type(max_rewrite_rounds) is not int or not 0 <= max_rewrite_rounds <= MAX_REWRITE_ROUNDS:
         raise ValueError(f'max_rewrite_rounds must be an integer from 0 to {MAX_REWRITE_ROUNDS}')
+    settings = get_settings()
     state: RagState = {
         "question": question,
         "tenant_code": tenant_code,
         "top_k": top_k,
         "doc_ids": doc_ids,
         "published_only": published_only,
-        "extractive_only": getattr(get_settings(), "rag_require_extractive_support", False),
+        "extractive_only": getattr(settings, "rag_require_extractive_support", False),
+        "require_grounded_reply": published_only and getattr(settings, "rag_require_grounded_reply", False),
         "query": question,
         "rounds": 0,
         "max_rewrite_rounds": max_rewrite_rounds,

@@ -1,4 +1,4 @@
-"""Compare two RAG profiles against the frozen synthetic corpus without provider calls."""
+"""Compare RAG profiles on the frozen synthetic corpus; live generation is opt-in."""
 import argparse
 import asyncio
 from collections import Counter
@@ -25,17 +25,17 @@ from psycopg.rows import dict_row
 
 from isolated_postgres import disposable_postgres
 from migration_engine import load_plan, run_plan
-from rag_quality_dataset import load_fixture
+from rag_quality_dataset import COMPARISONS, load_fixture
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'ai-service'))
 
-from ai.rag import embedding, graph, llama_engine, pipeline, retriever, store
+from ai.rag import embedding, graph, grounded_reply, llama_engine, pipeline, retriever, store
 from ai.services import rag
 from rag_quality_provider import ModelCallFailure, QwenGeneration
 
 TOP_K = 5
-PROFILES = {'single_pass': 0, 'agentic': graph.MAX_REWRITE_ROUNDS}
+PROFILES = {'single_pass': 0, 'agentic': graph.MAX_REWRITE_ROUNDS, 'grounded': graph.MAX_REWRITE_ROUNDS}
 VECTOR_THRESHOLD = graph.VECTOR_MIN_SCORE
 KEYWORD_THRESHOLD = graph.KEYWORD_MIN_SCORE
 
@@ -75,12 +75,16 @@ def rag_input(case, db_ids):
     }
 
 
-def fixture_reply(payload):
+def fixture_reply(payload, *, grounded=False):
     # Only read the first evidence block in the actual prompt. No test labels or per-question routing.
     prompt = payload['messages'][-1]['content']
     evidence = prompt.split('\n\n【问题】\n', 1)[0].splitlines()[2]
     sentence = re.split(r'(?<=[。！？])', evidence, maxsplit=1)[0]
-    return {'choices': [{'message': {'content': f'{sentence} [1]'}}]}
+    content = f'{sentence} [1]'
+    if grounded:
+        content = json.dumps({'decision': 'answer', 'claims': [{'text': sentence, 'sources': [{'index': 1, 'quote': sentence}]}]},
+                             ensure_ascii=False)
+    return {'choices': [{'message': {'content': content}}]}
 
 
 def allowed_documents(case, documents, as_of):
@@ -115,12 +119,16 @@ async def observe(question, arguments, profile, logical_ids, live=None):
         if live is not None:
             receipt = {'attempted': False}
             return await live.generate(payload, receipt)
-        return fixture_reply(payload)
+        return fixture_reply(payload, grounded=profile == 'grounded')
 
     start = perf_counter()
     error = None
     result = {}
-    with patch.object(retriever, 'retrieve_with_meta', record_retrieval), patch.object(rag, 'call_chat', record_generation):
+    graph_settings = SimpleNamespace(rag_vector_min_score=VECTOR_THRESHOLD, rag_keyword_min_score=KEYWORD_THRESHOLD,
+                                     rag_require_extractive_support=False, rag_require_grounded_reply=profile == 'grounded')
+    with (patch.object(retriever, 'retrieve_with_meta', record_retrieval),
+          patch.object(graph, 'get_settings', return_value=graph_settings),
+          patch.object(rag, 'call_chat', record_generation)):
         try:
             result = await graph.ask(question, **arguments, max_rewrite_rounds=PROFILES[profile])
         except ModelCallFailure as failure:
@@ -207,6 +215,7 @@ def aggregate(rows, *, live=False):
         'outcome_matches': sum(row['scores']['outcome_match'] is True for row in rows),
         'outcome_eligible': sum(row['scores']['outcome_match'] is not None for row in rows),
         'abstention_rate': round(decisions['abstain'] / len(rows), 6),
+        'abstention_reasons': dict(Counter(row['abstention_reason'] for row in rows if row.get('abstention_reason'))),
         'expected_abstention_hits': {'matched': sum(row['scores']['outcome_match'] is True for row in expected_refusals),
                                      'total': len(expected_refusals)},
         'unexpected_abstentions': {'observed': false_refusals, 'total': len(expected_answers)},
@@ -234,19 +243,23 @@ def violations(case, observations):
                 or (case['document_scope'] != [] and not 1 <= count <= 1 + PROFILES[row['profile']])
                 or row['model_calls'] > 1):
             failures.append(f'{label}: execution budget or empty scope violation')
-    if observations[0]['retrievals'][:1] != observations[1]['retrievals'][:1]:
+    first, second = observations
+    if first['retrievals'][:1] != second['retrievals'][:1]:
         failures.append(f"{case['id']}: initial retrieval differs between profiles")
+    elif PROFILES[first['profile']] == PROFILES[second['profile']] and first['retrievals'] != second['retrievals']:
+        failures.append(f"{case['id']}: later retrieval differs despite equal rewrite budgets")
     return failures
 
 
-async def run_cases(dataset, db_ids, live=None):
+async def run_cases(dataset, db_ids, live=None, *, comparison='rewrite'):
     rows = []
     failures = []
     logical_ids = {value: key for key, value in db_ids.items()}
     for offset, case in enumerate(dataset['cases']):
         question, arguments = rag_input(case, db_ids)
         allowed = allowed_documents(case, dataset['documents'], dataset['as_of'])
-        order = list(PROFILES) if offset % 2 == 0 else list(reversed(PROFILES))
+        pair = COMPARISONS[comparison]
+        order = list(pair if offset % 2 == 0 else reversed(pair))
         observations = []
         for profile in order:
             row = await observe(question, arguments, profile, logical_ids, live)
@@ -259,7 +272,7 @@ async def run_cases(dataset, db_ids, live=None):
     return rows, failures
 
 
-def benchmark(dataset, fixture, live=None):
+def benchmark(dataset, fixture, live=None, *, comparison='rewrite'):
     if not graph.langgraph_available():
         raise RuntimeError('Install the AI test requirements to run both LangGraph profiles')
     db_ids = {document['id']: 28_000_001 + offset for offset, document in enumerate(dataset['documents'])}
@@ -278,23 +291,21 @@ def benchmark(dataset, fixture, live=None):
             return psycopg.connect(host='127.0.0.1', port=environment['SUPPORTFLOW_DB_PORT'], dbname='customer_db',
                                    user='rag_quality_reader', password=password, row_factory=dict_row, connect_timeout=2)
 
-        graph_settings = SimpleNamespace(rag_vector_min_score=VECTOR_THRESHOLD, rag_keyword_min_score=KEYWORD_THRESHOLD,
-                                         rag_require_extractive_support=False)
         generation = (live.chosen, 'qwen live') if live is not None else ({'model': 'fixture-first-sentence-v1'}, 'local fixture')
         with (tracing_context(enabled=False),
               patch.object(store, 'connect', connect_reader),
               patch.object(llama_engine, 'available', return_value=False),
               patch.object(embedding, 'get_settings', return_value=SimpleNamespace(embedding_key=lambda: None)),
-              patch.object(graph, 'get_settings', return_value=graph_settings),
               patch.object(graph, '_graph', graph._build_graph()),
               patch.object(rag, 'get_settings', return_value=SimpleNamespace(llm_timeout=5)),
               patch.object(rag, 'resolve_provider', return_value=generation)):
-            rows, failures = asyncio.run(run_cases(dataset, db_ids, live))
+            rows, failures = asyncio.run(run_cases(dataset, db_ids, live, comparison=comparison))
 
     return {
         'schema_version': 2, 'fixture': fixture, 'violations': failures, 'cases': rows,
         'configuration': {
-            'profile_rewrite_limits': PROFILES, 'top_k': TOP_K, 'published_only': True,
+            'comparison': comparison, 'profile_rewrite_limits': {name: PROFILES[name] for name in COMPARISONS[comparison]},
+            'top_k': TOP_K, 'published_only': True,
             'embedding': 'local-hash', 'retrieval': 'postgres-keyword',
             'generation': 'qwen-live' if live is not None else 'fixture-first-sentence-v1',
             'live_profile': live.configuration() if live is not None else None,
@@ -309,11 +320,11 @@ def benchmark(dataset, fixture, live=None):
             'source_sha256': {
                 path.relative_to(ROOT).as_posix(): sha256(path.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
                 for path in (Path(__file__), Path(__file__).with_name('rag_quality_provider.py'),
-                             *(Path(module.__file__) for module in (graph, pipeline, store, embedding, rag)))
+                             *(Path(module.__file__) for module in (graph, grounded_reply, pipeline, store, embedding, rag)))
             },
         },
         'metrics': {profile: aggregate([row for case in rows for row in case['observations'] if row['profile'] == profile], live=live is not None)
-                    for profile in PROFILES},
+                    for profile in COMPARISONS[comparison]},
     }
 
 
@@ -321,6 +332,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', type=Path, required=True, help='Path for the JSON report with paired observations')
     parser.add_argument('--live-qwen', action='store_true', help='Send the fixed synthetic prompts to paid Qwen Chat')
+    parser.add_argument('--comparison', choices=COMPARISONS, default='rewrite', help='Choose the paired profiles')
     args = parser.parse_args()
     logging.basicConfig(level=logging.ERROR)
     dataset, fixture = load_fixture()
@@ -336,7 +348,7 @@ def main():
         live = None
         output = args.output.open('w', encoding='utf-8')
     with output:
-        report = benchmark(dataset, fixture, live)
+        report = benchmark(dataset, fixture, live, comparison=args.comparison)
         output.write(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps({'metrics': report['metrics'], 'violations': report['violations']}, sort_keys=True))
     return 1 if report['violations'] else 0
