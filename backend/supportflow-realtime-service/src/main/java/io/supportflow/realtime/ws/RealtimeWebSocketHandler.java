@@ -53,6 +53,7 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
     /** 一次最多回多少条历史消息 */
     private static final int JOIN_HISTORY_LIMIT = 50;
     private static final int PAGE_HISTORY_LIMIT = 30;
+    private static final int VISITOR_SYNC_LIMIT = 100;
     private static final int MAX_CONTENT_LENGTH = 4000;
 
     /** 与 customer-service 约定的可见范围 */
@@ -193,6 +194,7 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
                 case "SEND" -> handleSend(client, inbound);
                 case "NOTE" -> handleNote(client, inbound);
                 case "HISTORY" -> handleHistory(client, inbound);
+                case "SYNC" -> syncVisitorHistory(client, inbound);
                 case "CLAIM" -> handleClaim(client, inbound);
                 case "RELEASE" -> handleRelease(client, inbound);
                 case "TRANSFER" -> handleTransfer(client, inbound);
@@ -664,6 +666,25 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
         List<MessageView> messages = sessionApi.history(
                 principal.tenantCode(), sessionNo, inbound.beforeId(), PAGE_HISTORY_LIMIT, !principal.isVisitor());
         send(client.socket(), RealtimeMessage.withData("HISTORY", sessionNo, messages));
+    }
+
+    private void syncVisitorHistory(ConnectionRegistry.Client client, RealtimeMessage inbound) {
+        RealtimePrincipal principal = client.principal();
+        if (!principal.isVisitor()) {
+            throw new BizException(40301, "仅访客连接可使用此补拉方式");
+        }
+        String sessionNo = resolveSessionNo(principal, inbound.sessionNo());
+        if (!(inbound.data() instanceof Map<?, ?> data) || data.size() != 1
+                || !(data.get("afterSeq") instanceof Number cursor)
+                || !(cursor instanceof Integer || cursor instanceof Long) || cursor.longValue() < 0
+                || cursor.longValue() > 9_007_199_254_740_991L) {
+            throw new BizException(40001, "消息序号无效");
+        }
+        long afterSeq = cursor.longValue();
+        List<MessageView> messages = sessionApi.visitorMessagesAfter(
+                principal.tenantCode(), sessionNo, afterSeq, VISITOR_SYNC_LIMIT);
+        send(client.socket(), RealtimeMessage.withData("SYNCED", sessionNo, Map.of(
+                "afterSeq", afterSeq, "messages", messages, "hasMore", messages.size() == VISITOR_SYNC_LIMIT)));
     }
 
     /**

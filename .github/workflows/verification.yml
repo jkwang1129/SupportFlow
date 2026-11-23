@@ -105,7 +105,7 @@ jobs:
       - name: Install Chromium for workspace verification
         run: npx playwright install --with-deps --only-shell chromium
         working-directory: frontend
-      - name: Verify ticket approval in the browser
+      - name: Verify workspace approval and visitor reconnect in the browser
         run: npm run test:browser -- --reporter=list,junit
         working-directory: frontend
         env:

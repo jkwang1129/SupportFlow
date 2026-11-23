@@ -107,11 +107,32 @@ assert test.client.get(avatar["url"].removeprefix("/api")).content == png
 test.note("Private chat media", "own visitor and enterprise reads passed; anonymous, other tenant and other session rejected; public avatar passed")
 with test.socket(visitor["visitorToken"]) as ws:
     test.recv(ws, "CONNECTED")
-    test.message(ws, visitor["sessionNo"], question, "local-security-" + test.tag)
-    test.recv(ws, "MESSAGE", lambda msg: msg.get("data", {}).get("senderType") == 3)
+    initial = test.message(ws, visitor["sessionNo"], question, "local-security-" + test.tag)
+    bot_reply = test.recv(ws, "MESSAGE", lambda msg: msg.get("data", {}).get("senderType") == 3)["data"]
 ai_log = (test.artifacts / "ai.log").read_text(encoding="utf-8", errors="replace")
 assert 'POST /api/ai/v1/agent/brain HTTP/1.1" 200' in ai_log, "AI brain did not accept the Java request"
 test.note("Java customer to Python brain", "visitor WebSocket sent a message, the protected brain returned HTTP 200, and a bot reply arrived")
+
+with test.socket(a) as staff:
+    test.recv(staff, "CONNECTED")
+    test.send(staff, "NOTE", visitor["sessionNo"], clientMsgNo="private-sync-" + test.tag,
+              content="Synthetic staff-only sync note", msgType=1)
+    private_note = test.recv(staff, "ACK", lambda frame: frame.get("clientMsgNo") == "private-sync-" + test.tag)["data"]
+with test.socket(visitor["visitorToken"]) as ws:
+    test.recv(ws, "CONNECTED")
+    test.recv(ws, "JOINED")
+    test.send(ws, "SYNC", visitor["sessionNo"], data={"afterSeq": initial["seq"]})
+    synced = test.recv(ws, "SYNCED")
+    data = synced["data"]
+    assert synced["sessionNo"] == visitor["sessionNo"] and data["afterSeq"] == initial["seq"]
+    assert bot_reply["msgId"] in {row["msgId"] for row in data["messages"]}
+    assert private_note["msgId"] not in {row["msgId"] for row in data["messages"]}
+    assert all(row["seq"] > initial["seq"] for row in data["messages"]) and data["hasMore"] is False
+    test.send(ws, "SYNC", visitor["sessionNo"], data={"afterSeq": -1})
+    assert test.recv(ws, "ERROR")["code"] == 40001
+    test.send(ws, "SYNC", other_visitor["sessionNo"], data={"afterSeq": 0})
+    assert test.recv(ws, "ERROR")["code"] == 40301
+test.note("Visitor reconnect", "actual WebSocket returned the missed reply; staff-only note was absent; invalid cursor and other session were rejected")
 
 # The actual scheduler/client must obtain a matching business receipt, not merely HTTP 200.
 for _ in range(40):

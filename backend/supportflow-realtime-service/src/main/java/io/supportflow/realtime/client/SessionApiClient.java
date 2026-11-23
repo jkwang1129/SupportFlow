@@ -52,6 +52,15 @@ public class SessionApiClient {
     }
 
     public List<MessageView> history(String tenantCode, String sessionNo, Long beforeId, int limit, boolean agentView) {
+        return messages(tenantCode, sessionNo, beforeId, null, limit, agentView);
+    }
+
+    public List<MessageView> visitorMessagesAfter(String tenantCode, String sessionNo, long afterSeq, int limit) {
+        return messages(tenantCode, sessionNo, null, afterSeq, limit, false);
+    }
+
+    private List<MessageView> messages(String tenantCode, String sessionNo, Long beforeId, Long afterSeq,
+                                       int limit, boolean agentView) {
         ApiResponse<List<MessageView>> response = restClient.get()
                 .uri(uriBuilder -> {
                     uriBuilder.path("/api/customer/internal/sessions/{sessionNo}/messages")
@@ -60,6 +69,9 @@ public class SessionApiClient {
                             .queryParam("agentView", agentView);
                     if (beforeId != null) {
                         uriBuilder.queryParam("beforeId", beforeId);
+                    }
+                    if (afterSeq != null) {
+                        uriBuilder.queryParam("afterSeq", afterSeq);
                     }
                     return uriBuilder.build(sessionNo);
                 })

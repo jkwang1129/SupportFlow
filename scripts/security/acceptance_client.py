@@ -89,10 +89,10 @@ def recv(ws, kind, predicate=lambda msg: True, seconds=42):
         while time.monotonic() < deadline:
             m = json.loads(ws.recv(timeout=max(0, deadline-time.monotonic())))
             seen.append(m.get("type"))
-            if m.get("type") == "ERROR":
-                raise AssertionError(f"WebSocket error: {m.get('code')}, {m.get('message')}")
             if m.get("type") == kind and predicate(m):
                 return m
+            if m.get("type") == "ERROR":
+                raise AssertionError(f"WebSocket error: {m.get('code')}, {m.get('message')}")
     except TimeoutError:
         pass
     raise AssertionError(f"Expected WebSocket {kind}; got {seen}")

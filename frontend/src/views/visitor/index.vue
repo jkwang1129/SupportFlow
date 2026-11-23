@@ -238,7 +238,6 @@ import { ElMessage } from 'element-plus'
 import { errorMessage } from '../../utils/message'
 import {
   imagesOf as rawImagesOf,
-  listSessionMessages,
   messageTextOf,
   openVisitorSession,
   parseImageContent,
@@ -461,6 +460,7 @@ function connect(token: string) {
     onMessage: handleMessage,
     onStateChange: (state) => {
       connectionState.value = state
+      if (state !== 'open') syncInFlight = false
     },
   })
   client.connect()
@@ -486,6 +486,12 @@ async function refreshVisitorToken() {
       visitorToken: localStorage.getItem(storageKey) || undefined,
       visitorName: String(route.query.name ?? '').trim() || undefined,
     })
+    if (sessionNo.value !== result.sessionNo) {
+      messages.value = []
+      syncCursor = null
+      syncTarget = 0
+      hasJoined = false
+    }
     sessionNo.value = result.sessionNo
     localStorage.setItem(storageKey, result.visitorIdentityToken)
     client?.close()
@@ -504,22 +510,26 @@ function handleMessage(message: RealtimeMessage) {
       break
     case 'JOINED': {
       connecting.value = false
-      messages.value = dedupe((message.data?.messages ?? []) as SessionMessageItem[])
+      const previous = maxSeq(messages.value)
+      mergeMessages(message.data?.messages ?? [])
       applySession(message.data?.session)
       // 刚进会话：从最新一条开始看
       scrollToBottom(true)
       // 断线期间可能漏了消息：拿本地最大序号和服务端对一下，缺的补回来
-      void syncMissedMessages(message.data?.lastSeq)
+      requestSync(hasJoined ? previous : maxSeq(messages.value), Number(message.data?.lastSeq ?? 0))
+      hasJoined = true
       break
     }
     case 'ACK':
-      appendMessage(message.data as SessionMessageItem)
+      receiveMessage(message.data)
       break
     case 'MESSAGE':
       // 真消息到了，输入提示就该收掉（服务端也会补一帧 typing=false）
       botTyping.value = false
-      appendMessage(message.data as SessionMessageItem)
-      void fillGapIfNeeded(message.data as SessionMessageItem | undefined)
+      receiveMessage(message.data)
+      break
+    case 'SYNCED':
+      if (message.sessionNo === sessionNo.value) receiveSync(message.data)
       break
     case 'TYPING': {
       const payload = (message.data ?? {}) as { who?: string; typing?: boolean }
@@ -542,6 +552,7 @@ function handleMessage(message: RealtimeMessage) {
       break
     }
     case 'ERROR': {
+      syncInFlight = false
       const code = message.code ?? 0
       // 会话不存在 / 已结束属于"这条连接没救了"：停掉重连，提示刷新重新发起，
       // 否则客户端会不停重连、服务端跟着刷一堆错误日志
@@ -671,7 +682,7 @@ async function sendPayload(content: string, msgType: number) {
     })
     const saved = ack.data as SessionMessageItem | undefined
     if (saved) {
-      appendMessage(saved)
+      mergeMessages([saved])
     }
   } catch (e) {
     // 消息仍在发件箱里，网络恢复会自动补发（同一个 clientMsgNo，服务端幂等）
@@ -953,72 +964,63 @@ function maxSeq(items: SessionMessageItem[]) {
   return items.reduce((max, item) => Math.max(max, Number(item.seq ?? 0)), 0)
 }
 
-/**
- * 断线重连补偿：把本地最大序号和服务端的最大序号对一下，缺的用 afterSeq 增量补回来。
- * 只拉差值，不会把整段历史重拉一遍。
- */
-async function syncMissedMessages(lastSeq?: number | null) {
-  const local = maxSeq(messages.value)
-  const target = Number(lastSeq ?? 0)
-  if (!sessionNo.value || target <= local) {
-    return
+let syncCursor: number | null = null
+let syncTarget = 0
+let syncInFlight = false
+let requestedTarget = 0
+let hasJoined = false
+
+function requestSync(afterSeq: number, target: number) {
+  if (target > afterSeq) {
+    syncCursor ??= afterSeq
+    syncTarget = Math.max(syncTarget, target)
   }
-  try {
-    const missed = await listSessionMessages(sessionNo.value, { afterSeq: local, limit: 100 })
-    if (missed.length) {
-      messages.value = dedupe([...messages.value, ...missed])
-      scrollToBottom()
+  if (syncCursor === null || syncInFlight || client?.currentState !== 'open') return
+  syncInFlight = true
+  requestedTarget = syncTarget
+  client.post({ type: 'SYNC', sessionNo: sessionNo.value, data: { afterSeq: syncCursor } })
+}
+
+function receiveSync(data?: { afterSeq: number; messages: SessionMessageItem[]; hasMore: boolean }) {
+  if (!syncInFlight || syncCursor === null || data?.afterSeq !== syncCursor || !Array.isArray(data.messages)) return
+  syncInFlight = false
+  mergeMessages(data.messages)
+  const last = maxSeq(data.messages)
+  const covered = data.hasMore ? last : Math.max(last, requestedTarget)
+  if (covered > syncCursor && covered < syncTarget) {
+    syncCursor = covered
+    requestSync(covered, syncTarget)
+  } else {
+    syncCursor = null
+    syncTarget = 0
+  }
+}
+
+function receiveMessage(message?: SessionMessageItem) {
+  if (!message) return
+  const previous = maxSeq(messages.value)
+  const seq = Number(message.seq ?? 0)
+  if (seq > previous + 1 || syncCursor !== null) requestSync(previous, seq)
+  mergeMessages([message])
+}
+
+function mergeMessages(incoming: SessionMessageItem[]) {
+  const byId = new Map(messages.value.map((item) => [item.msgId, item]))
+  const byClient = new Map(messages.value.filter((item) => item.clientMsgNo)
+    .map((item) => [item.clientMsgNo, item.msgId]))
+  for (const item of incoming) {
+    if (!item?.msgId) continue
+    if (item.clientMsgNo) {
+      const existingId = byClient.get(item.clientMsgNo)
+      if (existingId && existingId !== item.msgId) byId.delete(existingId)
+      byClient.set(item.clientMsgNo, item.msgId)
     }
-  } catch {
-    // 拉不到就等下一次（下一条推送或下一次进入会话时再补）
+    // 同一服务端消息重复推送时保留原字段，并合并更新后的内容。
+    byId.set(item.msgId, { ...byId.get(item.msgId), ...item })
   }
-}
-
-/** 推送的序号和本地不连续，说明中间漏了，立刻补一次 */
-async function fillGapIfNeeded(message?: SessionMessageItem) {
-  if (!message?.seq) {
-    return
-  }
-  const local = maxSeq(messages.value.filter((item) => item.msgId !== message.msgId))
-  if (Number(message.seq) > local + 1) {
-    await syncMissedMessages(message.seq)
-  }
-}
-
-function appendMessage(message: SessionMessageItem | undefined) {
-  if (!message) {
-    return
-  }
-  // 同一条消息再次推送：**就地更新**而不是丢弃。
-  // 图片消息就是这样——先到一次（只有图片），识别完服务端会带着"AI 判读"再推一次。
-  const existing = messages.value.findIndex((item) => item.msgId === message.msgId)
-  if (existing >= 0) {
-    messages.value.splice(existing, 1, { ...messages.value[existing], ...message })
-    return
-  }
-  // 断线重发 / ACK 迟到时，服务端回来的这条和本地那条"乐观气泡"是同一个 clientMsgNo：
-  // 就地替换，别让客户看到"一条发送失败 + 一条又发成功了"这两个气泡
-  const localIndex = message.clientMsgNo
-    ? messages.value.findIndex((item) => item.clientMsgNo === message.clientMsgNo)
-    : -1
-  if (localIndex >= 0) {
-    messages.value.splice(localIndex, 1, message)
-    scrollToBottom()
-    return
-  }
-  messages.value.push(message)
+  const order = (item: SessionMessageItem) => Number(item.seq) || Number.MAX_SAFE_INTEGER
+  messages.value = [...byId.values()].sort((left, right) => order(left) - order(right))
   scrollToBottom()
-}
-
-function dedupe(list: SessionMessageItem[]) {
-  const seen = new Set<string>()
-  return list.filter((item) => {
-    if (seen.has(item.msgId)) {
-      return false
-    }
-    seen.add(item.msgId)
-    return true
-  })
 }
 
 /**

@@ -1626,3 +1626,12 @@ Windows 11、Node 24.14.1、Playwright 1.65.1、Chrome 158.0.8127.36 和 Chromiu
 - `npm run build` 通过 TypeScript 与生产前端构建，保留 Vite 对大文件分块的原有提示。本地报告分别为 `.local/implementation/d17-browser-chrome.xml` 和 `.local/implementation/d17-browser-chromium.xml`。CI 前端任务额外运行 Chromium 测试，上传 JUnit 与失败追踪。
 
 同一页面内重新打开当前会话会重新核权获取进度。整页重载恢复、WebSocket 事件续传、访客 Widget 和实际建单结果发布另行验收。[设计、复现与回退](decisions/0060-workspace-approval-progress.md)
+
+## D18 访客 Widget 消息补拉（2026-11-23）
+
+Windows 11、Node 24.14.1、Chromium Headless Shell 159.0.8154.6、Temurin JDK 25 和隔离 PostgreSQL。浏览器加载真实访客页面，通过受控 WebSocket 重现在线消息缺口和重连缺口。修复前，两案均没有发起所需的增量请求。原日志为 `.local/implementation/d18-browser-before.log`。
+
+- 新增 4 项浏览器回归，覆盖在线漏帧、重连保留旧消息并补齐、同消息号重发后只显示一条、按 100 条分页并处理不可见序号。与工作台回归合计 11 项通过。原始报告为 `.local/implementation/d18-browser-final.xml`。前端生产构建及 Java 全模块打包通过。
+- 实际服务用同一访客令牌重连，从已确认游标补到实际机器人回复。单独保存的坐席内部备注未出现在访客结果中。负数游标与其他会话分别返回 `40001`、`40301`。首轮测试助手把预期的拒绝帧也当作意外错误，调整后重新通过默认新库、历史库升级和独立 CLI 初始化三种环境。完整日志为 `.local/implementation/d18-real-services-final.log`。
+
+本批覆盖同一会话的 WebSocket 消息、序号和 ACK。签名访客消息之后的工单任务、人员审批和回执仍由 D16 的独立组合测试验证。工单结果向访客发布、Agent 执行事件续传继续单独验收。[设计、复现与发布顺序](decisions/0061-visitor-message-catchup.md)
