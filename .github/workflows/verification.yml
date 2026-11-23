@@ -102,3 +102,19 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      - name: Install Chromium for workspace verification
+        run: npx playwright install --with-deps --only-shell chromium
+        working-directory: frontend
+      - name: Verify ticket approval in the browser
+        run: npm run test:browser -- --reporter=list,junit
+        working-directory: frontend
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: output/playwright/junit.xml
+      - name: Preserve browser test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-browser-reports
+          path: frontend/output/playwright/
+          if-no-files-found: ignore
+          retention-days: 7

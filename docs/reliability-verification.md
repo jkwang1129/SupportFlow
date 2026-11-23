@@ -1617,3 +1617,12 @@ Windows 11、Python 3.11.5、Temurin JDK 25.0.5 和临时 PostgreSQL 17。设置
 - 本地原始报告 `.local/implementation/d16-ticket-journey-evidence/runtime-ticket-approval.json` 使用 `ticket-approval-boundary-v11`，SHA-256 为 `b277e0746ce578dd1baa09456d6cc864050522c1401ab975337313ee7df3492b`。完整日志 `.local/implementation/d16-signed-ticket-journey.log`。
 
 查询模型和用户角色查询使用本地替身，工单、会话、权限、签名消息、审批及回执流转在实际服务和隔离数据库中执行。工作台或 Widget 浏览器交互、工单号向访客发布、生产流量下的成功率和成本不在本次验收范围内。
+
+## D17 坐席审批与执行进度浏览器回归（2026-11-23）
+
+Windows 11、Node 24.14.1、Playwright 1.65.1、Chrome 158.0.8127.36 和 Chromium Headless Shell 159.0.8154.6。浏览器加载实际工作台路由，审批和会话 HTTP 响应使用受控替身。先在 D16 的界面代码上执行两条新回归，实际复现终态刷新后消失和迟到会话详情覆盖当前选择。保留了原失败日志 `.local/implementation/d17-browser-regression-before.log`。
+
+- 修复后 `npm run test:browser -- --reporter=list,junit` 在 Chrome 和 Chromium 各通过 7 项。覆盖刷新及重开后继续查看进度、批准后预览 404、进度返回 403 和 404、网络故障后的只读重查、迟到会话响应、普通坐席入口隔离。恢复执行进度与切换会话都未重复提交决定。
+- `npm run build` 通过 TypeScript 与生产前端构建，保留 Vite 对大文件分块的原有提示。本地报告分别为 `.local/implementation/d17-browser-chrome.xml` 和 `.local/implementation/d17-browser-chromium.xml`。CI 前端任务额外运行 Chromium 测试，上传 JUnit 与失败追踪。
+
+同一页面内重新打开当前会话会重新核权获取进度。整页重载恢复、WebSocket 事件续传、访客 Widget 和实际建单结果发布另行验收。[设计、复现与回退](decisions/0060-workspace-approval-progress.md)

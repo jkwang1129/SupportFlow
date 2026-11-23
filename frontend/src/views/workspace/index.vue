@@ -202,7 +202,7 @@
               </el-button>
               <TicketApprovalReview
                 v-if="approvalReviewEnabled && !activeSession.agentId && [1, 2].includes(activeSession.status)"
-                :key="activeSession.sessionNo"
+                :key="[userStore.tenantCode, userStore.userId, activeSession.sessionNo].join(':')"
                 :session-no="activeSession.sessionNo"
               />
               <!-- 客户 360：接单前先看这个人是谁、之前发生过什么（按客户编号跳，不用再问一遍） -->
@@ -734,6 +734,7 @@ const scope = ref<'queue' | 'mine' | 'all'>('queue')
 
 const activeSessionNo = ref('')
 const activeSession = ref<SessionItem | null>(null)
+let sessionSelection = 0
 const messages = ref<SessionMessageItem[]>([])
 /** 机器人正在输入（当前会话）：让坐席知道客户那条已经被机器人接住了 */
 const botTyping = ref(false)
@@ -995,6 +996,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  sessionSelection++
   if (listReloadTimer) {
     window.clearTimeout(listReloadTimer)
     listReloadTimer = undefined
@@ -1451,6 +1453,7 @@ function onScopeChange() {
 }
 
 async function openSession(item: SessionItem) {
+  const selection = ++sessionSelection
   clearUnread(item.sessionNo)
   activeSessionNo.value = item.sessionNo
   activeSession.value = { ...item }
@@ -1465,6 +1468,7 @@ async function openSession(item: SessionItem) {
       getSessionDetail(item.sessionNo),
       listSessionMessages(item.sessionNo, { limit: 30 }),
     ])
+    if (selection !== sessionSelection) return
     activeSession.value = detail
     messages.value = dedupe(history)
     hasMore.value = history.length >= HISTORY_PAGE_SIZE
@@ -1473,8 +1477,9 @@ async function openSession(item: SessionItem) {
   } catch {
     // 请求层已提示
   } finally {
-    loadingHistory.value = false
+    if (selection === sessionSelection) loadingHistory.value = false
   }
+  if (selection !== sessionSelection) return
   // 进入会话（订阅 + 拉最新历史），不会自动认领
   client?.post({ type: 'JOIN', sessionNo: item.sessionNo })
   // 之前错过的实时预警也要能看到，所以切会话时补拉一次

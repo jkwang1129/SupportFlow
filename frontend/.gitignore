@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 
+output/playwright/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

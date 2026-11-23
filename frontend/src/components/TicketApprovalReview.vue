@@ -12,15 +12,17 @@
     <div class="approval-dialog" aria-live="polite" :aria-busy="loading || submitting || checkingProgress">
       <p v-if="loading">正在获取当前会话的审批提案…</p>
       <el-alert v-else-if="failure" :title="failure" type="warning" :closable="false" show-icon />
-      <template v-else-if="proposal">
-        <p>{{ progress ? progressLabels[progress.state] : proposal.status === 'APPROVED' ? '已批准，执行前可撤销' : '请核对将写入工单的标题和正文' }}</p>
+      <template v-else-if="proposal || progress">
+        <p>{{ progress ? progressLabels[progress.state] : proposal?.status === 'APPROVED' ? '已批准，执行前可撤销' : '请核对将写入工单的标题和正文' }}</p>
         <dl class="approval-terms">
-          <dt>标题</dt>
-          <dd>{{ proposal.title }}</dd>
-          <dt>正文</dt>
-          <dd>{{ proposal.content }}</dd>
-          <dt>有效期至</dt>
-          <dd>{{ new Date(proposal.expires_at).toLocaleString() }}</dd>
+          <template v-if="proposal">
+            <dt>标题</dt>
+            <dd>{{ proposal.title }}</dd>
+            <dt>正文</dt>
+            <dd>{{ proposal.content }}</dd>
+            <dt>有效期至</dt>
+            <dd>{{ new Date(proposal.expires_at).toLocaleString() }}</dd>
+          </template>
           <template v-if="progress">
             <dt>执行轮数</dt>
             <dd>{{ progress.attempt }}</dd>
@@ -38,9 +40,9 @@
         <el-button :disabled="submitting" @click="submit('deny')">拒绝</el-button>
         <el-button type="primary" :disabled="submitting" @click="submit('approve')">批准</el-button>
       </template>
-      <template v-else-if="proposal?.status === 'APPROVED'">
+      <template v-else-if="proposal?.status === 'APPROVED' || progress">
         <el-button :loading="checkingProgress" :disabled="submitting" @click="loadProgress">查询执行进度</el-button>
-        <el-button v-if="!terminal" type="danger" plain :disabled="submitting || checkingProgress" @click="submit('revoke')">
+        <el-button v-if="proposal?.status === 'APPROVED' && !terminal" type="danger" plain :disabled="submitting || checkingProgress" @click="submit('revoke')">
           撤销批准
         </el-button>
       </template>
@@ -75,17 +77,29 @@ const progressLabels: Record<ApprovalProgress['state'], string> = {
 }
 const failure = ref('')
 let reference: ApprovalReference | null = null
+// Retained only for this mounted workspace, reviewer and session.
+let approvedReference: ApprovalReference | null = null
 let loader: AbortController | undefined
 let progressLoader: AbortController | undefined
 let mounted = true
 
+function statusOf(error: unknown) {
+  return isAxiosError(error) ? error.response?.status : undefined
+}
+
 function messageOf(error: unknown) {
-  switch (isAxiosError(error) ? error.response?.status : undefined) {
+  switch (statusOf(error)) {
     case 403: return '当前账号没有工单审批权限。'
     case 404: return '会话或提案已不可审查。'
     case 409: return '审批状态已变化或过期，请刷新。'
     default: return '审批服务暂不可用，请稍后刷新确认状态。'
   }
+}
+
+function showFailure(error: unknown) {
+  const status = statusOf(error)
+  if (status === 403 || status === 404) approvedReference = null
+  failure.value = messageOf(error)
 }
 
 function clear() {
@@ -109,14 +123,31 @@ async function load() {
   loading.value = true
   try {
     const found = await activeApproval(props.sessionNo, pending.signal)
-    if (!found || pending.signal.aborted) return
-    const original = await readApproval(found, pending.signal)
+    if (pending.signal.aborted) return
+    if (found) {
+      approvedReference = found.status === 'APPROVED' ? found : null
+      try {
+        const original = await readApproval(found, pending.signal)
+        if (!pending.signal.aborted) {
+          reference = found
+          proposal.value = original
+          approvedReference = original.status === 'APPROVED' ? found : null
+        }
+        return
+      } catch (error) {
+        // A live approved proposal can be consumed between discovery and preview.
+        if (pending.signal.aborted || found.status !== 'APPROVED' || statusOf(error) !== 404) throw error
+      }
+    }
+    const previous = approvedReference
+    if (!previous) return
+    const state = await readApprovalProgress(previous, pending.signal)
     if (!pending.signal.aborted) {
-      reference = found
-      proposal.value = original
+      reference = previous
+      progress.value = state
     }
   } catch (error) {
-    if (!pending.signal.aborted) failure.value = messageOf(error)
+    if (!pending.signal.aborted) showFailure(error)
   } finally {
     if (loader === pending) {
       loader = undefined
@@ -131,19 +162,22 @@ function openApproval() {
 }
 
 async function loadProgress() {
-  if (!visible.value || proposal.value?.status !== 'APPROVED' || !reference || submitting.value || checkingProgress.value) return
+  if (!visible.value || !reference || submitting.value || checkingProgress.value) return
   const request = new AbortController()
   progressLoader = request
   checkingProgress.value = true
   try {
     const state = await readApprovalProgress(reference, request.signal)
-    if (!request.signal.aborted) progress.value = state
+    if (!request.signal.aborted) {
+      progress.value = state
+      if (terminal.value) proposal.value = null
+    }
   } catch (error) {
     if (!request.signal.aborted) {
-      const status = isAxiosError(error) ? error.response?.status : undefined
+      const status = statusOf(error)
       if (status === 403 || status === 404) {
         clear()
-        failure.value = messageOf(error)
+        showFailure(error)
       } else {
         ElMessage.warning('暂时无法获取执行进度，请稍后再查。')
       }
@@ -159,22 +193,25 @@ async function loadProgress() {
 async function submit(decision: ApprovalDecision) {
   if (!visible.value || !proposal.value || !reference || submitting.value || checkingProgress.value || terminal.value) return
   const original = proposal.value
+  const selected = reference
   submitting.value = true
   failure.value = ''
   try {
-    const result = await decideApproval(reference, original, decision)
+    const result = await decideApproval(selected, original, decision)
     if (!mounted) return
     if (result.status === 'APPROVED') {
+      approvedReference = selected
       proposal.value = { ...original, status: 'APPROVED' }
       ElMessage.success('已批准，等待执行。')
     } else {
+      approvedReference = null
       clear()
       ElMessage.success(result.status === 'DENIED' ? '已拒绝提案。' : '已撤销批准。')
     }
   } catch (error) {
     if (!mounted) return
     clear()
-    failure.value = messageOf(error)
+    showFailure(error)
   } finally {
     if (mounted) submitting.value = false
   }
