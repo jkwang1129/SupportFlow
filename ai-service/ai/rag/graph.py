@@ -63,6 +63,7 @@ class RagState(TypedDict, total=False):
     mode: str             # 检索口径
     enough: bool          # 召回够不够
     rounds: int           # 已经改写了几次
+    max_rewrite_rounds: int
     answer: str
     answer_generated: bool
     extractive_only: bool
@@ -214,7 +215,7 @@ def _route_after_grade(state: RagState) -> str:
     if state.get('doc_ids')==[]:return 'abstain'
     if state.get("enough"):
         return "answer"
-    if int(state.get("rounds") or 0) < MAX_REWRITE_ROUNDS:
+    if int(state.get("rounds") or 0) < state.get("max_rewrite_rounds", MAX_REWRITE_ROUNDS):
         return "rewrite"
     return "abstain"
 
@@ -261,12 +262,15 @@ _graph = None
 
 
 async def ask(question: str, tenant_code: str, top_k: int = 5,
-              doc_ids: list[int] | None = None,*,published_only: bool=False) -> dict:
+              doc_ids: list[int] | None = None, *, published_only: bool = False,
+              max_rewrite_rounds: int = MAX_REWRITE_ROUNDS) -> dict:
     """知识问答主入口：编排一条完整的"查资料 → 回答 → 标出处"链路。"""
     global _graph
     from .document_scope import document_scope,published_policy
     doc_ids=document_scope(doc_ids)
     published_only=published_policy(published_only)
+    if type(max_rewrite_rounds) is not int or not 0 <= max_rewrite_rounds <= MAX_REWRITE_ROUNDS:
+        raise ValueError(f'max_rewrite_rounds must be an integer from 0 to {MAX_REWRITE_ROUNDS}')
     state: RagState = {
         "question": question,
         "tenant_code": tenant_code,
@@ -276,6 +280,7 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
         "extractive_only": getattr(get_settings(), "rag_require_extractive_support", False),
         "query": question,
         "rounds": 0,
+        "max_rewrite_rounds": max_rewrite_rounds,
         "steps": [],
     }
     if langgraph_available():

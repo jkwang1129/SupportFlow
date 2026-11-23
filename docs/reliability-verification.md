@@ -1466,3 +1466,22 @@ AI 014 提供可选的 UTC 日度和月度估算金额上限。调用前在租�
 - `python scripts/rag_quality_dataset.py` 通过。数据 SHA-256 为 `799c7c75d100c7ef6b25326197f38b5b74acb451e982bd81747722b0c6208092`。原始校验统计 `d8-rag-quality-dataset.json`。
 - `python -m unittest discover -s scripts/tests -p 'test_rag_quality_dataset.py' -v` 的 10 项通过，覆盖标注变更、重复记录、错误引用、时间边界、租户或范围错误及输出检测标记进入输入等负面情形。原日志 `d8-rag-quality-unit.log`。
 - 现有三份 RAG 模块专项测试共 63 项通过，包含拒答 24 项、引用契约 10 项及原文核查 20 项门禁。原日志 `d8-rag-contracts.log` 与 `d8-rag-contract-report.json`。对照模型的质量、延迟和 Token 尚无本批测量值。
+
+## D9 单次检索与 Agentic RAG 对照运行（2026-11-23）
+
+`python scripts/rag_quality_benchmark.py --output .local/implementation/d9-rag-quality-benchmark.json` 在 Windows 11、Core Ultra 5 225H、Python 3.11.5、LangGraph 1.2.22、Docker 内 PostgreSQL 17.12 执行。固定样本的 SHA-256 与 D8 一致。共执行 25 对、50 次问答，运行错误、越权来源和结构门禁违例均为 0。逐题原始 JSON 保留各轮检索、Prompt 来源对应的引用、回答、决策和耗时。配置、运行边界和回退见 [ADR-0052](decisions/0052-paired-rag-benchmark.md)。
+
+| 指标 | 单次检索 | Agentic RAG |
+|---|---:|---:|
+| Recall@5，16 道有文档标注的题 | 97.92% | 97.92% |
+| 引用结构有效数 | 16/16 | 17/17 |
+| 回答或拒答决策匹配 | 22/23 | 21/23 |
+| 实际拒答率 | 9/25 | 8/25 |
+| 应拒答命中，应答误拒 | 9/10，0/13 | 8/10，0/13 |
+| 实际检索调用，固定生成替身调用 | 24 次，16 次 | 32 次，17 次 |
+| 本地延迟 P50/P95 | 47.505 / 61.929 ms | 60.717 / 99.184 ms |
+
+两组都在 `relevant-but-insufficient` 中检索到相关文档并给出回答，但文档无法确认签收时间。在 `untrusted-note-only` 中，Agentic 重检放大了回帖的匹配分，给出一条结构可核对的引用，单次检索则拒答。在 `conflicting-repair-policy` 中，两组均召回 3 份相关资料中的 2 份。本次对照未观察到改写带来的召回收益。答案事实正确率、引用对事实的支持、两道转人工题的执行准确率和供应商 Token 均记为 `null`。耗时覆盖本地串行处理及实际数据库访问，适用范围为这 25 道合成题及固定生成替身。
+
+- AI 全量 `python -m pytest -q --junitxml=../.local/verification/d9-ai-tests.xml` 通过 1,060 项，466 项按环境条件跳过。原样本的拒答、引用与原文契约报告分别通过 24、10、20 项。新增 8 项预算回归覆盖真实 LangGraph、线性实现和无效配置拒绝。
+- `python -m unittest discover -s scripts/tests -p 'test_*.py'` 执行 41 项，31 项通过、10 项按 PostgreSQL 环境条件跳过。新增 7 项评测回归覆盖标签隔离、空范围、错误引用、改写前越权、转人工口径、检索故障和对照输入差异。
