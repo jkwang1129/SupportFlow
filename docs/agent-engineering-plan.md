@@ -35,7 +35,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、来源/工单/知识工具与签名SDK，实际Worker/受限PG核权/刷新/共享Embedding预算；有界工单Loop；宿主报告原子发布与回执核销；固定工单 MCP 客户端 | 原子建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE/知识决策Loop、通用未知写及 MCP 服务端部署和更广接入待完善。B |
 | M04 Permission/Guardrails | 部分实现 | PR-1/2、附件权限/受限DB/RLS；工具Scope/闭合参数/当前资源核权、操作专属许可、工单限时审批和回执绑定；客服大脑和知识库客户端已补日志内容保护 | 仍需完整的直接/间接注入评测、其他写操作的审批和防重放、全链路日志与审计保留。无任意代码需求，暂不建 Sandbox。A/B |
 | M05 RAG Engineering | 部分实现，已接访客返回前复核及可选逐句原文核查 | `rag/{store,retriever,graph}.py`、pgvector、关键词 fallback、改写、租户及发布过滤、越界拒答和逐句证据门禁 | 相关性、冲突决策、持久化发布版本及真实语义评测待补；混检重排先建基线。A/C |
-| M06 Evaluation | 部分实现，契约与工程故障门禁 | RAG 拒答、引用及配对原文契约，4 类故障轨迹基线，真实服务的恢复、审批、发布、写作业和回执测试 | 真实模型质量、业务事实评分、盲测和工具受控重演待补。自动判分需用人工标注校准。A/D |
+| M06 Evaluation | 部分实现，固定样本、契约与工程故障门禁 | 25 题合成 RAG 质量对照样本，拒答、引用及配对原文契约，4 类故障轨迹基线，真实服务的恢复、审批、发布、写作业和回执测试 | 对照运行、真实模型质量、业务事实评分和工具受控重演待补。自动判分需用人工标注校准。A/D |
 | M07 Trace/Observability | 部分实现，Runtime 可导出并离线复核受限轨迹 | 异步客服、工单 Outbox 到 Run 及模型重试关联；版本化轨迹、Python 图步骤、模型调用量、运营告警及故障基线 | 统一查询、完整跨服务覆盖、受控模型及工具重演尚待验收。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界 Chat/查询 Embedding 与 Runtime 适配 | 单次 HTTP、稳定错误、显式租户 Profile、Prompt/请求摘要、MODEL 检查点和持久化 Token 回执、实际协议故障与恢复 | 视觉和旧 RAG 同步 Embedding、租户选择、Prompt 发布、供应商权限和金额结算待验收。E |
 | M09 Streaming/交互 | 部分实现 | 既有 WebSocket、消息 seq/ACK/补拉、坐席审批、事件和任务绑定的进度查询与显示 | 任务事件推送、断线续传和用户取消还需验证。依赖 B、M07。E |
@@ -197,3 +197,5 @@ E9 第一批从原始预留和用量回执建立按租户和 UTC 日期的汇总
 E9 第二批在预留前核对可选的 UTC 月度额度。每日和月度判断共用 E9 日汇总，最多读取 31 个日期。已有任务继续按原预留日期进行结算。金额预留与实际供应商账单对账单独推进。配置和回滚见 [ADR-0049](decisions/0049-tenant-monthly-model-token-quota.md)。
 
 E10 在调用前按显式价目预留日度和月度估算金额，结算使用该次调用绑定的费率。配置、审核和回滚见 [ADR-0050](decisions/0050-tenant-model-cost-reservations.md)。真实供应商账单的导入与对账独立推进。
+
+D8 固定 RAG 质量对照语料和 25 题标注，覆盖拒答、转人工、事实与原文引用、租户和发布状态。内容摘要与负面校验纳入 CI。对照运行和质量结果在后续批次交付。数据及口径见 [ADR-0051](decisions/0051-fixed-rag-quality-dataset.md)。

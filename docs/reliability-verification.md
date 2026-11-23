@@ -1458,3 +1458,11 @@ AI 014 提供可选的 UTC 日度和月度估算金额上限。调用前在租�
 - `PYTEST_ADDOPTS='-k "runtime_model_cost_budget or runtime_model_token_budget or runtime_model_usage or runtime_model_quota or knowledge_tools_postgres"' python scripts/test-agent-runtime.py` 在隔离 PostgreSQL 17 通过 61 项。两路 Worker 争用同租户额度时只有一路发出模型请求，其他租户仍可执行。旧价预留 84,000,000 pico 后在途换价，回执按原价结算为 13,000,000 pico。新价预留 96,000,000 pico 恰好达到月预算。超限、失效价目、错租户、缺价、跨币种、未知用量、回滚、重复回执、Embedding 与外租户读取均验收。原日志 `e10-cost-final-pg.log`。
 - `python scripts/test-versioned-migrations.py` 的 17 项通过，AI 013 → 014 保留日月 Token 配置、原始预留与回执，新增金额策略初始关闭。六库 102 张应用表通过初始化与结构核对，六库恢复比对两条金额汇总及对应费率记录。原日志 `e10-cost-upgrade.log`、`e10-cost-init.log`、`e10-cost-drift.log` 与 `e10-cost-restore.log`。
 - 普通 AI 测试 1,052 项通过、466 项按环境条件跳过。费用案例使用合成价目和合成供应商回执。原日志 `e10-cost-ai.log`。
+
+## D8 固定 RAG 质量对照样本（2026-11-23）
+
+`rag-quality-v1` 采用 15 份合成文档、两个虚构租户和 25 个问题，包含 13 个答复、10 个拒答和 2 个转人工标注。16 题具有相关文档标注，含一道相关但证据不足的拒答题。摘要固定语料、标签和基准日期。字段、指标口径与回滚见 [ADR-0051](decisions/0051-fixed-rag-quality-dataset.md)。
+
+- `python scripts/rag_quality_dataset.py` 通过。数据 SHA-256 为 `799c7c75d100c7ef6b25326197f38b5b74acb451e982bd81747722b0c6208092`。原始校验统计 `d8-rag-quality-dataset.json`。
+- `python -m unittest discover -s scripts/tests -p 'test_rag_quality_dataset.py' -v` 的 10 项通过，覆盖标注变更、重复记录、错误引用、时间边界、租户或范围错误及输出检测标记进入输入等负面情形。原日志 `d8-rag-quality-unit.log`。
+- 现有三份 RAG 模块专项测试共 63 项通过，包含拒答 24 项、引用契约 10 项及原文核查 20 项门禁。原日志 `d8-rag-contracts.log` 与 `d8-rag-contract-report.json`。对照模型的质量、延迟和 Token 尚无本批测量值。

@@ -27,6 +27,8 @@ jobs:
             ai-service/requirements.txt
             ai-service/requirements-test.txt
             scripts/security/requirements.txt
+      - name: Validate the frozen RAG quality evaluation dataset
+        run: python scripts/rag_quality_dataset.py
       - name: Install API test dependencies
         run: python -m pip install -r scripts/security/requirements.txt -r ai-service/requirements-test.txt
       - name: Verify all Java modules
