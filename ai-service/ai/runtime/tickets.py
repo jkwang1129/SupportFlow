@@ -18,6 +18,13 @@ def ticket_digest(source, run_id, snapshot_id, source_hash, ticket_no, status, u
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
+def ticket_timestamp(value):
+    if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?', value):
+        raise ValueError('Invalid ticket timestamp')
+    datetime.fromisoformat(value)
+    return value
+
+
 @dataclass(frozen=True)
 class TicketStatus:
     run_id: UUID
@@ -46,9 +53,7 @@ def decode_ticket_status(value, source, run, ticket_no):
         if str(snapshot)!=value['snapshot_id'] or type(value['status']) is not int or not 1<=value['status']<=5:raise ValueError()
         for key in ('source_hash','resource_version'):
             if not isinstance(value[key],str) or not re.fullmatch('[0-9a-f]{64}',value[key]):raise ValueError()
-        updated=value['updated_at']
-        if not isinstance(updated,str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,6})?',updated):raise ValueError()
-        if datetime.fromisoformat(updated).tzinfo is not None:raise ValueError()
+        updated=ticket_timestamp(value['updated_at'])
         digest=ticket_digest(source,run,snapshot,value['source_hash'],ticket_no,value['status'],updated)
         if not hmac.compare_digest(digest,value['resource_version']):raise ValueError()
         return TicketStatus(run,source.source_event_id,snapshot,value['source_hash'],ticket_no,value['status'],updated,digest)

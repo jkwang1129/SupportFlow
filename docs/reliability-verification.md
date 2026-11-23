@@ -1580,3 +1580,22 @@ Windows 11、Python 3.11.5、Temurin JDK 25 与临时 PostgreSQL 17。`agent-bou
 - `python -m pytest -q tests/test_runtime_trace_timeline.py tests/test_runtime_trace_replay.py` 通过 23 项，含 9 项新增对照，覆盖六类绑定字段不一致、开放区间、缺失回执及不泄露核对字段。
 - 运行时 PostgreSQL 定向 6 项通过，受限账号查询行级安全处于活动状态，写语句在该连接中被数据库拒绝。管理角色不能用于联合查询。真实 Java 投递 2 项测试通过。组合联调日志 `d14-cross-service-trace.log`。
 - 本地 AI 全量 1,104 项通过、472 项按环境跳过。评测脚本 66 项中 56 项通过，10 项按数据库环境跳过。
+
+## D15 工单模型与只读工具受控回放（2026-11-23）
+
+Windows 11、Python 3.11.5、Temurin JDK 25 和临时 PostgreSQL 17。执行 `python scripts/test-agent-runtime.py --with-java-delivery`，设置 `PYTEST_ADDOPTS='-k "ticket_loop_postgres or runtime_trace"'`。同一次验收中，模型响应由本地协议替身生成，工单读取经过实际 Java 服务、签名 HTTP、Python 工具执行器和受限数据库账号。独立回放进程复用线上规划逻辑，重建调用输入并对照实际 Worker 终态及数据库报告。录制格式、复现命令和回退见 [ADR-0058](decisions/0058-controlled-ticket-planner-replay.md)。
+
+| 录制案例 | 观察结果 | 模型决策 | 逻辑读取 |
+|---|---|---:|---:|
+| `normal` | 生成报告，工单状态 `2`（处理中） | 2 | 2 |
+| `late_status` | 首次读取状态 `2`，复读后报告状态 `4`（已解决） | 2 | 2 |
+| `owner_revoked` | 报告前撤销工单访问权，复读返回 `TICKET_REVOKED` | 2 | 2 |
+| `phantom_reference` | 拒绝引用未经观察的工具证据，返回 `REPORT_EVIDENCE_INVALID` | 1 | 0 |
+
+4/4 回放结果一致。保留的本地原始文件位于 `.local/implementation/d15-replay-evidence/`，录制 `runtime-ticket-read-replay-tape.json` 的 SHA-256 为 `5f6e7b15f53f51db3bae4833dadfee63513e1f43f97440e42bf0587e45bc4d43`。修改 `normal` 首次模型输入摘要后，命令返回退出码 `1`，该案报告 `RECORDED_CALL_INPUT_CHANGED`，其余三案通过。原结果为 `runtime-ticket-read-replay-result.json`，负面结果为 `changed-input-replay.json`。录制与结果也由现有 CI 联调生成。
+
+- AI 定向回归 107 项通过，含新增的 17 项回放测试。覆盖与线上逻辑一致的状态刷新、撤权、伪造引用、未知或写工具、版本和参数错误，也检查无网络和数据库连接时可运行。普通全量 AI 测试 1,121 项通过、472 项按环境跳过。拒答、引用、原文支持契约分别为 24/24、10/10、20/20。
+- 运行时 PostgreSQL 定向 33 项通过，并完成真实 Java 投递的 2 项测试。评测脚本 66 项中 56 项通过、10 项按数据库条件跳过。
+- 首次组合运行末尾，既有的 `cancel_after_commit` 用例未观察到提交确认，得到 `SIDE_EFFECT_UNKNOWN`，且多执行一次回执读取，断言失败。使用 `PYTEST_ADDOPTS='-k runtime_trace'` 复跑，通过 6 项 PostgreSQL 轨迹测试，并通过原有 10 项实际建单工具用例。初次失败的原因未复现。日志保存在 `.local/implementation/d15-ticket-read-replay.log` 和 `.local/implementation/d15-replay-integration-retry.log`。
+
+回放输入为测试录制的合成数据，覆盖单次只读规划尝试。线上鉴权、持久化、取消、跨尝试重试、审批和业务写入仍使用各自的服务或数据库验收。回放测试不消耗真实模型费用，结果仅衡量执行一致性。

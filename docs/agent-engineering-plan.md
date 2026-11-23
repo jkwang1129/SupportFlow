@@ -21,7 +21,7 @@
 | PR-8 持久化 Run | 部分实现：单租户可信登记、投递与只读 Loop 实际连通 | Run/Step/Worker、事务 Outbox、签名 API、固定运营 Profile、真实进程接管及受控回复回执；默认关闭的影子入口 | 待扩展租户策略管理、自动批准执行宿主及业务回复切换策略。B1 试点已验 |
 | PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。已接固定工单只读 MCP 客户端。B2 |
 | PR-10 Checkpoint/HITL | 工单链路已实现并本地验收，其他写操作分批 | 原子检查点和原预算恢复、访客显式提案、限时审批、一次性消费、坐席角色与来源重验、回复及建单未知写核销 | 自然语言提案和访客交互待评测；其他写操作需各自回执。B3 |
-| PR-11 Eval/Replay/Trace | 部分实现，交付跨服务时间线及离线回归 | Java Outbox 与 Python Run/Step/审批联合查询、元数据回放、25 题 RAG 对照和逐题报告 | 受控模型及工具复演、扩充语义评测和运营展示仍待推进。A/D |
+| PR-11 Eval/Replay/Trace | 部分实现，交付跨服务时间线、离线回归和工单只读规划回放 | Java Outbox 与 Python Run/Step/审批联合查询、元数据回放、25 题 RAG 对照和逐题报告、4 个联调录制案例 | 扩充语义评测、运营展示与跨尝试及跨业务链路回放。A/D |
 | PR-12 RAG | 部分完成：证据不足、越界引用拒答及结构化证据候选 | 24 项拒答与 10 项引用契约；文档范围、空选集、发布就绪过滤；真实模型的结构化拒答、原文引用与语义对照 | 政策条件完整性、可信来源和冲突路由仍需改进，按独立样本验收上线条件。A6/C |
 
 Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src/main/java/io/supportflow/`；Mapper XML 位于对应服务 `src/main/resources/mapper`。
@@ -35,8 +35,8 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、来源/工单/知识工具与签名SDK，实际Worker/受限PG核权/刷新/共享Embedding预算；有界工单Loop；宿主报告原子发布与回执核销；固定工单 MCP 客户端 | 原子建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE/知识决策Loop、通用未知写及 MCP 服务端部署和更广接入待完善。B |
 | M04 Permission/Guardrails | 部分实现，已接固定输入和授权回归 | PR-1/2、附件权限、受限 DB 与 RLS；工具 Scope、资源核权、操作许可、审批和回执；访客结构化输入及 10 项 PostgreSQL 边界门禁 | 增加独立模型语义样本、其他写操作的审批和防重放、链路日志与审计保留。A/B/D |
 | M05 RAG Engineering | 部分实现，访客来源复核、结构化答复与真实语义对照 | pgvector、关键词降级、改写、租户及发布过滤、越界拒答、可选逐句原文核查与结构化原文引用 | 相关性、可信来源、冲突决策和持久化版本待推进。单独对照混检重排与上线边界。A/C |
-| M06 Evaluation | 部分实现，真实模型配对基线、逐题语义复核与确定性工程门禁 | 25 题单次检索与 Agentic RAG 对照、实际 Token 回执与逐题复评分；拒答、引用及配对原文契约；4 类故障轨迹基线及真实服务回归 | 扩大样本和留出集，增加独立人工复核、模型评审器一致性和工具受控重演。A/D |
-| M07 Trace/Observability | 部分实现，工单跨服务查询已联调 | 按租户关联 Java 投递回执、Python Run/Step、失败重试和审批，版本化轨迹、模型用量及离线故障基线 | 完善浏览器展示、服务覆盖、聚合指标和受控模型及工具复演。A/B/D |
+| M06 Evaluation | 部分实现，真实模型配对基线、逐题语义复核与确定性工程门禁 | 25 题单次检索与 Agentic RAG 对照、实际 Token 回执与逐题复评分、拒答与引用契约、4 类故障轨迹基线、真实联调录制的只读模型与工具回放 | 扩大样本和留出集，增加独立人工复核、模型评审器一致性及多轮尝试的回归。A/D |
+| M07 Trace/Observability | 部分实现，工单跨服务查询及只读规划回放已联调 | 按租户关联 Java 投递回执、Python Run/Step、失败重试和审批，版本化轨迹、模型用量、离线故障基线与工单只读回放 | 完善浏览器展示、服务覆盖、聚合指标和轨迹保留。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界 Chat/查询 Embedding 与 Runtime 适配 | 单次 HTTP、稳定错误、显式租户 Profile、Prompt/请求摘要、MODEL 检查点和持久化 Token 回执、实际协议故障与恢复 | 视觉和旧 RAG 同步 Embedding、租户选择、Prompt 发布、供应商权限和金额结算待验收。E |
 | M09 Streaming/交互 | 部分实现 | 既有 WebSocket、消息 seq/ACK/补拉、坐席审批、事件和任务绑定的进度查询与显示 | 任务事件推送、断线续传和用户取消还需验证。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
@@ -212,4 +212,6 @@ D12 在相同检索下对照原版 Agentic RAG 与可选的访客结构化答复
 
 D13 为可选的访客结构化模式分离系统规则、问题及资料字段，固定 10 项工单和知识权限回归，绑定实际 PostgreSQL 测试报告。新覆盖访客数据、工具返回说明、只读能力范围及不可见资料排除，门禁能识别实际结果漏跑。其后继续完善跨服务追踪与受控回放。见 [ADR-0056](decisions/0056-agent-input-permission-boundaries.md) 和 [本地验收](reliability-verification.md#d13-agent-输入与权限边界回归2026-11-23)。
 
-D14 统一读取 Java 事件、Python Run/Step 和审批状态，按事件、任务或原请求号查询。10 份隔离数据库和跨服务时间点覆盖投递前、回执等待、模型失败后重试、资源撤权、进程接管及审批等待到消费。下一步补受控模型与工具回放。见 [ADR-0057](decisions/0057-cross-service-trace-timeline.md) 和 [本地验收](reliability-verification.md#d14-java-与-python-跨服务时间线2026-11-23)。
+D14 统一读取 Java 事件、Python Run/Step 和审批状态，按事件、任务或原请求号查询。10 份时间点覆盖投递前、回执等待、模型失败后重试、资源撤权、进程接管及审批等待到消费。见 [ADR-0057](decisions/0057-cross-service-trace-timeline.md) 和 [本地验收](reliability-verification.md#d14-java-与-python-跨服务时间线2026-11-23)。
+
+D15 线上的只读工单 Loop 与离线入口共用规划逻辑。组合验收录制 4 个合成会话，离线匹配 7 次模型决策、6 次逻辑读取及对应状态或错误。篡改一条调用摘要后回放门禁返回失败。审批、写操作和真实重试由现有联调验收，回放范围为单次只读规划尝试。见 [ADR-0058](decisions/0058-controlled-ticket-planner-replay.md) 和 [本地验收](reliability-verification.md#d15-工单模型与只读工具受控回放2026-11-23)。

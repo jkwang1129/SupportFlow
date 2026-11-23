@@ -29,10 +29,13 @@ from ticket_approval_fixture import approval_role_server, verify_ticket_approval
 
 ROOT=Path(__file__).resolve().parents[1]
 SHADOW_TENANT = 'LP_J'
+REPLAY_CASES = {'normal', 'late_status', 'owner_revoked', 'phantom_reference'}
 
 
 @contextmanager
 def planner_server(scenarios,connect,*,mcp_secret=None,mcp_call=None):
+    from ai.runtime.types import fingerprint
+
     class Handler(BaseHTTPRequestHandler):
         protocol_version='HTTP/1.1'
         def do_POST(self):
@@ -81,6 +84,9 @@ def planner_server(scenarios,connect,*,mcp_secret=None,mcp_call=None):
                         assert case['canonical_assistant_bytes'] < case['raw_assistant_bytes']
                 data={'choices':[{'index':0,'finish_reason':'stop','message':{'role':'assistant','content':content}}],
                       'usage':{'prompt_tokens':13,'completion_tokens':7,'total_tokens':20}}
+                if 'replay_events' in case:
+                    case.setdefault('replay_policy_sha256', fingerprint(body['messages'][0]['content']))
+                    case['replay_events'].append(dict(kind='model', input_sha256=fingerprint(body['messages']), reply=content))
             raw=json.dumps(data,ensure_ascii=False).encode()
             self.send_response(status);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(raw)))
             self.send_header('Connection','close');self.end_headers();self.wfile.write(raw)
@@ -162,13 +168,29 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
     from ai.runtime.models import ChatProfile,RuntimeChatClient
     from ai.runtime.source import SourceClient
     from ai.runtime.store import RuntimeStore
-    from ai.runtime.ticket_loop import TicketReadLoop
+    from ai.runtime.ticket_loop import LOOP_VERSION, TicketReadLoop, ticket_projection
+    from ai.runtime.ticket_replay import SUITE_VERSION, TAPE_VERSION
     from ai.runtime.tickets import TicketClient
     from ai.runtime.tools import ToolExecutor,ToolRegistry
     from ai.runtime.trace_export import _metadata
     from ai.runtime.trace_timeline import AI_DSN, CUSTOMER_DSN, TimelineReader, reader
     from ai.runtime.types import RunInput
-    from ai.runtime.worker import RuntimeWorker
+    from ai.runtime.worker import PermanentFailure, RuntimeWorker
+
+    class RecordingReads(ToolExecutor):
+        def __init__(self, registry, events):
+            super().__init__(registry, frozenset({'ticket:read'}))
+            self.events = events
+
+        def execute(self, context, slot, call):
+            event = dict(kind='ticket_read', slot=slot, ticket_no=call.arguments['ticket_no'])
+            try:
+                result = super().execute(context, slot, call)
+            except PermanentFailure as failure:
+                self.events.append(event | {'error_code': failure.code})
+                raise
+            self.events.append(event | {'result': ticket_projection(result)})
+            return result
 
     with socket.socket() as reserved:reserved.bind(('127.0.0.1',0));port=reserved.getsockname()[1]
     child={key:value for key,value in os.environ.items() if not key.startswith('SUPPORTFLOW_')}
@@ -207,7 +229,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     except httpx.HTTPError:pass
                     time.sleep(.25)
                 else:raise RuntimeError('Disposable Loop customer service not ready')
-            observations=[];scenarios={}
+            observations=[];scenarios={};replay_cases={}
             mcp_key, mcp_runs = secrets.token_urlsafe(48), []
             direct_tickets = TicketClient(base, secret)
 
@@ -250,7 +272,12 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                     scenario=dict(mode=mode,ticket_no=ticket_no,customer_id=customer_id,ticket_id=ticket_id,model_http_calls=0,decisions=0)
                     scenarios['Bearer '+model_key]=scenario
                     access=ToolExecutor(ToolRegistry([current_message_tool(SourceClient(base,secret))]),frozenset({'session:read'}))
-                    tools=ToolExecutor(ToolRegistry([ticket_status_tool(TicketClient(base,secret))]),frozenset({'ticket:read'}))
+                    registry = ToolRegistry([ticket_status_tool(TicketClient(base,secret))])
+                    if mode in REPLAY_CASES:
+                        scenario['replay_events'] = []
+                        tools = RecordingReads(registry, scenario['replay_events'])
+                    else:
+                        tools = ToolExecutor(registry, frozenset({'ticket:read'}))
                     profile=ChatProfile(tenant,'loop-planner-v1','fixture','fixture-chat',model_base,model_key,prompt_version='ticket-plan-v1')
                     loop=TicketReadLoop(access,tools,RuntimeChatClient(profile),max_turns=1 if mode=='turn_limit' else 4)
                     worker=RuntimeWorker(store,{'runtime-v1':loop},'actual-ticket-loop')
@@ -359,6 +386,14 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         assert reports[0]['text']==f"工单 {ticket_no} 当前状态：{'已解决' if fact==4 else '处理中'}。"
                         assert 'PRIVATE' not in json.dumps(reports)
                     else:assert reports==[]
+                    if mode in REPLAY_CASES:
+                        events = scenario['replay_events']
+                        replay_cases[mode] = dict(schema_version=TAPE_VERSION, loop_version=LOOP_VERSION,
+                            policy_sha256=scenario['replay_policy_sha256'], catalog=registry.catalog(), source_text=text,
+                            max_turns=loop.max_turns, canonical_history=loop.canonical_history, events=events,
+                            expected=dict(outcome=result['result_ref']['outcome'] if reports else None,
+                                error_code=result['error_code'], ticket_status=reports[0]['status'] if reports else None,
+                                model_calls=result['model_calls'], ticket_reads=sum(item['kind']=='ticket_read' for item in events)))
                     observations.append(dict(case=mode,run_id=str(run),event_id=str(source.source_event_id),state=result['state'],error_code=result['error_code'],
                         model_http_calls=scenario['model_http_calls'],model_reservations=result['model_calls'],tool_reservations=result['tool_calls'],steps=result['step_count'],retries=result['retry_count'],
                         reports=len(reports),report_status=reports[0]['status'] if reports else None,actual_ticket_status=fact,source_messages=messages,result_receipts=receipts,tickets=tickets,
@@ -371,6 +406,18 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             report.write_text(json.dumps(dict(schema_version='ticket-loop-qualification-v5',mode='SYNTHETIC_MODEL_TCP_REAL_CUSTOMER_JAR_PG',cases=observations,
                 source_enrollment='SIGNED_VISITOR_APPEND_FOR_CONFIGURED_WORKER',publication='REPORT_ONLY',provider_usage='SYNTHETIC_VALUES',performance='NOT_MEASURED',token_cost='NOT_MEASURED'),indent=2)+'\n',encoding='utf-8')
             print('Actual signed visitor append -> shadow Outbox -> scheduled AI delivery -> scoped worker CLI -> bounded MCP SSE/Java ticket read passed; 10 read-loop cases passed with synthetic model TCP and restricted PG',flush=True)
+            assert set(replay_cases) == REPLAY_CASES
+            tape = report.parent/'runtime-ticket-read-replay-tape.json'
+            tape.write_text(json.dumps({'schema_version': SUITE_VERSION, 'cases': replay_cases},
+                                       ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+            replay_env = {name: os.environ[name] for name in ('PATH','SystemRoot','WINDIR','TEMP','TMP') if name in os.environ}
+            replay_env.update(PYTHONUTF8='1', PYTHONPATH=str(ROOT/'ai-service'))
+            with TemporaryDirectory(prefix='supportflow-ticket-replay-') as directory:
+                replay = subprocess.run([sys.executable, '-m', 'ai.runtime.ticket_replay', '--suite', str(tape)],
+                                        cwd=directory, env=replay_env, capture_output=True, encoding='utf-8', timeout=15)
+            assert replay.returncode == 0, replay.stdout + replay.stderr
+            (report.parent/'runtime-ticket-read-replay-result.json').write_text(replay.stdout, encoding='utf-8')
+            print(f'Offline ticket planner replay: {len(replay_cases)} actual synthetic service recordings matched', flush=True)
             approval_tracks = verify_ticket_approval(connect, base, child['SUPPORTFLOW_JWT_SECRET'], secret, store,
                                    runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'], visitor_tenant=SHADOW_TENANT,
                                    append_visitor=lambda session_no, text: _send_shadow_message(
