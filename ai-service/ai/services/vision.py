@@ -79,10 +79,7 @@ async def recognize(images: list[str], question: str = "", tenant_code: str = ""
     if question and question.strip():
         prompt += f"\n\n客户随图说的一句是：{question.strip()[:200]}"
 
-    logger.info("图片识别请求 trace=%s tenant=%s 张数=%d 单张≈%dKB 模型=%s 客户随图说=%s",
-                get_trace_id() or "-", tenant_code or "-", len(images),
-                len(images[0]) // 1024 if images else 0, desc, (question or "")[:40])
-    data = await call_vision(chosen, prompt, images, get_settings().llm_timeout, scene="图片识别")
+    data = await call_vision(chosen, prompt, images, get_settings().llm_timeout, tenant_code=tenant_code)
     content = message_content(data)
     parsed = _parse_json(content)
 
@@ -97,33 +94,9 @@ async def recognize(images: list[str], question: str = "", tenant_code: str = ""
         "error_text": _text(_pick(parsed, "errorText", "error_text")),
         "need_human": bool(_pick(parsed, "needHuman", "need_human") or False),
     })
-    logger.info(
-        "图片识别完成 trace=%s tenant=%s 模型=%s\n"
-        "  判读：%s\n"
-        "  订单号：%s 金额：%s 建议人工：%s\n"
-        "  报错原文：%s\n"
-        "  图中文字（共 %d 字）：\n%s",
-        get_trace_id() or "-", tenant_code or "-", desc,
-        result["summary"] or "（无）",
-        result["order_no"] or "（无）", result["amount"] or "（无）", result["need_human"],
-        _inline(result["error_text"], 200) or "（无）",
-        len(result["ocr_text"]), _indent(result["ocr_text"]))
+    logger.info("图片识别完成 trace=%s tenant=%s imageCount=%d ocrChars=%d",
+                get_trace_id() or "-", tenant_code or "-", len(images), len(result["ocr_text"]))
     return result
-
-
-def _indent(text: str, limit: int = 800) -> str:
-    """把 OCR 全文按行缩进打进日志（超长截断），方便直接和客户发的图对照"""
-    if not text:
-        return "    （没识别到文字）"
-    lines = [line.strip() for line in text.splitlines() if line.strip()][:20]
-    body = "\n".join("    " + line for line in lines)
-    if len(body) > limit:
-        body = body[:limit] + "\n    …（已截断）"
-    return body
-
-
-def _inline(text: str, limit: int) -> str:
-    return re.sub(r"\s+", " ", (text or "")).strip()[:limit]
 
 
 def _pick(parsed: dict[str, Any] | None, *keys: str) -> Any:

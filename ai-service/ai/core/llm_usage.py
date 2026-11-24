@@ -130,7 +130,7 @@ def record_usage(*, tenant_code: str | None, model_key: str | None, scene: str |
                     tenant, model_key, SCENE_TEXT.get(code, code), input_tokens, output_tokens,
                     cost, latency_ms, success)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("AI 计量写入失败（不影响本次调用）：%s", exc)
+        logger.warning("AI 计量写入失败 errorType=%s", type(exc).__name__)
 
 
 def record_chat_usage(*, tenant_code: str | None, chosen: dict[str, str] | None,

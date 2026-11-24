@@ -144,7 +144,7 @@ def test_client_disables_environment_proxy_and_redirects(monkeypatch):
 
 
 @contextmanager
-def local_provider(mode,response_body=None):
+def local_provider(mode,response_body=None,*,status=200):
     received=[];release=Event()
     class Handler(BaseHTTPRequestHandler):
         protocol_version='HTTP/1.1'
@@ -152,7 +152,7 @@ def local_provider(mode,response_body=None):
             raw=self.rfile.read(int(self.headers['Content-Length']))
             received.append((self.path,self.headers['Authorization'],json.loads(raw)))
             body=json.dumps(ANSWER if response_body is None else response_body).encode()
-            self.send_response(302 if mode=='redirect' else 200)
+            self.send_response(302 if mode=='redirect' else status)
             self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)))
             self.send_header('Connection','close')
             if mode=='redirect':self.send_header('Location','http://127.0.0.1:1/private')

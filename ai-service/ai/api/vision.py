@@ -18,7 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..config import get_settings
-from ..core.llm_vision import vision_provider
+from ..core.chat_transport import ModelCallFailure
+from ..core.llm_vision import VisionInputError, vision_provider
 from ..core.trace import require_trace_id
 from ..services import vision as vision_service
 
@@ -38,21 +39,25 @@ class VisionRequest(BaseModel):
 @router.post("/vision")
 async def vision(body: VisionRequest, trace_id: str = Depends(require_trace_id)) -> dict[str, Any]:
     started = time.perf_counter()
-    logger.info("收到图片识别请求 trace=%s tenant=%s session=%s 张数=%d 随图说=%s",
-                trace_id, body.tenant_code, body.session_id or "-", len(body.images),
-                (body.question or "")[:40])
+    logger.info("收到图片识别请求 trace=%s tenant=%s imageCount=%d",
+                trace_id, body.tenant_code, len(body.images))
     if not body.images:
         raise HTTPException(status_code=400, detail="没有可识别的图片")
     try:
         result = await vision_service.recognize(
             images=body.images, question=body.question, tenant_code=body.tenant_code)
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("图片识别失败 trace=%s：%s", trace_id, exc)
-        raise HTTPException(status_code=500, detail=f"图片识别失败：{exc}") from exc
-    logger.info("图片识别接口完成 trace=%s 可用=%s 模型=%s 判读=%s OCR=%d字 订单号=%s cost=%dms",
-                trace_id, result.get("available"), result.get("model") or "-",
-                (result.get("summary") or "（无）")[:50], len(result.get("ocr_text") or ""),
-                result.get("order_no") or "（无）",
+    except VisionInputError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    except ModelCallFailure as failure:
+        status = 503 if failure.retryable else 502
+        if failure.code == "MODEL_REQUEST_INVALID":
+            status = 400
+        raise HTTPException(status_code=status, detail=failure.code) from None
+    except Exception as exc:
+        logger.error("图片识别失败 trace=%s errorType=%s", trace_id, type(exc).__name__)
+        raise HTTPException(status_code=500, detail="VISION_INTERNAL_ERROR") from None
+    logger.info("图片识别接口完成 trace=%s available=%s latencyMs=%d",
+                trace_id, result["available"],
                 int((time.perf_counter() - started) * 1000))
     return result
 

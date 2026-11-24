@@ -37,7 +37,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M05 RAG Engineering | 部分实现，访客来源复核、结构化答复与真实语义对照 | pgvector、关键词降级、改写、租户及发布过滤、越界拒答、可选逐句原文核查与结构化原文引用 | 相关性、可信来源、冲突决策和持久化版本待推进。单独对照混检重排与上线边界。A/C |
 | M06 Evaluation | 部分实现，真实模型配对基线、逐题语义复核与确定性工程门禁 | 25 题单次检索与 Agentic RAG 对照、实际 Token 回执与逐题复评分、拒答与引用契约、4 类故障轨迹基线、真实联调录制的只读模型与工具回放 | 扩大样本和留出集，增加独立人工复核、模型评审器一致性及多轮尝试的回归。A/D |
 | M07 Trace/Observability | 部分实现，工单跨服务查询及只读规划回放已联调 | 按租户关联 Java 投递回执、Python Run/Step、失败重试和审批，版本化轨迹、模型用量、离线故障基线与工单只读回放 | 完善浏览器展示、服务覆盖、聚合指标和轨迹保留。A/B/D |
-| M08 Model Gateway/Prompt | 部分实现：共用有界 Chat/查询 Embedding 与 Runtime 适配 | 单次 HTTP、稳定错误、显式租户 Profile、Prompt/请求摘要、MODEL 检查点和持久化 Token 回执、实际协议故障与恢复 | 视觉和旧 RAG 同步 Embedding、租户选择、Prompt 发布、供应商权限和金额结算待验收。E |
+| M08 Model Gateway/Prompt | 部分实现：共用有界 Chat/视觉/查询 Embedding 与 Runtime 适配 | 单次 HTTP、稳定错误、视觉请求分级限额及按租户计量、显式租户 Profile、Prompt/请求摘要、MODEL 检查点和持久化 Token 回执、实际协议故障与恢复 | 旧 RAG 同步 Embedding、租户选择、Prompt 发布、供应商权限、真实视觉供应商兼容性和金额结算待验收。E |
 | M09 Streaming/交互 | 工单链路覆盖进度恢复、取消和跨节点通知 | 聊天 seq/ACK、工单通知与补拉、断线恢复、取消与完成竞争、已提交写入核查、双节点联调和首读耗时记录 | 节点地址按部署配置管理。目标环境下的网络条件及长期负载仍待验证。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
 | M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、计费日聚合与月预算告警/降级/暂停；旧客服预算读取失败时降级或保留已知暂停；Runtime 有跨 Worker 租约、Run 预算、租户积压上限、模型并发额度和按日、月的 Token 与金额预留及结算 | 真实账单对账与生产并发容量待验收。旧客服按已落账用量判断，单独验收并发消费上界。计费去重 A4，运行预算随 M01。B/E |
@@ -201,6 +201,8 @@ E9 第二批在预留前核对可选的 UTC 月度额度。每日和月度判断
 E10 在调用前按显式价目预留日度和月度估算金额，结算使用该次调用绑定的费率。配置、审核和回滚见 [ADR-0050](decisions/0050-tenant-model-cost-reservations.md)。真实供应商账单的导入与对账独立推进。
 
 E11 收紧旧客服 AI 月预算闸门。Ops 读取当前预算和用量，客服在无法确认时跳过模型或保留已知暂停。见 [ADR-0070](decisions/0070-legacy-ai-cost-guard.md) 和 [本地验收](reliability-verification.md#e11-旧客服-ai-月预算闸门2026-11-24)。
+
+E12 将视觉模型接入共用有界传输，按业务保留图片请求上限，补齐租户用量归属并收敛视觉日志。见 [ADR-0071](decisions/0071-bounded-vision-model-transport.md) 和 [本地验收](reliability-verification.md#e12-视觉模型有界传输与计量2026-11-24)。
 
 D8 固定 RAG 质量对照语料和 25 题标注，覆盖拒答、转人工、事实与原文引用、租户和发布状态。内容摘要与负面校验纳入 CI。对照运行和质量结果在后续批次交付。数据及口径见 [ADR-0051](decisions/0051-fixed-rag-quality-dataset.md)。
 

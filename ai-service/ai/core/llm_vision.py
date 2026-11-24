@@ -29,19 +29,24 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import time
 from typing import Any
 
-import httpx
-
 from ..config import get_settings
-from ..core.db import connect
-from ..core.llm_chat import provider_conf
-from ..core.llm_usage import record_chat_usage
-from ..core.trace import get_trace_id
+from .chat_transport import MAX_VISION_REQUEST_BYTES, ModelCallFailure, _send_vision_json
+from .db import connect
+from .llm_chat import _meter, provider_conf
+from .trace import get_trace_id
 
 logger = logging.getLogger(__name__)
+IMAGE_DATA_TYPES = {"data:image/jpeg;base64", "data:image/png;base64", "data:image/webp;base64",
+                    "data:image/gif;base64"}
+
+
+class VisionInputError(ValueError):
+    """A local image input was rejected before provider dispatch."""
 
 
 def vision_provider(tenant_code: str = "") -> tuple[dict[str, str] | None, str]:
@@ -91,74 +96,62 @@ def _tenant_vision_model(tenant_code: str) -> str | None:
                 (tenant_code,),
             ).fetchone()
     except Exception as exc:  # noqa: BLE001
-        logger.debug("读取租户视觉模型失败 tenant=%s error=%s", tenant_code, exc)
+        logger.debug("读取租户视觉模型失败 tenant=%s errorType=%s", tenant_code, type(exc).__name__)
         return None
     return str(row["model_key"]) if row and row.get("model_key") else None
 
 
 async def call_vision(chosen: dict[str, str], prompt: str, images: list[str], timeout: int,
-                      *, scene: str = "图片识别") -> dict[str, Any]:
-    """发一次多模态请求。
-
-    @param images 形如 ``data:image/jpeg;base64,...`` 的 data URL 列表
-    """
+                      *, tenant_code: str, _transport=None) -> dict[str, Any]:
+    """Send one bounded multimodal request and attribute the attempt to its tenant."""
     settings = get_settings()
     if not images:
-        raise ValueError("多模态调用至少要有一张图片")
+        raise VisionInputError("没有可识别的图片")
     if len(images) > settings.vision_max_images:
-        raise ValueError(f"一次最多识别 {settings.vision_max_images} 张图片")
-    # 单张大小也要卡：Java 侧压到 100~300KB 才送过来，这里防的是"别的调用方直接把原图 base64 塞进来"，
-    # 那会让 body 涨到十几 MB，网关截断后报出来的错误跟图片本身一点关系都没有，很难查
-    limit_mb = settings.vision_max_image_mb
-    oversized = [index for index, image in enumerate(images, start=1)
-                 if len(image) > limit_mb * 1024 * 1024]
-    if oversized:
-        raise ValueError(
-            f"第 {'、'.join(str(index) for index in oversized)} 张图超过 {limit_mb}MB"
-            "（data URL 长度），请压缩后再送识别")
-
-    trace = get_trace_id() or "-"
+        raise VisionInputError(f"一次最多识别 {settings.vision_max_images} 张图片")
+    if sum(map(len, images)) > MAX_VISION_REQUEST_BYTES:
+        raise VisionInputError("图片总大小超限，请压缩后再送识别")
+    max_image_bytes = settings.vision_max_image_mb * 1024 * 1024
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    for index, image in enumerate(images, start=1):
+    for image in images:
+        if len(image) > max_image_bytes:
+            raise VisionInputError(f"单张图片超过 {settings.vision_max_image_mb} MiB，请压缩后再送识别")
+        media_type, _, encoded = image.partition(",")
+        if media_type not in IMAGE_DATA_TYPES or not encoded:
+            raise VisionInputError("请提供 Base64 图片")
+        try:
+            base64.b64decode(encoded, validate=True)
+        except ValueError:
+            raise VisionInputError("图片 Base64 编码无效") from None
         content.append({"type": "image_url", "image_url": {"url": image}})
-        logger.info("%s入参 trace=%s provider=%s model=%s 第%d张图 bytes≈%d",
-                    scene, trace, chosen["provider"], chosen["model"], index, len(image))
 
     payload = {
-        "model": chosen["model"],
+        "model": chosen.get("model"),
         "temperature": 0.1,
         "messages": [{"role": "user", "content": content}],
     }
     started = time.perf_counter()
-    async with httpx.AsyncClient(timeout=timeout) as client:
-        response = await client.post(f"{chosen['base_url']}/chat/completions",
-                                     headers={"Authorization": f"Bearer {chosen['api_key']}",
-                                              "Content-Type": "application/json"},
-                                     json=payload)
-        if response.status_code >= 400:
-            # 和文本调用一个原则：厂商的报错正文必须带出来（"Model not exist" 全在正文里）
-            logger.error("%s调用失败 trace=%s provider=%s model=%s status=%d body=%s",
-                         scene, trace, chosen["provider"], chosen["model"],
-                         response.status_code, response.text[:600])
-            # 视觉调用同样计量（失败也记），平台监控里能看出"图片识别是不是在报错"
-            record_chat_usage(chosen=chosen, scene=scene,
-                              latency_ms=int((time.perf_counter() - started) * 1000), success=False)
-            raise RuntimeError(f"{chosen['provider']} 返回 {response.status_code}："
-                               f"{response.text[:300]}")
-        data = response.json()
-    latency_ms = int((time.perf_counter() - started) * 1000)
-    logger.info("%s出参 trace=%s provider=%s model=%s cost=%dms body=%s",
-                scene, trace, chosen["provider"], chosen["model"],
-                latency_ms,
-                str(data)[:1200])
-    record_chat_usage(chosen=chosen, scene=scene, latency_ms=latency_ms, data=data)
+    try:
+        data = await _send_vision_json(chosen, payload, timeout, transport=_transport)
+        if not message_content(data):
+            raise ModelCallFailure("MODEL_RESPONSE_INVALID")
+    except ModelCallFailure as failure:
+        logger.warning("视觉模型调用失败 trace=%s code=%s status=%s",
+                       get_trace_id() or "-", failure.code, failure.status_code or "-")
+        if failure.attempted:
+            _meter(tenant_code=tenant_code, chosen=chosen, scene="图片识别",
+                   latency_ms=int((time.perf_counter() - started) * 1000), success=False)
+        raise
+    _meter(tenant_code=tenant_code, chosen=chosen, scene="图片识别",
+           latency_ms=int((time.perf_counter() - started) * 1000), data=data)
     return data
 
 
 def message_content(data: dict[str, Any]) -> str:
-    """从响应里取正文（多模态响应结构和文本一样，都是 choices[0].message.content）。"""
-    choices = data.get("choices") or []
-    if not choices:
+    """Extract the text returned in the first assistant message."""
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
         return ""
-    message = choices[0].get("message") or {}
-    return str(message.get("content") or "").strip()
+    message = choices[0].get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    return content.strip() if isinstance(content, str) else ""

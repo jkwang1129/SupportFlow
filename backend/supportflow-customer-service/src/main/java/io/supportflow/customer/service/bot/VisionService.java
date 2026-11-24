@@ -1,7 +1,9 @@
 package io.supportflow.customer.service.bot;
 
+import io.supportflow.common.exception.BizException;
 import io.supportflow.customer.dto.bot.VisionResult;
 import io.supportflow.customer.internal.VisionAiClient;
+import io.supportflow.customer.service.session.SessionAttachmentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -9,7 +11,6 @@ import org.springframework.stereotype.Service;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import io.supportflow.customer.service.session.SessionAttachmentService;
 
 /**
  * 图片识别的业务编排：取图 → 压图 → 交给视觉模型 → 把结论交给客服大脑。
@@ -51,35 +52,28 @@ public class VisionService {
         try {
             images = attachmentService.toVisionImages(tenantCode, sessionNo, fileIds);
         } catch (Exception e) {
-            log.warn("读取聊天图片失败 tenant={} session={} error={}", tenantCode, sessionNo, e.getMessage());
-            return VisionResult.unavailable("图片读取失败：" + e.getMessage());
+            log.warn("读取聊天图片失败 tenant={} session={} errorType={}",
+                    tenantCode, sessionNo, e.getClass().getSimpleName());
+            return VisionResult.unavailable("图片读取失败");
         }
         long preparedCost = System.currentTimeMillis() - prepareStarted;
         if (images.isEmpty()) {
             return VisionResult.unavailable("没有可识别的图片");
         }
         try {
-            // 把"客户随图说的那句话"也打出来：客户发的图和他说的话，是判断"答得对不对"的两个前提
-            log.info("[图片识别] 开始识别 tenant={} session={} 张数={} 预处理={}ms（并发） 随图那句话={}",
-                    tenantCode, sessionNo, images.size(),
-                    preparedCost,
-                    question == null || question.isBlank() ? "（客户没写字，只发了图）" : question);
+            log.info("开始识别图片 tenant={} session={} imageCount={} prepareMs={}",
+                    tenantCode, sessionNo, images.size(), preparedCost);
             long modelStarted = System.currentTimeMillis();
             Map<String, Object> result = aiClient.recognize(tenantCode, sessionNo, images, question);
             long modelCost = System.currentTimeMillis() - modelStarted;
             VisionResult vision = VisionResult.from(result);
-            log.info("[图片识别] 结果 tenant={} session={} 可用={} 模型={} 耗时={}ms（预处理 {}ms + 模型 {}ms）\n"
-                            + "  判读：{}\n  订单号：{} 金额：{} 建议人工：{}\n  图中文字（{}字）：\n{}",
-                    tenantCode, sessionNo, vision.available(), vision.model(),
-                    preparedCost + modelCost, preparedCost, modelCost,
-                    vision.summary().isEmpty() ? "（无）" : vision.summary(),
-                    vision.orderNo().isEmpty() ? "（无）" : vision.orderNo(),
-                    vision.amount().isEmpty() ? "（无）" : vision.amount(),
-                    vision.needHuman(), vision.ocrText().length(), indent(vision.ocrText()));
+            log.info("图片识别结果 tenant={} session={} available={} prepareMs={} modelMs={} ocrChars={}",
+                    tenantCode, sessionNo, vision.available(), preparedCost, modelCost, vision.ocrText().length());
             return vision;
         } catch (Exception e) {
-            log.warn("图片识别失败 tenant={} session={} error={}", tenantCode, sessionNo, e.getMessage());
-            return VisionResult.unavailable(e.getMessage());
+            log.warn("图片识别失败 tenant={} session={} errorType={}",
+                    tenantCode, sessionNo, e.getClass().getSimpleName());
+            return VisionResult.unavailable(e instanceof BizException ? e.getMessage() : "图片识别暂不可用");
         }
     }
 
@@ -121,20 +115,8 @@ public class VisionService {
             builder.append("\n图中文字：").append(truncate(result.ocrText(), 600));
         }
         String questionText = builder.toString();
-        // 把"真正喂给大脑的那段话"打进日志：客户发图后，机器人答得对不对，
-        // 第一件事就是看它到底收到了什么（图里的文字有没有被带进去）
-        log.info("[图片识别] 交给大脑的上下文（{}字）：\n{}",
-                questionText.length(), indent(questionText));
+        log.info("图片识别上下文已装配 contextChars={}", questionText.length());
         return questionText;
-    }
-
-    /** 多行文本缩进后打进日志（截断），方便和客户发的图逐行对照 */
-    private String indent(String value) {
-        if (value == null || value.isBlank()) {
-            return "  （没识别到文字）";
-        }
-        String text = value.replaceAll("\\s+", " ").trim();
-        return "  " + (text.length() <= 500 ? text : text.substring(0, 500) + "…");
     }
 
     private String truncate(String value, int max) {

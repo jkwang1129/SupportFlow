@@ -1,4 +1,4 @@
-"""Private bounded model transport shared by Chat and query Embedding."""
+"""Private bounded transport for Chat, Vision and query Embedding."""
 import asyncio
 import json
 import math
@@ -8,9 +8,10 @@ from urllib.parse import urlsplit
 import httpx
 
 MAX_CHAT_BYTES=262144
+MAX_VISION_REQUEST_BYTES = 19 * 1024 * 1024
 
 
-def _request_body(payload):
+def _request_body(payload, limit):
     pending=[(payload,0)];nodes=units=0
     while pending:
         item,depth=pending.pop();nodes+=1
@@ -30,11 +31,11 @@ def _request_body(payload):
         elif type(item) is int:
             if not -9223372036854775808<=item<=9223372036854775807:raise ValueError()
         elif item is not None and type(item) is not bool:raise ValueError()
-        if units>MAX_CHAT_BYTES:raise ValueError()
+        if units>limit:raise ValueError()
     body=bytearray()
     for part in json.JSONEncoder(ensure_ascii=False,allow_nan=False,separators=(',',':')).iterencode(payload):
         chunk=part.encode('utf-8')
-        if len(chunk)>MAX_CHAT_BYTES-len(body):raise ValueError()
+        if len(chunk)>limit-len(body):raise ValueError()
         body.extend(chunk)
     return bytes(body)
 
@@ -68,17 +69,22 @@ async def _send_chat_json(chosen,payload,timeout,*,transport=None):
     return await _send_model_json(chosen,payload,timeout,endpoint='chat/completions',transport=transport)
 
 
+async def _send_vision_json(chosen, payload, timeout, *, transport=None):
+    return await _send_model_json(chosen, payload, timeout, endpoint='chat/completions',
+                                  transport=transport, request_limit=MAX_VISION_REQUEST_BYTES)
+
+
 async def _send_embedding_json(chosen,payload,timeout,*,transport=None):
     return await _send_model_json(chosen,payload,timeout,endpoint='embeddings',transport=transport)
 
 
-async def _send_model_json(chosen,payload,timeout,*,endpoint,transport=None):
+async def _send_model_json(chosen,payload,timeout,*,endpoint,transport=None,request_limit=MAX_CHAT_BYTES):
     if endpoint not in ('chat/completions','embeddings') or type(endpoint) is not str:
         raise ModelCallFailure('MODEL_OPERATION_INVALID',attempted=False)
     base,key,model=_configuration(chosen,timeout)
     try:
         if type(payload) is not dict or payload.get('model')!=model:raise ValueError()
-        body=_request_body(payload)
+        body=_request_body(payload,request_limit)
     except (ValueError,TypeError,UnicodeError,RecursionError):
         raise ModelCallFailure('MODEL_REQUEST_INVALID',attempted=False) from None
     try:

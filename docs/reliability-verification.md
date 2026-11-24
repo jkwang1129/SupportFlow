@@ -1753,3 +1753,13 @@ Windows 11、Temurin JDK 25、Python 3.11.5、隔离 PostgreSQL 17。变更涉�
 - 分别撤销 AI 用量读权限、临时改名 Ops 预算列。两种故障均返回 HTTP 503，各自在修复后恢复 200。首轮撤销 Ops 整表读权限先触发全局就绪拦截。改用预算列故障后确认了 MyBatis 原始异常的实际传播方式，现由预算端点识别并返回 503。
 
 原始 HTTP 判定保存在 `.local/verification/legacy-cost-guard.json`，SHA-256 为 `495d60dcf62a1718232bfc778d8701d3e142711fac796d41fd3276d921ebd3de`。Java 与联调日志分别为 `.local/implementation/e11-java-verify-final.log` 和 `.local/implementation/e11-security-flow-passed.log`。运行数据使用合成计量。真实供应商账单对账和生产并发下的计费偏差仍待验收。
+
+## E12 视觉模型有界传输与计量（2026-11-24）
+
+Windows 11、Python 3.11.5、Temurin JDK 25、本机 HTTP 供应商夹具。变更覆盖共用模型传输、视觉适配器和接口、客服 Java 视觉调用与图片消息诊断。配置、复现和回退见 [ADR-0071](decisions/0071-bounded-vision-model-transport.md)。
+
+- 在 `ai-service` 执行 `python -m pytest -q`，1150 项通过，483 项在这条命令的环境下跳过。新增视觉回归 22 项均通过。签名请求经真实回环 HTTP 发送一张超过文本请求上限 256 KiB 的合成图片。正常返回继续包含 OCR、订单号和人工建议，纯文本仍可用作摘要，未配置供应商时返回 `available=false`。
+- 429、503、401 各收到 1 次供应商请求及 1 次失败计量调用。慢读、超长响应、非法 Base64、超出单张或总请求上限、空或错误结构响应均有独立断言。发送前拒绝时观察到 0 次供应商计量。成功测试的合成用量 18 Token 正确传入对应租户的计量函数。
+- `mvn -B -f backend/pom.xml verify` 通过。新增 Java 回归 3 项，验证签名视觉请求、OCR 与订单号交接、503 与非法 JSON 回退，并检查跨两处 Java 视觉日志的内容。初次编译发现 OCR 交给客服大脑前仍有一处日志使用旧格式化函数，已保留业务上下文并将该日志改为只记录长度。
+
+本地 Python 测试原始报告和 Maven 日志分别保存在 `.local/implementation/e12-python.xml`、`.local/implementation/e12-java-verify-final.log`。合成数据只用于验证协议与计量归属，真实供应商兼容性、实际账单和 OCR 质量需单独验收。

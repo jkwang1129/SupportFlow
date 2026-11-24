@@ -40,7 +40,7 @@ public class VisionAiClient {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String baseUrl;
     private final String aiSecret;
-    private final boolean logPayload;
+    private final boolean logDiagnostics;
     private final int timeoutSeconds;
     /** 计费用量：调一次视觉识别算一次 AI 调用 */
     private final BillingUsageCollector billingUsageCollector;
@@ -50,7 +50,7 @@ public class VisionAiClient {
     public VisionAiClient(
             @Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String aiSecret,
             @Value("${supportflow.ai.vision-base-url:http://127.0.0.1:9100}") String baseUrl,
-            @Value("${supportflow.ai.log-payload:true}") boolean logPayload,
+            @Value("${supportflow.ai.log-payload:true}") boolean logDiagnostics,
             @Value("${supportflow.ai.vision-timeout-seconds:90}") int timeoutSeconds,
             BillingUsageCollector billingUsageCollector,
             CostGuardClient costGuardClient
@@ -62,7 +62,7 @@ public class VisionAiClient {
         this.aiSecret = aiSecret;
         this.baseUrl = (baseUrl == null || baseUrl.isBlank())
                 ? "http://127.0.0.1:9100" : baseUrl.replaceAll("/+$", "");
-        this.logPayload = logPayload;
+        this.logDiagnostics = logDiagnostics;
         this.timeoutSeconds = timeoutSeconds <= 0 ? 90 : timeoutSeconds;
         this.billingUsageCollector = billingUsageCollector;
         this.costGuardClient = costGuardClient;
@@ -79,8 +79,8 @@ public class VisionAiClient {
         // 成本闸门：超预算时不调多模态模型（图片识别是最贵的一类调用）
         Guard guard = costGuardClient.check(tenantCode);
         if (guard.skipModel()) {
-            log.warn("按成本策略跳过图片识别 tenant={} session={} reason={}",
-                    tenantCode, sessionNo, guard.reason());
+            log.warn("按成本策略跳过图片识别 tenant={} session={} mode={}",
+                    tenantCode, sessionNo, guard.mode());
             Map<String, Object> degraded = new LinkedHashMap<>();
             degraded.put("available", false);
             degraded.put("summary", "已按成本策略跳过图片识别");
@@ -95,71 +95,36 @@ public class VisionAiClient {
         body.put("session_id", sessionNo == null ? "" : sessionNo);
         body.put("images", images);
         body.put("question", question == null ? "" : question);
+        String traceId = TraceContext.getOrCreate();
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "/api/ai/v1/agent/vision"))
                     .timeout(Duration.ofSeconds(timeoutSeconds))
                     .header("Content-Type", "application/json;charset=UTF-8")
                     .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
-                    .header(TraceContext.HEADER_REQUEST_ID,
-                            TraceContext.getOrCreate())
+                    .header(TraceContext.HEADER_REQUEST_ID, traceId)
                     .POST(HttpRequest.BodyPublishers.ofString(
                             objectMapper.writeValueAsString(body), StandardCharsets.UTF_8))
                     .build();
             HttpResponse<String> response = httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode),
                     HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-            if (logPayload) {
-                // 图片 base64 不能整段打进日志；这里按字段打，识别结论一眼可见
-                Map<String, Object> parsed = objectMapper.readValue(response.body(), new TypeReference<>() {
-                });
-                log.info("图片识别响应 tenant={} session={} status={} 可用={} 模型={} 判读={} 订单号={} OCR={}字",
-                        tenantCode, sessionNo, response.statusCode(), parsed.get("available"),
-                        parsed.get("model"), parsed.get("summary"),
-                        parsed.get("order_no"),
-                        parsed.get("ocr_text") == null ? 0 : String.valueOf(parsed.get("ocr_text")).length());
-                if (logPayload && parsed.get("ocr_text") != null) {
-                    log.info("图片识别 OCR 原文 tenant={} session={}：{}",
-                            tenantCode, sessionNo, safe(String.valueOf(parsed.get("ocr_text"))));
-                }
+            if (logDiagnostics) {
+                log.info("图片识别响应 traceId={} status={} responseChars={}",
+                        traceId, response.statusCode(), response.body().length());
             }
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new BizException(50001, parseDetail(response.body()));
+                throw new BizException(50001, "图片识别服务返回 HTTP " + response.statusCode());
             }
             return objectMapper.readValue(response.body(), new TypeReference<>() {
             });
         } catch (BizException e) {
             throw e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BizException(50001, "图片识别调用被中断");
         } catch (Exception e) {
-            throw new BizException(50001, "图片识别调用失败：" + friendly(e));
+            log.warn("图片识别调用失败 traceId={} errorType={}", traceId, e.getClass().getSimpleName());
+            throw new BizException(50001, "图片识别调用失败");
         }
-    }
-
-    private String parseDetail(String body) {
-        try {
-            Map<String, Object> parsed = objectMapper.readValue(body, new TypeReference<>() {
-            });
-            Object detail = parsed.get("detail");
-            if (detail != null) {
-                return String.valueOf(detail);
-            }
-        } catch (Exception ignored) {
-            // 解析不出来就退回原文
-        }
-        return safe(body);
-    }
-
-    private String safe(String value) {
-        if (value == null) {
-            return "";
-        }
-        return value.length() > 400 ? value.substring(0, 400) + "..." : value;
-    }
-
-    private String friendly(Exception e) {
-        String message = e.getMessage() == null ? "" : e.getMessage();
-        if (message.contains("Connection refused") || message.contains("I/O error")) {
-            return "AI 服务（supportflow-ai）没启动";
-        }
-        return message.length() > 200 ? message.substring(0, 200) : message;
     }
 }

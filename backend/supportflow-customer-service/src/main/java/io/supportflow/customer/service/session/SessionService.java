@@ -659,8 +659,7 @@ public class SessionService {
             try {
                 List<Long> fileIds = imageFileIds(message.getContent());
                 if (fileIds.isEmpty()) {
-                    log.warn("图片消息里没有解析出文件 ID tenant={} sessionNo={} content={}",
-                            tenantCode, sessionNo, preview(message.getContent()));
+                    log.warn("图片消息里没有解析出文件 ID tenant={} sessionNo={}", tenantCode, sessionNo);
                     return;
                 }
                 // 客户随图说的那句话：没写字就是空串，视觉模型只按图判断
@@ -682,7 +681,8 @@ public class SessionService {
                     }
                 }
             } catch (Exception e) {
-                log.warn("图片识别失败 tenant={} sessionNo={} error={}", tenantCode, sessionNo, e.getMessage());
+                log.warn("图片识别失败 tenant={} sessionNo={} errorType={}",
+                        tenantCode, sessionNo, e.getClass().getSimpleName());
             } finally {
                 if (!handedOffToBrain) {
                     // 人工接待中 / 大脑不可用 / 识别失败：这一轮到此为止，提示得收掉
@@ -824,7 +824,7 @@ public class SessionService {
             current.setContent(update.getContent());
             return toMessageVO(current);
         } catch (Exception e) {
-            log.warn("回填图片识别结论失败 messageId={} error={}", messageId, e.getMessage());
+            log.warn("回填图片识别结论失败 messageId={} errorType={}", messageId, e.getClass().getSimpleName());
             return null;
         }
     }
