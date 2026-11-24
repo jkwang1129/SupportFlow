@@ -4,6 +4,7 @@ import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.customer.dto.ticket.ChannelTicketCommand;
 import io.supportflow.customer.service.ticket.TicketService;
+import io.supportflow.customer.service.session.SessionService;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.nio.ByteBuffer;
@@ -20,7 +21,11 @@ public final class AgentTicketCreations {
     private final JdbcTemplate jdbc;
     private final AgentSourceSnapshots snapshots;
     private final TicketService tickets;
-    public AgentTicketCreations(JdbcTemplate jdbc,TicketService tickets){this.jdbc=jdbc;this.tickets=tickets;snapshots=new AgentSourceSnapshots(jdbc);}
+    private final SessionService sessions;
+    public AgentTicketCreations(JdbcTemplate jdbc,TicketService tickets){this(jdbc,tickets,null);}
+    public AgentTicketCreations(JdbcTemplate jdbc,TicketService tickets,SessionService sessions){
+        this.jdbc=jdbc;this.tickets=tickets;this.sessions=sessions;snapshots=new AgentSourceSnapshots(jdbc);
+    }
 
     /** Confirms only the committed creation, never current ticket status or another execution. */
     public Receipt get(String tenant,UUID event,UUID run){
@@ -46,13 +51,16 @@ public final class AgentTicketCreations {
                 || !permit.request().argumentsSha256().equals(args.argumentsSha256()))throw conflict();
         jdbc.queryForObject("SELECT pg_advisory_xact_lock(?)",Object.class,lockKey(args));
         var existing=find(args);if(existing!=null)return existing;
-        var snapshot=snapshots.read(args.tenant(),args.eventId(),args.runId());
-        if(!snapshot.snapshotId().equals(args.snapshotId()))throw conflict();
+        // Lock the session before the source snapshot's shared locks. A notice
+        // will allocate an ordinary session sequence in the same transaction.
         var sources=jdbc.query("""
             SELECT s.id,s.session_no,s.customer_id FROM session s JOIN agent_event_outbox e ON e.tenant_code=s.tenant_code AND e.session_id=s.id
             WHERE e.tenant_code=? AND e.event_id=? AND e.run_id=? AND e.state='DELIVERED'
+            FOR UPDATE OF s
             """,(row,index)->new Source(row.getLong("id"),row.getString("session_no"),row.getObject("customer_id",Long.class)),args.tenant(),args.eventId(),args.runId());
         if(sources.size()!=1)throw new BizException(40406,"可建单的任务来源不存在");
+        var snapshot=snapshots.read(args.tenant(),args.eventId(),args.runId());
+        if(!snapshot.snapshotId().equals(args.snapshotId()))throw conflict();
         var source=sources.getFirst();
         if(source.id()<1 || source.customerId()!=null && source.customerId()<1)throw new BizException(40406,"可建单的任务来源不存在");
         if(source.customerId()!=null){
@@ -80,10 +88,21 @@ public final class AgentTicketCreations {
             INSERT INTO agent_ticket_receipt(tenant_code,run_id,event_id,snapshot_id,arguments_sha256,operation,schema_version,
                 step_key,step_no,fence,ticket_id,ticket_no) VALUES(?,?,?,?,?,'ticket.create','ticket-create-v1',?,?,?,?,?)
             """,args.tenant(),args.runId(),args.eventId(),args.snapshotId(),args.argumentsSha256(),permit.stepKey(),permit.stepNo(),permit.request().fence(),ticketId,created.ticketNo());
+        if (permit.requiresApproval()) appendNotice(args,source,created.ticketNo());
         var after=snapshots.read(args.tenant(),args.eventId(),args.runId());
         if(!after.snapshotId().equals(snapshot.snapshotId()) || !after.payloadHash().equals(snapshot.payloadHash()))throw conflict();
         validNow(permit);
         return new Receipt(args.runId(),args.eventId(),args.snapshotId(),args.argumentsSha256(),ticketId,created.ticketNo());
+    }
+    private void appendNotice(AgentTicketArguments args,Source source,String ticketNo){
+        if (sessions==null || ticketNo==null || !ticketNo.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,63}")) throw conflict();
+        String text="工单已创建，编号："+ticketNo;
+        var saved=sessions.appendMessage(args.tenant(),source.no(),SessionService.SENDER_SYSTEM,null,
+                5,text,SessionService.VISIBLE_ALL,"agent-ticket-notice:"+args.runId());
+        if (!text.equals(saved.content()) || !Integer.valueOf(SessionService.SENDER_SYSTEM).equals(saved.senderType())
+                || saved.senderId()!=null || !Integer.valueOf(5).equals(saved.msgType())
+                || !Integer.valueOf(SessionService.VISIBLE_ALL).equals(saved.visibleTo())
+                || !Long.valueOf(source.id()).equals(saved.sessionId()) || saved.seq()==null || saved.seq()<=0) throw conflict();
     }
     private void validNow(AgentActionPermit permit){
         var now=jdbc.queryForObject("SELECT clock_timestamp()",Timestamp.class);

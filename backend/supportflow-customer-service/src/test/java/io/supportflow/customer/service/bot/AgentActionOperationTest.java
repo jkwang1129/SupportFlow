@@ -21,6 +21,7 @@ class AgentActionOperationTest {
         var replyRequest=request(refs,AgentActionPermit.Operation.SESSION_REPLY);var ticketRequest=request(refs,AgentActionPermit.Operation.TICKET_CREATE);
         assertEquals(replyRequest,AgentActionPermit.verify(reply,replyRequest,KEY,now).request());
         assertEquals(ticketRequest,AgentActionPermit.verify(ticket,ticketRequest,KEY,now).request());
+        assertThrows(IllegalArgumentException.class,()->AgentActionPermit.verify(ticket,ticketRequest,KEY,now,true));
         assertThrows(IllegalArgumentException.class,()->AgentActionPermit.verify(ticket,replyRequest,KEY,now));
         assertThrows(IllegalArgumentException.class,()->AgentActionPermit.verify(reply,ticketRequest,KEY,now));
         assertEquals(AgentActionPermit.Operation.SESSION_REPLY,new AgentActionPermit.Request(refs.tenant(),refs.runId(),refs.eventId(),"reply-worker",1,refs.snapshotId(),refs.argumentsSha256()).operation());

@@ -93,3 +93,18 @@ test('visitor advances the cursor by the returned page and stops at a visibility
   await expect(page.locator('.v-content').last()).toHaveText('补拉完成后消息')
   expect(cursors()).toEqual([1, 101])
 })
+
+test('visitor sees the confirmed ticket number once after reconnect', async ({ page }) => {
+  const content = '工单已创建，编号：TICKET123'
+  const notice = { ...messages[1], senderType: 4, msgType: 5, content }
+  const { sockets, requests } = await openVisitor(page, (socket, number) => {
+    const initial = number === 1
+    push(socket, 'JOINED', { messages: initial ? [messages[0]] : [notice], lastSeq: initial ? 1 : 2 })
+  })
+  await expect(page.getByText(content, { exact: true })).toHaveCount(0)
+  await sockets[0].close()
+  await expect.poll(() => requests.filter((request) => request.type === 'SYNC')).toHaveLength(1)
+  push(sockets[1], 'SYNCED', { afterSeq: 1, messages: [notice], hasMore: false })
+  await expect(page.locator('.v-system')).toHaveText([content])
+  await expect(page.getByText(messages[0].content, { exact: true })).toBeVisible()
+})

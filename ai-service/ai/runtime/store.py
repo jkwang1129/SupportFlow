@@ -369,10 +369,13 @@ class RuntimeStore:
     def authorize_reply(self, tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash):
         return self._authorize_action(tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,'session.reply','reply-v1')
 
-    def authorize_ticket_create(self, tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash):
-        return self._authorize_action(tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,'ticket.create','ticket-create-v1')
+    def authorize_ticket_create(self, tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash,
+                                *, require_approval=False):
+        return self._authorize_action(tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,
+                                      'ticket.create','ticket-create-v1',require_approval=require_approval)
 
-    def _authorize_action(self,tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,operation,version):
+    def _authorize_action(self,tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,operation,version,
+                          *, require_approval=False):
         if (operation,version) not in (('session.reply','reply-v1'),('ticket.create','ticket-create-v1')):
             raise ValueError('Unsupported action authority operation')
         identifier(owner)
@@ -391,6 +394,8 @@ class RuntimeStore:
             if operation == 'ticket.create':
                 approval = connection.execute("""SELECT * FROM agent_approval
                     WHERE tenant_code=%s AND run_id=%s FOR SHARE""", (tenant, run_id)).fetchone()
+            if require_approval and approval is None:
+                raise ActionDenied('Action approval is not authorized')
             steps=connection.execute("""SELECT step_key,step_no FROM agent_step WHERE tenant_code=%s AND run_id=%s
                  AND fence=%s AND state='RESERVED' AND kind='TOOL' AND effect='WRITE' AND intent_ref=%s
                  ORDER BY step_no LIMIT 2 FOR SHARE""",(tenant,run_id,fence,Jsonb(expected))).fetchall()
@@ -410,7 +415,7 @@ class RuntimeStore:
             expires -= timedelta(milliseconds=100)
             if expires<=now: raise ActionDenied('Action authority is too close to expiry')
             step=steps[0]
-            return dict(version='action-v1',tenant_code=tenant,run_id=str(run_id),source_event_id=str(source_event_id),
+            return dict(version='action-v2' if require_approval else 'action-v1',tenant_code=tenant,run_id=str(run_id),source_event_id=str(source_event_id),
                         owner=owner,fence=fence,step_key=step['step_key'],step_no=step['step_no'],operation=operation,
                         snapshot_id=str(snapshot_id),arguments_sha256=arguments_hash,expires_at_ms=int(expires.timestamp()*1000))
 

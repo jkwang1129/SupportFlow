@@ -4,7 +4,7 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, field_validator, model_validator
 
 from ..config import get_settings
 from ..runtime.approvals import TicketApprovals
@@ -100,11 +100,14 @@ class ActionRequest(BaseModel):
     arguments_sha256: StrictStr = Field(pattern=r'^[0-9a-f]{64}$')
     operation: Literal['session.reply','ticket.create'] = 'session.reply'
     version: Literal['reply-v1','ticket-create-v1'] = 'reply-v1'
+    require_approval: StrictBool = False
 
     @model_validator(mode='after')
     def operation_version_pair(self):
         if (self.operation,self.version) not in (('session.reply','reply-v1'),('ticket.create','ticket-create-v1')):
             raise ValueError('Unsupported action operation/version pair')
+        if self.require_approval and self.operation != 'ticket.create':
+            raise ValueError('Approval-bound action requires ticket creation')
         return self
 
     @field_validator('source_event_id','snapshot_id')
@@ -175,7 +178,9 @@ def authorize(run_id: UUID, body: ActionRequest, request: Request, store=Depends
         raise HTTPException(503,'Ticket action authority is disabled')
     try:
         authorize=store.authorize_reply if body.operation=='session.reply' else store.authorize_ticket_create
-        grant=authorize(tenant,run_id,body.source_event_id,body.owner,body.fence,body.snapshot_id,body.arguments_sha256)
+        approval_policy = {'require_approval': True} if body.require_approval else {}
+        grant=authorize(tenant,run_id,body.source_event_id,body.owner,body.fence,body.snapshot_id,body.arguments_sha256,
+                        **approval_policy)
         if grant is None: raise HTTPException(404,'Run not found')
         return sign_authority(grant,get_settings().customer_secret.get_secret_value())
     except ActionDenied:

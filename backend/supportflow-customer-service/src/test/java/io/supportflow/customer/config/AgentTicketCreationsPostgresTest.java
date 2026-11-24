@@ -108,6 +108,41 @@ class AgentTicketCreationsPostgresTest extends SessionPostgresFixture {
         assertFalse(receipt.toString().contains("PRIVATE"));
     }
     @Test void anonymousSourceHasNoInventedCustomerButStillUsesRealTicketLifecycle(){source(false);create();facts(1,1);}
+    @Test void approvedNoticeIsVisibleOnceAndMatchesTheActualTicket(){
+        source(true);
+        var boundary=new AgentTicketCreations(jdbc,tickets,service);
+        var permit=AgentActionPermitFixtures.noticePermit(args,Instant.now().plusSeconds(4));
+        var receipt=tx(()->boundary.create(permit,args));
+        assertEquals(receipt,tx(()->boundary.create(permit,args)));
+        tx(()->{
+            var history=service.messagesAfter("TENANT_A",sessionNo,1L,10,false);
+            assertEquals(1,history.size());
+            assertEquals("工单已创建，编号："+receipt.ticketNo(),history.getFirst().content());
+            assertEquals(2L,history.getFirst().seq());
+            assertEquals(4,history.getFirst().senderType());
+            assertEquals(5,history.getFirst().msgType());
+            assertEquals(1,jdbc.queryForObject("SELECT count(*) FROM agent_ticket_receipt WHERE run_id=?",Integer.class,run));
+            return null;
+        });
+    }
+    @Test void conflictingNoticeKeyRollsBackTicketReceiptEventAndSequence(){
+        source(true);
+        tx(()->service.appendMessage("TENANT_A",sessionNo,1,null,1,"synthetic conflict",1,"agent-ticket-notice:"+run));
+        var boundary=new AgentTicketCreations(jdbc,tickets,service);
+        var permit=AgentActionPermitFixtures.noticePermit(args,Instant.now().plusSeconds(4));
+        assertEquals(40906,assertThrows(BizException.class,()->tx(()->boundary.create(permit,args))).getCode());
+        tx(()->{
+            assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM ticket WHERE source_session_id=?",Integer.class,sessionId));
+            assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM agent_ticket_receipt WHERE run_id=?",Integer.class,run));
+            assertEquals(3,jdbc.queryForObject("SELECT ticket_count FROM customer WHERE id=?",Integer.class,customerId));
+            assertEquals(0,jdbc.queryForObject("SELECT count(*) FROM customer_event WHERE customer_id=? AND event_type=10",Integer.class,customerId));
+            assertEquals(2L,jdbc.queryForObject("SELECT last_msg_seq FROM session WHERE id=?",Long.class,sessionId));
+            var history=service.messagesAfter("TENANT_A",sessionNo,1L,10,false);
+            assertEquals(1,history.size());
+            assertEquals("synthetic conflict",history.getFirst().content());
+            return null;
+        });
+    }
     @Test void exactUnicodeTitleAndMaximumUtf8BodyAreStoredWithoutSilentTruncation(){
         source(false);args=new AgentTicketArguments(args.tenant(),run,event.eventId(),args.snapshotId(),"🙂".repeat(128),"中".repeat(2730)+"xx");
         var receipt=create();facts(1,1);

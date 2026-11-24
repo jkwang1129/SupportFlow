@@ -20,10 +20,21 @@ def ticket_grant():return grant() | dict(operation='ticket.create',step_key='tic
 
 class TicketStore(AuthorityStore):
     def __init__(self):super().__init__();self.ticket_calls=[]
-    def authorize_ticket_create(self,*args):
+    def authorize_ticket_create(self,*args,require_approval=False):
         self.ticket_calls.append(args)
         if self.failure:raise self.failure
-        return ticket_grant()
+        return ticket_grant() | dict(version='action-v2' if require_approval else 'action-v1')
+
+
+def test_notice_authority_is_explicit_and_only_valid_for_ticket_creation(monkeypatch):
+    store=TicketStore()
+    with TestClient(build_app(monkeypatch,store=store,ticket_enabled=True)) as client:
+        result=send(client,ticket_action() | dict(require_approval=True))
+        assert result.status_code==200
+        assert result.json()==sign(ticket_grant() | dict(version='action-v2'),KEYS['customer'])
+        assert send(client,action() | dict(require_approval=True)).status_code==422
+        assert send(client,ticket_action() | dict(require_approval='true')).status_code==422
+    assert len(store.ticket_calls)==1 and not store.calls
 
 
 def test_ticket_authority_is_disabled_by_default_before_any_store_query(monkeypatch):

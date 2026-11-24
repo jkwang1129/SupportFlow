@@ -156,7 +156,21 @@ def _run_ticket_worker(tenant, base, secret, runtime_dsn, *, propose=False, auth
                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
 
 
-def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *, append_visitor, previous_read, timeline):
+def _visitor_messages(base, secret, source):
+    path = f'/api/customer/internal/sessions/{source.session_no}/messages'
+    query = f'tenantCode={source.tenant}&agentView=false&afterSeq={source.event_seq}'
+    expires = str(int(time.time()) + 20)
+    canonical = '\n'.join(('supportflow-customer:v1', 'REALTIME', expires, 'GET', path, query, source.tenant))
+    signature = hmac.digest(secret.encode(), canonical.encode(), 'sha256').hex()
+    headers = {'X-Tenant-Code': source.tenant, 'X-SupportFlow-Customer-Auth': f'{expires}:{signature}'}
+    with httpx.Client(trust_env=False, timeout=3, follow_redirects=False) as client:
+        response = client.get(f'{base}{path}?{query}', headers=headers)
+        assert response.status_code == 200 and response.json()['code'] == 0, response.status_code
+        return response.json()['data']
+
+
+def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *, realtime_secret,
+                           append_visitor, previous_read, timeline):
     from ai.runtime.approvals import TicketApprovals
     from ai.runtime.source import SourceClient
     from ai.runtime.ticket_creation import TicketCreationClient
@@ -270,7 +284,10 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             expected_sources.insert(0, (read_source.event_seq, read_source.message_id, read_source.source_event_id,
                                         read_run, 'DELIVERED'))
             assert store.get(tenant, read_run) == read_result
-        assert ordered_sources == expected_sources and message_count == len(expected_sources)
+        visitor_messages = _visitor_messages(base, realtime_secret, source)
+        notice_count = int(mode not in failures)
+        assert ordered_sources == expected_sources and message_count == len(expected_sources) + notice_count
+        assert len(visitor_messages) == notice_count
         if mode not in failures:
             assert result['state'] == 'SUCCEEDED' and audit['status'] == 'CONSUMED'
             assert len(writes) == 1 and writes[0]['state'] == 'SUCCEEDED' and audit['consumed_step_no'] == writes[0]['step_no']
@@ -280,6 +297,11 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
                                         receipt.ticket_id, receipt.ticket_no, writes[0]['step_no'])]
             assert result['result_ref']['business_ref'] == f'ticket:{receipt.ticket_id}'
             assert result['result_ref']['resource_ref'] == receipt.ticket_no
+            notice = visitor_messages[0]
+            assert (int(notice['seq']), notice['senderType'], notice['msgType'], notice['visibleTo']) == (
+                source.event_seq + 1, 4, 5, 1)
+            assert notice['content'] == f'工单已创建，编号：{receipt.ticket_no}'
+            assert notice['clientMsgNo'] == f'agent-ticket-notice:{run}'
             recovery_reads = int(network is not None)
             assert (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count']) == (
                 7 + recovery_reads, 4 + recovery_reads, 0, 0)
@@ -304,10 +326,11 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             approval_status=audit['status'], write_requests=network['posts'] if network is not None else None,
             recovery_receipt_requests=network['gets'] if network is not None else None,
             steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
-            tickets=len(facts), receipts=len(stored_receipts), events=events))
+            tickets=len(facts), receipts=len(stored_receipts), events=events, visitor_notices=len(visitor_messages)))
     artifact = ROOT / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v11', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v12', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
     print('Signed visitor -> Outbox -> proposal -> staff review -> approval Worker: 5 cases passed; '
-          'same-session read then create, receipt recovery after one POST, and zero writes after takeover, expiry or revocation', flush=True)
+          'same-session read then create, one visitor-visible notice per receipt including lost ACK, '
+          'and zero writes after takeover, expiry or revocation', flush=True)
     return timelines

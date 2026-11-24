@@ -23,6 +23,9 @@ class AgentActionAuthorityHttpTest {
         String secret=System.getenv("SUPPORTFLOW_RUNTIME_CUSTOMER_TEST_SECRET");
         try(var client=new AgentRuntimeClient(endpoint,secret);var http=HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()){
             var permit=client.authorizeTicketCreate(ticket);assertEquals(ticket,permit.request());assertEquals("ticket-1",permit.stepKey());
+            assertFalse(permit.requiresApproval());
+            assertEquals("AUTHORITY_HTTP_409",assertThrows(AgentRuntimeClient.DeliveryFailure.class,
+                    ()->client.authorizeTicketCreate(ticket,true)).code());
             assertEquals("AUTHORITY_HTTP_409",assertThrows(AgentRuntimeClient.DeliveryFailure.class,()->client.authorizeReply(reply)).code());
             assertThrows(IllegalArgumentException.class,()->client.authorizeReply(ticket));
             var cancel=URI.create(endpoint+"/"+ticket.runId()+"/cancel");

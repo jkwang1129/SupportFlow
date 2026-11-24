@@ -14,10 +14,17 @@ public final class AgentActionPermitFixtures {
         return permit(args,expires,AgentActionPermit.Operation.TICKET_CREATE);
     }
     public static AgentActionPermit permit(AgentTicketArguments args,Instant expires,AgentActionPermit.Operation operation){
+        return ticketPermit(args,expires,operation,false);
+    }
+    public static AgentActionPermit noticePermit(AgentTicketArguments args,Instant expires){
+        return ticketPermit(args,expires,AgentActionPermit.Operation.TICKET_CREATE,true);
+    }
+    private static AgentActionPermit ticketPermit(AgentTicketArguments args,Instant expires,AgentActionPermit.Operation operation,
+                                                   boolean requireApproval){
         try{
             String secret="synthetic-ticket-action-test-secret-000000000000";
             var request=new AgentActionPermit.Request(args.tenant(),args.runId(),args.eventId(),"ticket-worker",1,args.snapshotId(),args.argumentsSha256(),operation);
-            var json=new ObjectMapper().createObjectNode().put("version","action-v1").put("tenant_code",args.tenant())
+            var json=new ObjectMapper().createObjectNode().put("version",requireApproval?"action-v2":"action-v1").put("tenant_code",args.tenant())
                 .put("run_id",args.runId().toString()).put("source_event_id",args.eventId().toString()).put("owner","ticket-worker")
                 .put("fence",1).put("step_key","ticket-1").put("step_no",1).put("operation",operation.wire())
                 .put("snapshot_id",args.snapshotId().toString()).put("arguments_sha256",args.argumentsSha256()).put("expires_at_ms",expires.toEpochMilli());
@@ -25,7 +32,7 @@ public final class AgentActionPermitFixtures {
             for(String field:new String[]{"version","tenant_code","run_id","source_event_id","owner","fence","step_key","step_no","operation","snapshot_id","arguments_sha256","expires_at_ms"})wire.append('\n').append(json.get(field).asText());
             var mac=Mac.getInstance("HmacSHA256");mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8),"HmacSHA256"));
             json.put("signature",HexFormat.of().formatHex(mac.doFinal(wire.toString().getBytes(StandardCharsets.UTF_8))));
-            return AgentActionPermit.verify(json,request,secret,expires.minusSeconds(4));
+            return AgentActionPermit.verify(json,request,secret,expires.minusSeconds(4),requireApproval);
         }catch(Exception invalid){throw new IllegalStateException("Synthetic ticket permit failed",invalid);}
     }
     public static String grant(AgentTicketArguments args,String owner,long fence,Instant expires,String secret,AgentActionPermit.Operation operation)throws Exception{

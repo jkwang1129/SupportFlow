@@ -214,6 +214,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
         process=subprocess.Popen([str(java),'-Xms32m','-Xmx384m','-jar',str(jar),f'--server.port={port}',
             '--supportflow.bot.runtime-source-enabled=true','--supportflow.bot.runtime-read-tools-enabled=true',
             '--supportflow.bot.runtime-ticket-create-enabled=true',
+            f'--supportflow.bot.runtime-ticket-notice-tenant={SHADOW_TENANT}',
             '--supportflow.bot.runtime-approval-review-enabled=true', f'--supportflow.user.internal-base-url={role_base}',
             '--supportflow.bot.enabled=false', '--supportflow.bot.runtime-dispatch-enabled=true',
             f'--supportflow.bot.runtime-dispatch-tenant={SHADOW_TENANT}', '--supportflow.bot.runtime-shadow-admission-enabled=true',
@@ -425,6 +426,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             assert previous_read is not None
             approval_tracks = verify_ticket_approval(connect, base, child['SUPPORTFLOW_JWT_SECRET'], secret, store,
                                    runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'],
+                                   realtime_secret=child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'],
                                    append_visitor=lambda session_no, text, seq: _send_shadow_message(
                                        connect, base, child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'], store, session_no,
                                        text, expected_seq=seq),

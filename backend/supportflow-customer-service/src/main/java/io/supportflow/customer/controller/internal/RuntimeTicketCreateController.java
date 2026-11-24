@@ -4,6 +4,7 @@ import io.supportflow.common.api.ApiResponse;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.customer.security.*;
 import io.supportflow.customer.service.bot.*;
+import io.supportflow.customer.service.session.SessionService;
 import io.supportflow.customer.service.ticket.TicketService;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,14 +28,24 @@ public class RuntimeTicketCreateController {
     private final AgentTicketCreations creations;
     private final TransactionTemplate transaction;
     private final AgentRuntimeClient authority;
+    private final String noticeTenant;
     @Autowired public RuntimeTicketCreateController(JdbcTemplate jdbc,PlatformTransactionManager manager,TicketService tickets,
+            SessionService sessions, @Value("${supportflow.bot.runtime-ticket-notice-tenant:}") String noticeTenant,
             @Value("${supportflow.bot.runtime-ticket-create-enabled:false}") boolean enabled,
             @Value("${supportflow.ai.bot-base-url:http://127.0.0.1:9100}") String ai,
             @Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String secret){
-        this(jdbc,manager,tickets,enabled ? new AgentRuntimeClient(URI.create(ai.replaceAll("/+$","")+"/api/ai/v1/runtime/runs"),secret,Duration.ofSeconds(3)) : null);
+        this(jdbc,manager,tickets,sessions,noticeTenant,enabled ? new AgentRuntimeClient(
+                URI.create(ai.replaceAll("/+$","")+"/api/ai/v1/runtime/runs"),secret,Duration.ofSeconds(3)) : null);
     }
     public RuntimeTicketCreateController(JdbcTemplate jdbc,PlatformTransactionManager manager,TicketService tickets,AgentRuntimeClient authority){
-        creations=new AgentTicketCreations(jdbc,tickets);transaction=new TransactionTemplate(manager);transaction.setTimeout(5);this.authority=authority;
+        this(jdbc,manager,tickets,null,"",authority);
+    }
+    private RuntimeTicketCreateController(JdbcTemplate jdbc,PlatformTransactionManager manager,TicketService tickets,
+                                          SessionService sessions,String noticeTenant,AgentRuntimeClient authority){
+        if (!noticeTenant.isEmpty() && (!noticeTenant.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,15}")
+                || noticeTenant.equalsIgnoreCase("PLATFORM"))) throw new IllegalArgumentException("Invalid ticket notice tenant");
+        this.noticeTenant=noticeTenant;
+        creations=new AgentTicketCreations(jdbc,tickets,sessions);transaction=new TransactionTemplate(manager);transaction.setTimeout(5);this.authority=authority;
     }
     @PostMapping public ApiResponse<Map<String,String>> create(@RequestAttribute(RuntimeCustomerCall.ATTRIBUTE) RuntimeCustomerCall call,
             @RequestAttribute(RuntimeTicketCreateCommand.ATTRIBUTE) RuntimeTicketCreateCommand command,@PathVariable UUID eventId,@PathVariable UUID runId){
@@ -46,7 +57,7 @@ public class RuntimeTicketCreateController {
             var existing=transaction.execute(status->creations.find(args));
             if(existing!=null)return ApiResponse.ok(wire(call.tenant(),existing));
             // No business connection or row lock may remain held during this bounded RPC.
-            var permit=authority.authorizeTicketCreate(command.action());
+            var permit=authority.authorizeTicketCreate(command.action(),noticeTenant.equals(call.tenant()));
             return ApiResponse.ok(wire(call.tenant(),transaction.execute(status->creations.create(permit,args))));
         });
     }

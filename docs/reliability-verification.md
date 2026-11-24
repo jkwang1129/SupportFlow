@@ -1635,3 +1635,15 @@ Windows 11、Node 24.14.1、Chromium Headless Shell 159.0.8154.6、Temurin JDK 2
 - 实际服务用同一访客令牌重连，从已确认游标补到实际机器人回复。单独保存的坐席内部备注未出现在访客结果中。负数游标与其他会话分别返回 `40001`、`40301`。首轮测试助手把预期的拒绝帧也当作意外错误，调整后重新通过默认新库、历史库升级和独立 CLI 初始化三种环境。完整日志为 `.local/implementation/d18-real-services-final.log`。
 
 本批覆盖同一会话的 WebSocket 消息、序号和 ACK。签名访客消息之后的工单任务、人员审批和回执仍由 D16 的独立组合测试验证。工单结果向访客发布、Agent 执行事件续传继续单独验收。[设计、复现与发布顺序](decisions/0061-visitor-message-catchup.md)
+
+## D19 获批工单的访客确认消息（2026-11-24）
+
+Windows 11、Temurin JDK 25、Python 3.11.5、Node 24.14.1、Chromium 和隔离 PostgreSQL 17。全模块 Maven `verify` 通过并重新生成 JAR。首次服务验收沿用了本机旧 JAR，新断言捕获到建单后缺少确认消息。后续命令和启用及回退条件见 [ADR-0062](decisions/0062-approved-ticket-visitor-notice.md)。
+
+- `python scripts/test-customer-rls.py --with-ai` 通过 161 项客服数据库和 32 项 AI 知识库定向测试。工单事务测试 18 项通过，含新增的原子通知、重复请求和冲突回滚校验。冲突场景保留原有消息，工单、回执、客户事件与计数增量均为零。
+- Python 定向 49 项通过。普通全量 AI 测试 1,122 项通过、473 项按环境条件跳过。实际 PostgreSQL 的工单许可和审批消费定向 27 项通过，包含无审批拒发通知许可。Java 单元测试拒绝把签名正确的旧许可用于通知策略。
+- 浏览器 12 项通过。新增用例用受控 WebSocket 重现同一条系统消息同时来自重连快照与增量查询，最终仅显示一次。报告为 `.local/implementation/d19-browser.xml`。
+- 使用当前 JAR 执行 `python scripts/test-agent-runtime.py --with-java-delivery` 并限定 `runtime_ticket_authority or approval_consumption`。5 个签名访客案例符合预期。正常和 POST 确认丢失两案各产生 1 张工单、1 条回执和 1 条确认消息；继续读同一个回执和重跑 Worker 后数量保持。被接管、过期、撤回三案三项计数均为 0。确认正文仅含实际工单号，与签名访客视图和回执一致。
+- 更新 JAR 后的第一次联调已读到通知，夹具把 JSON 中的字符串序号与整数直接比较导致失败。按接口序号格式解码后复跑。日志为 `.local/implementation/d19-runtime-retested.log`，报告为 `.local/implementation/d19-evidence/runtime-ticket-approval.json`，SHA-256 为 `bacab0604912101b2d2238357a5c7337041879ed528aa410ca1936a580398ef9`。
+
+本批覆盖已获批工单的确认结果入库及同会话历史读取。Widget 在线主动通知、跨服务送达确认和第三方渠道展示继续单独验收。

@@ -33,6 +33,13 @@ def test_ticket_grant_is_bound_to_exact_write_and_does_not_change_budgets_or_ste
     assert ticket_authorize(store,items,tenant='TENANT_B') is None
 
 
+def test_unapproved_write_cannot_obtain_notice_authority(store):
+    items=values(store)
+    assert ticket_authorize(store,items)['version']=='action-v1'
+    with pytest.raises(ActionDenied):
+        ticket_authorize(store,items,require_approval=True)
+
+
 @pytest.mark.parametrize('change',[dict(operation='session.reply',version='reply-v1'),dict(operation='session.reply'),
     dict(version='reply-v1'),dict(business_ref='extra'),dict(resource_ref='visitor-session:8')])
 def test_reply_or_mismatched_intent_never_grants_ticket_authority(store,change):

@@ -40,15 +40,18 @@ public final class AgentActionPermit {
     private final String stepKey;
     private final long stepNo;
     private final Instant expiresAt;
+    private final boolean requiresApproval;
 
-    private AgentActionPermit(Request request, String stepKey, long stepNo, Instant expiresAt) {
+    private AgentActionPermit(Request request, String stepKey, long stepNo, Instant expiresAt, boolean requiresApproval) {
         this.request = request; this.stepKey = stepKey; this.stepNo = stepNo; this.expiresAt = expiresAt;
+        this.requiresApproval = requiresApproval;
     }
 
     public Request request() { return request; }
     public String stepKey() { return stepKey; }
     public long stepNo() { return stepNo; }
     public Instant expiresAt() { return expiresAt; }
+    public boolean requiresApproval() { return requiresApproval; }
 
     /** The write transaction must call this again using its database clock. */
     public void requireValidAt(Instant now) {
@@ -57,9 +60,15 @@ public final class AgentActionPermit {
     }
 
     static AgentActionPermit verify(JsonNode root, Request request, String secret, Instant now) {
+        return verify(root, request, secret, now, false);
+    }
+
+    static AgentActionPermit verify(JsonNode root, Request request, String secret, Instant now, boolean requireApproval) {
         if (root == null || !root.isObject() || root.size() != FIELDS.size()) throw invalid();
         root.fieldNames().forEachRemaining(name -> { if (!FIELDS.contains(name)) throw invalid(); });
-        if (!"action-v1".equals(text(root, "version")) || !request.operation().wire().equals(text(root, "operation"))
+        String version = requireApproval ? "action-v2" : "action-v1";
+        if ((requireApproval && request.operation() != Operation.TICKET_CREATE)
+                || !version.equals(text(root, "version")) || !request.operation().wire().equals(text(root, "operation"))
                 || !request.tenant().equals(text(root, "tenant_code")) || !request.runId().toString().equals(text(root, "run_id"))
                 || !request.eventId().toString().equals(text(root, "source_event_id")) || !request.owner().equals(text(root, "owner"))
                 || request.fence() != positiveLong(root, "fence") || !request.snapshotId().toString().equals(text(root, "snapshot_id"))
@@ -67,7 +76,7 @@ public final class AgentActionPermit {
         String step = text(root, "step_key"), signature = text(root, "signature");
         long stepNo = positiveLong(root, "step_no"), expires = positiveLong(root, "expires_at_ms");
         if (!identifier(step) || stepNo > 100 || !signature.matches("[0-9a-f]{64}")) throw invalid();
-        String canonical = String.join("\n", "supportflow-agent-action:v1", "action-v1", request.tenant(), request.runId().toString(),
+        String canonical = String.join("\n", "supportflow-agent-action:v1", version, request.tenant(), request.runId().toString(),
                 request.eventId().toString(), request.owner(), Long.toString(request.fence()), step, Long.toString(stepNo),
                 request.operation().wire(), request.snapshotId().toString(), request.argumentsSha256(), Long.toString(expires));
         if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) throw invalid();
@@ -77,7 +86,7 @@ public final class AgentActionPermit {
             if (!MessageDigest.isEqual(mac.doFinal(canonical.getBytes(StandardCharsets.UTF_8)), HexFormat.of().parseHex(signature)))
                 throw invalid();
         } catch (GeneralSecurityException error) { throw invalid(); }
-        var permit = new AgentActionPermit(request, step, stepNo, Instant.ofEpochMilli(expires));
+        var permit = new AgentActionPermit(request, step, stepNo, Instant.ofEpochMilli(expires), requireApproval);
         permit.requireValidAt(now);
         return permit;
     }

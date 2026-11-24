@@ -89,11 +89,14 @@ public final class AgentRuntimeClient implements AutoCloseable {
 
     /** Call outside the customer write transaction. Never retries a write or invents a new Run. */
     public AgentActionPermit authorizeReply(AgentActionPermit.Request action) {
-        return authorize(action,AgentActionPermit.Operation.SESSION_REPLY);
+        return authorize(action,AgentActionPermit.Operation.SESSION_REPLY,false);
     }
 
     public AgentActionPermit authorizeTicketCreate(AgentActionPermit.Request action) {
-        return authorize(action,AgentActionPermit.Operation.TICKET_CREATE);
+        return authorizeTicketCreate(action, false);
+    }
+    public AgentActionPermit authorizeTicketCreate(AgentActionPermit.Request action, boolean requireApproval) {
+        return authorize(action,AgentActionPermit.Operation.TICKET_CREATE,requireApproval);
     }
 
     public String reviewTicketApproval(AgentApprovalReview review) {
@@ -188,15 +191,18 @@ public final class AgentRuntimeClient implements AutoCloseable {
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_PROGRESS"); }
     }
 
-    private AgentActionPermit authorize(AgentActionPermit.Request action,AgentActionPermit.Operation expectedOperation) {
+    private AgentActionPermit authorize(AgentActionPermit.Request action,AgentActionPermit.Operation expectedOperation,
+                                        boolean requireApproval) {
         if (action == null || action.operation()!=expectedOperation) throw new IllegalArgumentException("Matching action reference is required");
         if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
             throw new IllegalStateException("Action authority must be fetched outside the business transaction");
         final byte[] body;
         try {
-            body = mapper.writeValueAsBytes(Map.of("tenant_code", action.tenant(), "source_event_id", action.eventId().toString(),
+            var fields = new java.util.LinkedHashMap<String,Object>(Map.of("tenant_code", action.tenant(), "source_event_id", action.eventId().toString(),
                     "owner", action.owner(), "fence", action.fence(), "snapshot_id", action.snapshotId().toString(),
                     "arguments_sha256", action.argumentsSha256(), "operation", action.operation().wire(), "version", action.operation().schemaVersion()));
+            if (requireApproval) fields.put("require_approval", true);
+            body = mapper.writeValueAsBytes(fields);
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_ACTION_REFERENCE"); }
         URI uri = URI.create(endpoint + "/" + action.runId() + "/authorize");
         var response = exchange(AgentRuntimeProtocol.request(uri, "POST", action.tenant(), body, secret), "AUTHORITY");
@@ -204,7 +210,7 @@ public final class AgentRuntimeClient implements AutoCloseable {
         if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, "AUTHORITY_HTTP_" + code);
         if (!hasPlainJsonBody(response))
             throw new DeliveryFailure(false, "INVALID_ACTION_PERMIT");
-        try { return AgentActionPermit.verify(mapper.readTree(response.body()), action, secret, Instant.now()); }
+        try { return AgentActionPermit.verify(mapper.readTree(response.body()), action, secret, Instant.now(), requireApproval); }
         catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_ACTION_PERMIT"); }
     }
 
