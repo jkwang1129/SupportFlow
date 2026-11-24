@@ -228,6 +228,19 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
         assertNull(server.failure.get());
     }
 
+    @Test void reviewerCanRequestOnlyTheTimelineReferenceAfterReload() throws Exception {
+        latestState.set("RUNNING");
+        var request = get("/api/customer/agent-approvals/sessions/" + sessionNo + "/latest-progress")
+                .param("includeTimeline", "true");
+        var response = LoginUserContext.bind(AuthState.ok(ADMIN), () -> mvc.perform(request).andReturn().getResponse());
+        assertEquals(200, response.getStatus());
+        assertEquals("no-store", response.getHeader("Cache-Control"));
+        assertEquals(JSON.valueToTree(Map.of("state", "RUNNING", "attempt", 2, "step_count", 7,
+                "timeline", Map.of("source_event_id", event.toString(), "run_id", run.toString()))),
+                JSON.readTree(response.getContentAsString()).get("data"));
+        assertNull(server.failure.get());
+    }
+
     @Test void latestProgressReauthorizesAfterTakeoverDuringTheLookup() throws Exception {
         latestState.set("RUNNING");
         takeoverDuringPreview.set(true);

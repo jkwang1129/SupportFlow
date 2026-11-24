@@ -95,7 +95,7 @@ def _assert_progress(base, key, source, run, facts):
         assert response.json()['data'] == {name: facts[name] for name in ('state', 'attempt', 'step_count')}
 
 
-def _assert_latest_progress(base, key, source, facts=None, *, unavailable=False):
+def _assert_latest_progress(base, key, source, facts=None, *, unavailable=False, timeline_run=None):
     path = base + f'/api/customer/agent-approvals/sessions/{source.session_no}/latest-progress'
     admin = {'Authorization': _fixture_token(key, source.tenant, 123)}
     agent = {'Authorization': _fixture_token(key, source.tenant, 124)}
@@ -111,6 +111,15 @@ def _assert_latest_progress(base, key, source, facts=None, *, unavailable=False)
         assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
         assert response.json().get('data') == (
             None if facts is None else {name: facts[name] for name in ('state', 'attempt', 'step_count')})
+        if timeline_run is not None:
+            params = {'includeTimeline': 'true'}
+            assert client.get(path, headers=agent, params=params).status_code == 403
+            assert client.get(path, headers=foreign, params=params).status_code == 404
+            with_timeline = client.get(path, headers=admin, params=params)
+            expected = response.json()['data'] | {'timeline': {
+                'source_event_id': str(source.source_event_id), 'run_id': str(timeline_run)}}
+            assert with_timeline.status_code == 200 and with_timeline.headers['cache-control'] == 'no-store'
+            assert with_timeline.json()['data'] == expected
 
 
 def _event_page(base, key, source, run, after_seq, *, expected_status=200):
@@ -414,7 +423,8 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             assert session_no not in live_notices.requests
         if mode not in ('taken_over_after_approval', 'expired_before_resume'):
             _assert_progress(base, jwt_key, source, run, result)
-        _assert_latest_progress(base, jwt_key, source, result, unavailable=mode == 'taken_over_after_approval')
+        _assert_latest_progress(base, jwt_key, source, result, unavailable=mode == 'taken_over_after_approval',
+                                timeline_run=run if has_previous_read else None)
         if has_previous_read:
             cursor = waiting_page['next_seq']
             resumed = _event_page(base, jwt_key, source, run, cursor)
@@ -448,9 +458,10 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             tickets=len(facts), receipts=len(stored_receipts), events=events, visitor_notices=len(visitor_messages),
             live_push=has_previous_read, synced_after_push_failure=fallback_history,
             latest_progress_restored=mode != 'taken_over_after_approval', expired_source_hidden=has_previous_read,
-            restored_while_running=running_progress, event_resume=event_resume))
+            restored_while_running=running_progress, event_resume=event_resume,
+            timeline_reference_recovered=has_previous_read))
     artifact = ROOT / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v16', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v17', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
     print('Signed visitor -> Outbox -> proposal -> staff review -> approval Worker: 5 cases passed; '
           'same-session read then create, one visitor-visible notice per receipt including lost ACK, '

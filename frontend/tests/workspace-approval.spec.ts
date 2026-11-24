@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from '@playwright/test'
-import type { ApprovalProgress } from '../src/api/customer/agentApproval'
+import type { ApprovalEvent, ApprovalProgress, ApprovalRunReference } from '../src/api/customer/agentApproval'
 
 const approvalPath = '/api/customer/agent-approvals'
 const firstSession = { sessionNo: 'SESSION_ALPHA', customerName: '测试访客甲', status: 2 }
@@ -22,6 +22,15 @@ function reply(route: Route, data: unknown) {
   return route.fulfill({ json: { code: 0, data } })
 }
 
+function event(seq: number, event_type: ApprovalEvent['event_type'], step_no: number | null = null): ApprovalEvent {
+  return { seq, event_type, occurred_at: '2026-11-24T08:00:00Z', step_no, outcome: null }
+}
+
+function eventPage(route: Route, after: number, events: ApprovalEvent[], hasMore = false) {
+  return reply(route, { schema_version: 'agent-run-events-v1', run_id: reference.run_id,
+    next_seq: events.at(-1)?.seq ?? after, has_more: hasMore, events })
+}
+
 async function workspace(page: Page, role = 'ADMIN') {
   const fixture = {
     active: 'PENDING' as 'PENDING' | 'APPROVED' | null,
@@ -30,9 +39,13 @@ async function workspace(page: Page, role = 'ADMIN') {
     progress: { state: 'PENDING', attempt: 1, step_count: 4 } as ApprovalProgress,
     progressUnavailable: false,
     progressReads: 0,
-    latest: null as ApprovalProgress | null,
+    latest: null as (ApprovalProgress & { timeline?: ApprovalRunReference }) | null,
     latestStatus: 200,
     latestSessions: [] as string[],
+    latestIncludesTimeline: [] as boolean[],
+    timelineReads: [] as number[],
+    timelineEvents: [] as ApprovalEvent[],
+    timelineReply: undefined as ((route: Route, after: number) => Promise<void>) | undefined,
     activeSessions: [] as string[],
     decisions: [] as unknown[],
   }
@@ -43,7 +56,7 @@ async function workspace(page: Page, role = 'ADMIN') {
   })
   await page.routeWebSocket('**/ws/realtime?*', () => {})
   await page.route('/api/**', async (route) => {
-    const path = new URL(route.request().url()).pathname
+    const { pathname: path, searchParams } = new URL(route.request().url())
     if (path.startsWith(`${approvalPath}/sessions/`) && path.endsWith('/active')) {
       const sessionNo = path.split('/').at(-2)!
       fixture.activeSessions.push(sessionNo)
@@ -53,8 +66,16 @@ async function workspace(page: Page, role = 'ADMIN') {
     if (path.startsWith(`${approvalPath}/sessions/`) && path.endsWith('/latest-progress')) {
       const sessionNo = path.split('/').at(-2)!
       fixture.latestSessions.push(sessionNo)
+      fixture.latestIncludesTimeline.push(searchParams.get('includeTimeline') === 'true')
       if (fixture.latestStatus !== 200) return route.fulfill({ status: fixture.latestStatus, json: {} })
       return reply(route, sessionNo === firstSession.sessionNo ? fixture.latest : null)
+    }
+    if (path === `${eventsPath}/timeline`) {
+      const after = Number(searchParams.get('afterSeq'))
+      fixture.timelineReads.push(after)
+      if (fixture.timelineReply) return fixture.timelineReply(route, after)
+      const rows = fixture.timelineEvents.filter(row => row.seq > after)
+      return eventPage(route, after, rows.slice(0, 16), rows.length > 16)
     }
     if (path === `${eventsPath}/proposal`) {
       if (fixture.previewStatus !== 200) return route.fulfill({ status: fixture.previewStatus, json: {} })
@@ -303,4 +324,137 @@ test('after reload the reviewer can follow a consumed approval to completion', a
   expect(fixture.latestSessions).toEqual(Array(3).fill(firstSession.sessionNo))
   expect(fixture.progressReads).toBe(0)
   expect(fixture.decisions).toHaveLength(1)
+})
+
+test('reconnects from the accepted cursor and renders an overlapping event once', async ({ page, context }) => {
+  await page.clock.install()
+  const fixture = await workspace(page)
+  fixture.timelineEvents = [event(1, 'run_started'), event(2, 'approval_required')]
+  await page.goto('/modules/workspace')
+  await selectSession(page)
+  const dialog = await openReview(page)
+  const timeline = dialog.getByRole('region', { name: '任务事件' })
+  await expect(timeline.getByText('等待坐席审批')).toBeVisible()
+  expect(fixture.timelineReads).toEqual([0])
+  await dialog.getByRole('button', { name: '批准', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: '撤销批准' })).toBeVisible()
+  await context.setOffline(true)
+  await expect(timeline.getByText(/网络连接已中断/)).toBeVisible()
+  await page.clock.runFor(6000)
+  expect(fixture.timelineReads).toEqual([0])
+
+  fixture.timelineReply = (route, after) => eventPage(route, after, [event(2, 'approval_required'), event(3, 'tool_started', 2)])
+  await context.setOffline(false)
+  await expect(timeline.getByText(/工具调用开始/)).toBeVisible()
+  expect(fixture.timelineReads).toEqual([0, 2])
+  await expect(timeline.getByText('等待坐席审批')).toHaveCount(1)
+  await expect(timeline.getByRole('listitem')).toHaveCount(3)
+
+  fixture.timelineReply = (route, after) => eventPage(route, after, [event(4, 'run_completed')])
+  fixture.progressUnavailable = true
+  await page.clock.runFor(2000)
+  await expect(dialog.getByText('任务执行完成')).toBeVisible()
+  await expect(timeline.getByText('任务结束 · 成功')).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '撤销批准' })).toHaveCount(0)
+  await expect(dialog.getByText(proposal.content)).toHaveCount(0)
+  await page.clock.runFor(6000)
+  expect(fixture.timelineReads).toEqual([0, 2, 3])
+  expect(fixture.decisions).toHaveLength(1)
+})
+
+test('does not overlap a slow page and aborts it before watching another session', async ({ page }) => {
+  await page.clock.install()
+  const fixture = await workspace(page)
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  fixture.timelineReply = async (route, after) => {
+    await held
+    await eventPage(route, after, [event(1, 'run_started')]).catch(() => {})
+  }
+  await page.goto('/modules/workspace')
+  await selectSession(page)
+  const dialog = await openReview(page)
+  try {
+    await expect.poll(() => fixture.timelineReads).toEqual([0])
+    await page.clock.runFor(6000)
+    expect(fixture.timelineReads).toEqual([0])
+    const cancelled = page.waitForEvent('requestfailed', request => request.url().includes(`${eventsPath}/timeline`))
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+    await cancelled
+    await expect(dialog).not.toBeVisible()
+    await selectSession(page, secondSession.customerName)
+    await openReview(page)
+    await expect(dialog.getByText('当前会话没有可审查的工单提案。')).toBeVisible()
+  } finally {
+    release()
+  }
+  await page.clock.runFor(6000)
+  await expect(dialog.getByRole('region', { name: '任务事件' })).toHaveCount(0)
+  await expect(dialog.getByText('任务开始')).toHaveCount(0)
+  expect(fixture.timelineReads).toEqual([0])
+})
+
+test('rediscovers the Run after reload and clears its events when scope is revoked', async ({ page }) => {
+  await page.clock.install()
+  const fixture = await workspace(page)
+  fixture.active = null
+  fixture.latest = { state: 'RUNNING', attempt: 2, step_count: 5,
+    timeline: { source_event_id: reference.source_event_id, run_id: reference.run_id } }
+  fixture.timelineEvents = [event(1, 'run_started')]
+  await page.goto('/modules/workspace')
+  await page.reload()
+  await selectSession(page)
+  const dialog = await openReview(page)
+  await expect(dialog.getByText('任务执行中')).toBeVisible()
+  await expect(dialog.getByText('任务开始')).toBeVisible()
+  expect(fixture.latestIncludesTimeline).toEqual([true])
+  expect(fixture.timelineReads).toEqual([0])
+
+  fixture.timelineReply = route => route.fulfill({ status: 410, json: {} })
+  await page.clock.runFor(2000)
+  await expect(dialog.getByText('当前工单任务的来源已过期。')).toBeVisible()
+  await expect(dialog.getByText('任务开始')).toHaveCount(0)
+  await expect(dialog.getByText('任务执行中')).toHaveCount(0)
+  await page.clock.runFor(6000)
+  expect(fixture.timelineReads).toEqual([0, 1])
+})
+
+test('retries a temporary error with the same cursor and stops at a sequence gap', async ({ page }) => {
+  await page.clock.install()
+  const fixture = await workspace(page)
+  fixture.timelineEvents = [event(1, 'run_started')]
+  await page.goto('/modules/workspace')
+  await selectSession(page)
+  const dialog = await openReview(page)
+  await expect(dialog.getByText('任务开始')).toBeVisible()
+  fixture.timelineReply = route => route.fulfill({ status: 503, json: {} })
+  await page.clock.runFor(2000)
+  await expect(dialog.getByText(/正在重试/)).toBeVisible()
+  fixture.timelineReply = (route, after) => eventPage(route, after, [event(3, 'run_completed')])
+  await page.clock.runFor(2000)
+  await expect(dialog.getByText(/请刷新审批窗口/)).toBeVisible()
+  await expect(dialog.getByText('任务结束 · 成功')).toHaveCount(0)
+  await page.clock.runFor(12000)
+  expect(fixture.timelineReads).toEqual([0, 1, 1])
+})
+
+test('drains a multi-page history and keeps the display bounded', async ({ page }) => {
+  await page.clock.install()
+  const fixture = await workspace(page)
+  fixture.active = null
+  fixture.latest = { state: 'SUCCEEDED', attempt: 2, step_count: 33,
+    timeline: { source_event_id: reference.source_event_id, run_id: reference.run_id } }
+  fixture.timelineEvents = [event(1, 'run_started'),
+    ...Array.from({ length: 33 }, (_, index) => event(index + 2, 'step_started', index + 1)),
+    event(35, 'run_completed')]
+  await page.goto('/modules/workspace')
+  await selectSession(page)
+  const dialog = await openReview(page)
+  const timeline = dialog.getByRole('region', { name: '任务事件' })
+  await expect(timeline.getByText('任务结束 · 成功')).toBeVisible()
+  await expect(timeline.getByRole('listitem')).toHaveCount(32)
+  await expect(timeline.getByRole('list')).toHaveAttribute('start', '4')
+  await page.clock.runFor(6000)
+  expect(fixture.timelineReads).toEqual([0, 16, 32])
+  expect(fixture.progressReads).toBe(0)
 })

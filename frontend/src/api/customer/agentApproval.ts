@@ -3,9 +3,12 @@ import { request } from '../request'
 export type ApprovalDecision = 'approve' | 'deny' | 'revoke'
 type ActiveStatus = 'PENDING' | 'APPROVED'
 
-export interface ApprovalReference {
+export interface ApprovalRunReference {
   source_event_id: string
   run_id: string
+}
+
+export interface ApprovalReference extends ApprovalRunReference {
   status: ActiveStatus
   expires_at: string
 }
@@ -19,15 +22,34 @@ export interface ApprovalProposal {
   content: string
 }
 
+export type ApprovalTerminalState = 'SUCCEEDED' | 'FAILED' | 'CANCELLED'
+
 export interface ApprovalProgress {
-  state: 'PENDING' | 'RUNNING' | 'WAITING_APPROVAL' | 'RETRY_WAIT' | 'SUCCEEDED' | 'FAILED' | 'CANCELLED'
+  state: 'PENDING' | 'RUNNING' | 'WAITING_APPROVAL' | 'RETRY_WAIT' | ApprovalTerminalState
   attempt: number
   step_count: number
 }
 
+export interface ApprovalEvent {
+  seq: number
+  event_type: 'run_started' | 'step_started' | 'step_completed' | 'tool_started' | 'tool_completed'
+    | 'approval_required' | 'run_completed' | 'run_failed' | 'run_cancelled'
+  occurred_at: string
+  step_no: number | null
+  outcome: 'SUCCEEDED' | 'FAILED' | 'UNKNOWN' | null
+}
+
+interface ApprovalEventPage {
+  schema_version: 'agent-run-events-v1'
+  run_id: string
+  next_seq: number
+  has_more: boolean
+  events: ApprovalEvent[]
+}
+
 const APPROVALS = '/customer/agent-approvals'
 
-function proposalPath(reference: ApprovalReference) {
+function proposalPath(reference: ApprovalRunReference) {
   return `${APPROVALS}/events/${encodeURIComponent(reference.source_event_id)}/runs/${encodeURIComponent(reference.run_id)}`
 }
 
@@ -43,15 +65,22 @@ export function readApproval(reference: ApprovalReference, signal: AbortSignal) 
   })
 }
 
-export function readApprovalProgress(reference: ApprovalReference, signal: AbortSignal) {
+export function readApprovalProgress(reference: ApprovalRunReference, signal: AbortSignal) {
   return request<ApprovalProgress>({
     url: `${proposalPath(reference)}/progress`, signal, silent: true,
   })
 }
 
 export function latestApprovalProgress(sessionNo: string, signal: AbortSignal) {
-  return request<ApprovalProgress | null>({
-    url: `${APPROVALS}/sessions/${encodeURIComponent(sessionNo)}/latest-progress`, signal, silent: true,
+  return request<(ApprovalProgress & { timeline?: ApprovalRunReference }) | null>({
+    url: `${APPROVALS}/sessions/${encodeURIComponent(sessionNo)}/latest-progress`,
+    params: { includeTimeline: true }, signal, silent: true,
+  })
+}
+
+export function readApprovalEvents(reference: ApprovalRunReference, afterSeq: number, signal: AbortSignal) {
+  return request<ApprovalEventPage>({
+    url: `${proposalPath(reference)}/timeline`, params: { afterSeq }, timeout: 8000, signal, silent: true,
   })
 }
 

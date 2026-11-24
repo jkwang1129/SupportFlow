@@ -1702,3 +1702,15 @@ Windows 11、Temurin JDK 25、Python 3.11.5 和隔离 PostgreSQL 17。使用合�
 - 本地不筛选用例重跑 `python scripts/test-agent-runtime.py`，471 项全部通过。报告为 `.local/implementation/d23-evidence/runtime-store-full.xml`。
 
 本批验收覆盖固定大小 HTTP 补拉及源权限检查。浏览器自动订阅、慢客户端、跨实例通知、进度推送延迟和用户取消入口留给后续验收。
+
+## D24 坐席工作台任务事件自动补拉（2026-11-24）
+
+Windows 11、Node 24.14.1、Chromium、Temurin JDK 25、Python 3.11.5 和隔离 PostgreSQL 17。设计、复现与回退见 [ADR-0067](decisions/0067-workspace-approval-event-recovery.md)。
+
+- 全模块 Maven `verify` 通过。客服数据库 171 项、AI 知识库 32 项通过。新增用例确认显式请求可获回读事件引用，默认进度响应仍只有三个字段。
+- 前端 `npm run build` 通过。Chromium 21 项浏览器测试全部通过，共增加 5 项。浏览器断线时停止请求，重连后从游标 2 继续；重叠事件仅显示一次。进度接口模拟断开后，已落库的终态事件仍更新标题并隐藏旧撤销入口。慢响应在关闭窗口时被取消，切换会话后未显示旧任务事件。
+- 其余新增浏览器用例覆盖整页重载重新发现任务及 410 清理、503 同游标重试、序号缺口停止和跨页补拉。35 条记录使用游标 0、16、32 发出三次查询，并保留末尾 32 条。浏览器使用受控 HTTP 夹具与虚拟定时器，报告为 `.local/implementation/d24-browser-acceptance.xml`。
+- Runtime 本地定向 `runtime_run_events or runtime_approval_review` 的 18 项通过。实际服务联调的 5 个签名访客工单场景通过，正常场景用会话重新定位任务并补到游标 17。普通坐席和其他租户读取引用分别返回 403 和 404，正常建单仍只有 1 次写请求、1 张工单和 1 条回执。
+- 原始联调报告为 `.local/implementation/d24-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v17`，SHA-256 为 `635986bd148af9e89fb37b4ced0bc499b209788b705bd68330f8c2a87c761f52`，日志为 `.local/implementation/d24-runtime.log`。
+
+本批覆盖坐席窗口内的自动补拉和断线恢复。跨实例通知、用户取消与完成竞争，以及实际部署下的首事件和完成延迟留给后续验收。

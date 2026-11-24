@@ -129,7 +129,8 @@ public class AgentTicketApprovalController {
     }
 
     @GetMapping("/sessions/{sessionNo}/latest-progress")
-    public ApiResponse<Map<String, Object>> latestProgress(@PathVariable String sessionNo, HttpServletResponse response) {
+    public ApiResponse<Map<String, Object>> latestProgress(@PathVariable String sessionNo,
+            @RequestParam(name="includeTimeline", defaultValue="false") boolean includeTimeline, HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-store");
         String tenant = requireReviewer().tenantCode();
         return TenantContext.bind(tenant, () -> {
@@ -144,7 +145,11 @@ public class AgentTicketApprovalController {
             }
             if (source == null || !approved.snapshotId().equals(source.snapshotId()))
                 throw new BizException(40407, "审批任务不可用");
-            return ApiResponse.ok(progressView(approved.progress()));
+            var progress = progressView(approved.progress());
+            if (!includeTimeline) return ApiResponse.ok(progress);
+            var details = new java.util.LinkedHashMap<>(progress);
+            details.put("timeline", Map.of("source_event_id", approved.eventId().toString(), "run_id", approved.runId().toString()));
+            return ApiResponse.ok(details);
         });
     }
 
