@@ -1698,5 +1698,7 @@ Windows 11、Temurin JDK 25、Python 3.11.5 和隔离 PostgreSQL 17。使用合�
 - 复测 `python scripts/test-customer-rls.py --with-ai` 通过 170 项客服数据库测试和 32 项 AI 知识库测试。新增客服覆盖匿名、普通坐席、其他租户、负数游标、序号跳跃、注入额外字段、源接管及超前游标。
 - 实际客服、AI、Worker 和实时服务联调通过 5 个签名访客工单场景。正常场景在审批等待时读到 10 条，重建 HTTP 客户端后从游标 10 补到 17，共 7 条。重发同一游标返回相同事件，读到尾部时得到空页。最终仍是 1 次写请求、1 张工单和 1 条回执。超前游标、会话被接管及快照过期分别返回 409、404、410。
 - 原始报告为 `.local/implementation/d23-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v16`，SHA-256 为 `da9a70023f7d88e5d07994e48f63b7296ec5dae7821c15562f225c988ca80377`。完整日志为 `.local/implementation/d23-runtime-final.log`。
+- 首轮远端完整 Runtime 套件通过 451 项，20 项 HTTP 测例在清理隔离数据库时被事件表外键阻断。本地定向命令未执行该独立夹具。已统一使用共享的 Runtime 数据库夹具，事件与源记录在同一次清理中重置。
+- 本地不筛选用例重跑 `python scripts/test-agent-runtime.py`，471 项全部通过。报告为 `.local/implementation/d23-evidence/runtime-store-full.xml`。
 
 本批验收覆盖固定大小 HTTP 补拉及源权限检查。浏览器自动订阅、慢客户端、跨实例通知、进度推送延迟和用户取消入口留给后续验收。

@@ -5,34 +5,20 @@ from threading import Barrier
 from uuid import UUID
 
 from fastapi.testclient import TestClient
-import psycopg
-from psycopg.rows import dict_row
 import pytest
 
 from ai.core import schema_guard
-from ai.runtime.store import RuntimeStore
 from ai.runtime.types import Lease
 from runtime_api_support import PATH, build_app, encode, event, signed
+from test_runtime_store_postgres import admin, store
 
 pytestmark = pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'),
                                 reason='requires disposable runtime PostgreSQL')
 
 
-def admin():
-    return psycopg.connect(os.environ['SUPPORTFLOW_RUNTIME_ADMIN_TEST_DSN'], autocommit=True, row_factory=dict_row)
-
-
 @pytest.fixture
-def receiver(monkeypatch):
-    with admin() as connection:
-        connection.execute('''TRUNCATE public.agent_approval,public.agent_ticket_reconciliation,public.agent_reply_reconciliation,
-            public.agent_model_token_reservation,public.agent_model_usage,public.agent_model_quota,public.agent_model_token_day,
-            public.agent_model_cost_day,
-            public.agent_payload,public.agent_step,public.agent_run''')
-    def connect(**kwargs):
-        return psycopg.connect(os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'], row_factory=dict_row, **kwargs)
-    store = RuntimeStore(connect)
-    monkeypatch.setattr(schema_guard, 'connect', connect)
+def receiver(monkeypatch, store):
+    monkeypatch.setattr(schema_guard, 'connect', store.connector)
     # This fixture isolates the additional runtime readiness checks; full AI/KB
     # checks are exercised by test-runtime-security.py, with separate databases.
     monkeypatch.setattr(schema_guard, '_missing', schema_guard.runtime_missing)

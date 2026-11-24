@@ -26,7 +26,8 @@ def store():
             public.agent_model_token_reservation,public.agent_model_usage,public.agent_model_quota,public.agent_model_token_day,
             public.agent_model_cost_day,
             public.agent_run_event,public.agent_payload,public.agent_step,public.agent_run''')
-    return RuntimeStore(lambda: psycopg.connect(os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'],row_factory=dict_row))
+    return RuntimeStore(lambda **kwargs: psycopg.connect(os.environ['SUPPORTFLOW_RUNTIME_TEST_DSN'],
+                                                        row_factory=dict_row, **kwargs))
 
 
 def request(tenant='TENANT_A',session='S1',seq=1):
