@@ -6,14 +6,19 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
+import java.math.BigDecimal;
 import java.net.URI;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * AI 服务的可观测查询客户端：按调用链号查明细、取单租户近 N 天成本。
@@ -22,7 +27,7 @@ import java.util.Map;
  * 一旦往里塞第二类查询，两个页面的改动就会互相牵制。多一个小客户端，
  * 换来的是两处失败互不影响。</p>
  *
- * <p>拿不到数据一律返回空结构：可观测页宁可显示"暂时取不到"，
+ * <p>可观测页在取数失败时返回空结构：页面宁可显示"暂时取不到"，
  * 也不能因为 AI 服务没起来就整页报错——告警与预算配置本身在 ops 库里，照常能看能改。</p>
  */
 @Component
@@ -32,6 +37,7 @@ public class AiObservabilityClient {
 
     private final String baseUrl;
     private final RestClient restClient;
+    private final RestClient guardClient;
     private final String aiSecret;
 
     public AiObservabilityClient(@Value("${supportflow.ai.internal-base-url:http://127.0.0.1:9100}") String baseUrl,
@@ -39,6 +45,10 @@ public class AiObservabilityClient {
         this.baseUrl = baseUrl;
         this.aiSecret = aiSecret;
         this.restClient = RestClient.builder().build();
+        var factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofMillis(200));
+        factory.setReadTimeout(Duration.ofMillis(700));
+        this.guardClient = RestClient.builder().requestFactory(factory).build();
     }
 
     /** 按调用链号查这次请求在 AI 侧发生了什么 */
@@ -56,7 +66,7 @@ public class AiObservabilityClient {
     /** 单租户近 N 天的成本与调用量（成本预算算使用率用） */
     @SuppressWarnings("unchecked")
     public Map<String, Object> tenantTotal(String tenantCode, int days) {
-        String path = baseUrl + "/api/internal/usage/tenant-total?tenantCode=" + tenantCode + "&days=" + days;
+        String path = tenantTotalPath(tenantCode, days);
         try {
             Map<String, Object> body = get(path, tenantCode).retrieve().body(Map.class);
             if (body != null) {
@@ -73,6 +83,31 @@ public class AiObservabilityClient {
         empty.put("tokens", 0);
         empty.put("available", false);
         return empty;
+    }
+
+    /** Budget enforcement needs a confirmed tenant total, including when the cost really is zero. */
+    public Optional<BigDecimal> tenantCostForGuard(String tenantCode, int days) {
+        try {
+            Map<?, ?> body = get(guardClient, tenantTotalPath(tenantCode, days), tenantCode)
+                    .retrieve().body(Map.class);
+            if (body != null && tenantCode.equals(body.get("tenantCode"))
+                    && Integer.valueOf(days).equals(body.get("days"))
+                    && (!body.containsKey("available") || Boolean.TRUE.equals(body.get("available")))
+                    && body.get("cost") instanceof Number cost) {
+                BigDecimal used = new BigDecimal(cost.toString());
+                if (used.signum() >= 0) {
+                    return Optional.of(used);
+                }
+            }
+            log.debug("成本闸门用量响应无效 tenant={}", tenantCode);
+        } catch (RestClientException | NumberFormatException e) {
+            log.debug("成本闸门用量查询失败 tenant={} errorType={}", tenantCode, e.getClass().getSimpleName());
+        }
+        return Optional.empty();
+    }
+
+    private String tenantTotalPath(String tenantCode, int days) {
+        return baseUrl + "/api/internal/usage/tenant-total?tenantCode=" + tenantCode + "&days=" + days;
     }
 
     /**
@@ -103,8 +138,12 @@ public class AiObservabilityClient {
     }
 
     private RestClient.RequestHeadersSpec<?> get(String path, String tenant) {
+        return get(restClient, path, tenant);
+    }
+
+    private RestClient.RequestHeadersSpec<?> get(RestClient client, String path, String tenant) {
         URI uri = URI.create(path);
-        return restClient.get().uri(uri)
+        return client.get().uri(uri)
                 .header("X-Tenant-Code", tenant)
                 .header(AiRequestSigner.HEADER,
                         AiRequestSigner.credential(aiSecret, "ops", HttpMethod.GET.name(), uri.getRawPath(), tenant));

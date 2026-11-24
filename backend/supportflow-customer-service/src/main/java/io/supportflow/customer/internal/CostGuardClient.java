@@ -3,88 +3,91 @@ package io.supportflow.customer.internal;
 import io.supportflow.customer.dto.cost.Guard;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
-import java.net.URI;
+import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongSupplier;
+import java.util.regex.Pattern;
 
-/**
- * AI 成本闸门：调模型之前问一次"这个租户还能不能花"。
- *
- * <p><b>这是「成本预算 + 超限动作」的执行点。</b>没有它，平台配的
- * 「超限降级 / 暂停」就只是配置项——账单会照涨。四个调模型的入口
- * （客服大脑 / 知识问答 / 图片识别 / 质检）在真正发请求前都过一遍这里。</p>
- *
- * <p>三条约定：</p>
- * <ol>
- *   <li><b>拿不到答案就放行</b>：ops 没起来不该变成"全站 AI 不能用"，
- *       成本治理是经营动作，不是可用性开关；</li>
- *   <li><b>结果缓存 60 秒</b>：每个请求都问一次 ops 太贵，而这个粒度的偏差可以接受；</li>
- *   <li><b>降级与暂停分开</b>：降级 = 跳过模型但仍把话接住（不转人工）；
- *       暂停 = 直接走人工，客户不会没人管。</li>
- * </ol>
- */
+/** Checks the tenant's monthly cost policy before dispatching legacy AI requests. */
 @Component
 public class CostGuardClient {
 
     private static final Logger log = LoggerFactory.getLogger(CostGuardClient.class);
-
-    /** 与 ops 侧缓存对齐：60 秒 */
-    private static final long CACHE_MILLIS = 60_000L;
+    private static final Pattern TENANT_CODE = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_-]{0,15}");
+    private static final long DECISION_TTL = Duration.ofSeconds(5).toNanos();
+    private static final long FAILURE_TTL = Duration.ofSeconds(1).toNanos();
+    private static final Guard UNAVAILABLE = new Guard(Guard.MODE_DEGRADE, "暂时无法核实 AI 预算");
 
     private final RestClient restClient;
+    private final LongSupplier ticker;
     private final Map<String, Entry> cache = new ConcurrentHashMap<>();
 
+    @Autowired
     public CostGuardClient(@Value("${supportflow.ops.internal-base-url:http://127.0.0.1:9095}") String baseUrl) {
-        this.restClient = RestClient.builder().baseUrl(baseUrl).build();
+        this(baseUrl, System::nanoTime);
     }
 
-    /** 查一次闸门（带缓存）；任何异常都按"正常"返回 */
-    @SuppressWarnings("unchecked")
+    CostGuardClient(String baseUrl, LongSupplier ticker) {
+        var factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofMillis(250));
+        factory.setReadTimeout(Duration.ofMillis(1200));
+        this.restClient = RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
+        this.ticker = ticker;
+    }
+
     public Guard check(String tenantCode) {
         String tenant = tenantCode == null ? "" : tenantCode.trim();
-        if (tenant.isEmpty()) {
-            return Guard.NORMAL;
+        if (!TENANT_CODE.matcher(tenant).matches() || "PLATFORM".equalsIgnoreCase(tenant)) {
+            return UNAVAILABLE;
         }
-        Entry cached = cache.get(tenant);
-        long now = System.currentTimeMillis();
-        if (cached != null && now - cached.at() < CACHE_MILLIS) {
-            return cached.guard();
-        }
-        Guard guard = Guard.NORMAL;
-        try {
-            Map<String, Object> body = restClient.get()
-                    .uri(URI.create("/api/ops/internal/observability/cost-guard?tenantCode=" + tenant))
-                    .retrieve().body(Map.class);
-            Object data = body == null ? null : body.get("data");
-            if (data instanceof Map<?, ?> map) {
-                int mode = intOf(map.get("mode"), Guard.MODE_NORMAL);
-                String reason = map.get("reason") == null ? "" : String.valueOf(map.get("reason"));
-                guard = new Guard(mode, reason);
+        Entry entry = cache.computeIfAbsent(tenant, ignored -> new Entry());
+        synchronized (entry) {
+            Decision previous = entry.decision;
+            if (previous != null && ticker.getAsLong() - previous.expiresAt() < 0) {
+                return previous.guard();
             }
-        } catch (Exception e) {
-            // 只记 debug：ops 没起来时这条会每个缓存周期刷一次，不该污染错误日志
-            log.debug("成本闸门查询失败，按正常放行 tenant={} error={}", tenant, e.getMessage());
+            Guard confirmed = fetch(tenant);
+            if (confirmed != null) {
+                entry.decision = new Decision(confirmed, ticker.getAsLong() + DECISION_TTL);
+            } else {
+                // Keep a confirmed pause in effect while Ops cannot verify a replacement policy.
+                Guard fallback = previous != null && previous.guard().isBlocked() ? previous.guard() : UNAVAILABLE;
+                entry.decision = new Decision(fallback, ticker.getAsLong() + FAILURE_TTL);
+            }
+            return entry.decision.guard();
         }
-        cache.put(tenant, new Entry(now, guard));
-        return guard;
     }
 
-    private static int intOf(Object raw, int fallback) {
-        if (raw instanceof Number number) {
-            return number.intValue();
-        }
+    private Guard fetch(String tenant) {
         try {
-            return raw == null ? fallback : Integer.parseInt(String.valueOf(raw).trim());
-        } catch (NumberFormatException e) {
-            return fallback;
+            Map<?, ?> body = restClient.get()
+                    .uri("/api/ops/internal/observability/cost-guard?tenantCode={tenant}", tenant)
+                    .retrieve().body(Map.class);
+            if (body != null && Integer.valueOf(0).equals(body.get("code"))
+                    && body.get("data") instanceof Map<?, ?> data
+                    && data.get("mode") instanceof Integer mode
+                    && mode >= Guard.MODE_NORMAL && mode <= Guard.MODE_BLOCK
+                    && data.get("reason") instanceof String reason) {
+                return new Guard(mode, reason);
+            }
+            log.debug("成本闸门响应格式无效 tenant={}", tenant);
+        } catch (RestClientException e) {
+            log.debug("成本闸门查询失败 tenant={} errorType={}", tenant, e.getClass().getSimpleName());
         }
+        return null;
     }
 
-    private record Entry(long at, Guard guard) {
+    private static final class Entry {
+        private Decision decision;
     }
 
-    }
+    private record Decision(Guard guard, long expiresAt) { }
+}

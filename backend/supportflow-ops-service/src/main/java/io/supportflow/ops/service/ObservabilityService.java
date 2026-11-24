@@ -42,7 +42,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.Optional;
 
 /**
  * 平台「可观测」：告警规则 + 告警事件 + 成本预算 + 成本闸门 + 调用链查询。
@@ -82,9 +82,6 @@ public class ObservabilityService {
     public static final int ACTION_DEGRADE = 2;
     public static final int ACTION_BLOCK = 3;
 
-    /** 成本闸门的缓存时长：60 秒。业务侧每个 AI 请求都问一次太贵，但也不能缓存太久 */
-    private static final long GUARD_CACHE_MILLIS = 60_000L;
-
     private static final DateTimeFormatter TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private static final Logger log = LoggerFactory.getLogger(ObservabilityService.class);
@@ -95,9 +92,6 @@ public class ObservabilityService {
     private final AiObservabilityClient aiClient;
     private final SnowflakeIdGenerator idGenerator;
     private final AuditLogClient auditLogClient;
-
-    /** 成本闸门缓存：tenantCode → [命中时间, 结果] */
-    private final Map<String, GuardEntry> guardCache = new ConcurrentHashMap<>();
 
     public ObservabilityService(ObservabilityAlertRuleMapper ruleMapper,
                                 ObservabilityAlertEventMapper eventMapper,
@@ -331,7 +325,6 @@ public class ObservabilityService {
             update.setEditor(operatorName);
             budgetMapper.updateById(update);
         }
-        guardCache.remove(tenant);
         auditLogClient.record(operator, MODULE, "保存成本预算", "租户", tenant, true,
                 "租户 " + tenant + " 月预算 " + monthly + " 元，"
                         + ratio + "% 预警，超限动作=" + actionText((short) action)
@@ -339,49 +332,34 @@ public class ObservabilityService {
         return budgets();
     }
 
-    /**
-     * 成本闸门（customer-service 每个 AI 请求前问一次，结果缓存 60 秒）。
-     *
-     * <p>返回 {@code mode}：1-正常、2-降级到规则/检索、3-暂停 AI。
-     * **没配预算或读取失败都按正常放行**——成本治理不该变成"AI 说挂就挂"；
-     * 反过来，配了动作就要真的生效，这是它与"仅告警"的区别。</p>
-     */
-    public CostGuardVO costGuard(String tenantCode) {
-        String tenant = tenantCode == null ? "" : tenantCode.trim();
-        if (tenant.isEmpty()) {
-            return guardResult(1, null, BigDecimal.ZERO, BigDecimal.ZERO, "缺少租户，按正常处理");
-        }
-        GuardEntry cached = guardCache.get(tenant);
-        long now = System.currentTimeMillis();
-        if (cached != null && now - cached.at() < GUARD_CACHE_MILLIS) {
-            return cached.result();
-        }
-        CostGuardVO result = computeGuard(tenant);
-        guardCache.put(tenant, new GuardEntry(now, result));
-        return result;
-    }
-
-    private CostGuardVO computeGuard(String tenant) {
+    /** Reads the current budget and month-to-date usage. Empty means enforcement could not be verified. */
+    public Optional<CostGuardVO> costGuard(String tenant) {
         TenantCostBudget budget = budgetMapper.selectOne(Wrappers.<TenantCostBudget>lambdaQuery()
                 .eq(TenantCostBudget::getTenantCode, tenant)
                 .eq(TenantCostBudget::getDeleted, false)
                 .last("LIMIT 1"));
         if (budget == null || !Boolean.TRUE.equals(budget.getIsEnabled())
                 || budget.getMonthlyBudget() == null || budget.getMonthlyBudget().signum() <= 0) {
-            return guardResult(1, budget, BigDecimal.ZERO, BigDecimal.ZERO, "未配置成本预算，不限制");
+            return Optional.of(guardResult(ACTION_ALERT_ONLY, budget, BigDecimal.ZERO, BigDecimal.ZERO,
+                    "未配置生效的成本预算，不限制"));
         }
-        Map<String, Object> usage = aiClient.tenantTotal(tenant, LocalDate.now().getDayOfMonth());
-        BigDecimal used = decimalOf(usage.get("cost"));
+        return aiClient.tenantCostForGuard(tenant, LocalDate.now().getDayOfMonth())
+                .map(used -> guardDecision(budget, used));
+    }
+
+    private CostGuardVO guardDecision(TenantCostBudget budget, BigDecimal used) {
         BigDecimal limit = budget.getMonthlyBudget();
-        BigDecimal ratio = limit.signum() == 0 ? BigDecimal.ZERO
-                : used.multiply(BigDecimal.valueOf(100)).divide(limit, 1, RoundingMode.HALF_UP);
-        int mode = 1;
+        BigDecimal ratio = used.multiply(BigDecimal.valueOf(100)).divide(limit, 1, RoundingMode.HALF_UP);
+        int mode = ACTION_ALERT_ONLY;
         String reason = "预算内";
-        if (ratio.compareTo(BigDecimal.valueOf(100)) >= 0) {
+        if (used.compareTo(limit) >= 0) {
             mode = budget.getOverAction() == null ? ACTION_ALERT_ONLY : budget.getOverAction();
-            reason = mode == ACTION_BLOCK
-                    ? "本月 AI 成本已超预算（" + used + " / " + limit + " 元），按策略暂停 AI 能力"
-                    : "本月 AI 成本已超预算（" + used + " / " + limit + " 元），按策略降级为规则与检索";
+            String action = switch (mode) {
+                case ACTION_ALERT_ONLY -> "按策略仅告警";
+                case ACTION_BLOCK -> "按策略暂停 AI 能力";
+                default -> "按策略降级为规则与检索";
+            };
+            reason = "本月 AI 成本已达到预算（" + used + " / " + limit + " 元），" + action;
         } else if (ratio.compareTo(BigDecimal.valueOf(budget.getAlertRatio() == null ? 80
                 : budget.getAlertRatio())) >= 0) {
             reason = "本月 AI 成本已用 " + ratio + "%（" + used + " / " + limit + " 元）";
@@ -774,7 +752,4 @@ public class ObservabilityService {
         return raw == null ? null : decimalOf(raw);
     }
 
-    /** 成本闸门缓存项 */
-    private record GuardEntry(long at, CostGuardVO result) {
-    }
 }

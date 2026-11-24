@@ -14,7 +14,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Loopback-only HTTP faults. Contains synthetic test input only. */
 public final class RuntimeReceiverStub implements AutoCloseable {
-    public record Request(String method, String rawPath, Map<String, List<String>> headers, byte[] body) { }
+    public record Request(String method, String rawPath, String rawQuery, Map<String, List<String>> headers,
+                          byte[] body) { }
     public record Reply(int status, String body, String type, long bodyDelayMillis, String location) {
         public Reply(int status, String body) { this(status, body, "application/json", 0, null); }
     }
@@ -37,7 +38,8 @@ public final class RuntimeReceiverStub implements AutoCloseable {
         try (exchange) {
             calls.incrementAndGet();
             Reply reply = handler.apply(new Request(exchange.getRequestMethod(), exchange.getRequestURI().getRawPath(),
-                    exchange.getRequestHeaders(), exchange.getRequestBody().readNBytes(8193)));
+                    exchange.getRequestURI().getRawQuery(), exchange.getRequestHeaders(),
+                    exchange.getRequestBody().readNBytes(8193)));
             exchange.getResponseHeaders().set("Content-Type", reply.type());
             if (reply.location() != null) exchange.getResponseHeaders().set("Location", reply.location());
             byte[] body = reply.body().getBytes(StandardCharsets.UTF_8);

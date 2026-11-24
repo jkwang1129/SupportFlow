@@ -1,4 +1,5 @@
 """Build JARs first, then verify actual services with disposable data and offline AI."""
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -13,6 +14,9 @@ if __name__ == '__main__':
     logs = ROOT / '.local/security-services'
     logs.mkdir(parents=True, exist_ok=True)
     stop = logs / 'stop'
+    cost_guard_report = ROOT / '.local/verification/legacy-cost-guard.json'
+    cost_guard_report.unlink(missing_ok=True)
+    cost_guard_cases = {}
     for scenario in ([], ['--legacy'], ['--empty-init']):
         label = 'FRESH CLI INIT' if '--empty-init' in scenario else ('LEGACY UPGRADE' if scenario else 'FRESH DEFAULT')
         failed = False
@@ -30,6 +34,8 @@ if __name__ == '__main__':
                     raise RuntimeError('Invalid disposable project identity')
                 from security.java_readiness import verify_java_readiness
                 verify_java_readiness(project)
+                from security.cost_guard import verify_cost_guard
+                cost_guard_cases[label] = verify_cost_guard(project)
                 psql = ['docker','exec',project+'-postgres-1','psql','-U','supportflow','-d','customer_db','-XqAt','-c']
                 observed = subprocess.check_output([*psql,"SELECT DISTINCT usename FROM pg_stat_activity WHERE backend_type='client backend' AND pid<>pg_backend_pid()"],text=True)
                 identities = set(observed.splitlines())
@@ -93,3 +99,5 @@ if __name__ == '__main__':
                 if remaining:
                     raise RuntimeError('Disposable project resources survived cleanup: '+project)
             print('Disposable containers, volumes and network removed', flush=True)
+    cost_guard_report.parent.mkdir(parents=True, exist_ok=True)
+    cost_guard_report.write_text(json.dumps(cost_guard_cases, indent=2) + '\n', encoding='utf-8')

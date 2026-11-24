@@ -1743,3 +1743,13 @@ Windows 11、Temurin JDK 25、Python 3.11.5、隔离 PostgreSQL 17 和两个独�
 联调报告为 `.local/implementation/d26-evidence/runtime-ticket-approval.json`，SHA-256 为 `a2451759165852ba634d5c75bc75f547cdc1969e961b531dff600d3ddb86ce80`。单调时钟原始记录为 `.local/implementation/d26-evidence/runtime-approval-progress-latency.json`，SHA-256 为 `74c36d00f26ae4c5b1d02497068d4eba8e38c7fe72c836f4a5a22149d9142b0f`。联调日志为 `.local/implementation/d26-runtime-final.log`。
 
 耗时是两个合成场景的单次观察，包含 CLI 启动和验收客户端的串行读取。测试拓扑为两个静态配置实时节点。生产部署中的网络条件、实际流量和长时间负载需在目标环境验收。
+
+## E11 旧客服 AI 月预算闸门（2026-11-24）
+
+Windows 11、Temurin JDK 25、Python 3.11.5、隔离 PostgreSQL 17。变更涉及客服 `CostGuardClient`、Ops 的预算控制器、判定服务和 AI 用量客户端，以及现有安全联调脚本。设计、超时、上线顺序和回退见 [ADR-0070](decisions/0070-legacy-ai-cost-guard.md)。
+
+- `mvn -B -f backend/pom.xml verify` 通过。新增 `CostGuardClientTest` 13 项通过。覆盖非法租户、无效响应、超时、短缓存与恢复、租户间独立查预算、同租户并发只刷新一次。客服大脑在降级和暂停期间对模型、计费收集器各调用 0 次。恢复后各调用 1 次。
+- `python scripts/test-security-flow.py` 通过默认新建库、旧库升级及空库 CLI 初始化。每种场景通过 14 项真实 Ops、AI 服务与受限 PostgreSQL 账号的 HTTP 检查，共 42 项。100 元合成预算下，99.95 元仍放行，达到 100 元后按配置暂停、降级或仅告警。另一租户的 200 元合成用量未计入当前租户。
+- 分别撤销 AI 用量读权限、临时改名 Ops 预算列。两种故障均返回 HTTP 503，各自在修复后恢复 200。首轮撤销 Ops 整表读权限先触发全局就绪拦截。改用预算列故障后确认了 MyBatis 原始异常的实际传播方式，现由预算端点识别并返回 503。
+
+原始 HTTP 判定保存在 `.local/verification/legacy-cost-guard.json`，SHA-256 为 `495d60dcf62a1718232bfc778d8701d3e142711fac796d41fd3276d921ebd3de`。Java 与联调日志分别为 `.local/implementation/e11-java-verify-final.log` 和 `.local/implementation/e11-security-flow-passed.log`。运行数据使用合成计量。真实供应商账单对账和生产并发下的计费偏差仍待验收。
