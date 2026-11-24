@@ -80,6 +80,16 @@ class TicketApprovalReviewRequest(TicketApprovalSource):
         return value
 
 
+class TicketApprovalEvents(TicketApprovalSource):
+    snapshot_id: StrictStr = Field(min_length=36, max_length=36)
+    after_seq: StrictInt = Field(ge=0, le=2147483647)
+
+    @field_validator('snapshot_id')
+    @classmethod
+    def snapshot_uuid(cls, value):
+        return cls.event_uuid(value)
+
+
 class TicketApprovalSession(BaseModel):
     model_config = ConfigDict(extra='forbid')
     session_no: StrictStr = Field(min_length=1, max_length=64)
@@ -259,3 +269,21 @@ def latest_ticket_approval_progress(body: TicketApprovalSession, request: Reques
         raise HTTPException(404, 'Reviewed approval task not found')
     response.headers['Cache-Control'] = 'no-store'
     return row
+
+
+@router.post('/{run_id}/ticket-approval-events')
+def ticket_approval_events(run_id: UUID, body: TicketApprovalEvents, request: Request, response: Response,
+                           store=Depends(runtime_store)):
+    if not get_settings().runtime_approval_review_enabled:
+        raise HTTPException(503, 'Runtime approval review is disabled')
+    try:
+        page = TicketApprovals(store).event_page(request.state.runtime_tenant, run_id, UUID(body.source_event_id),
+                                                 UUID(body.snapshot_id), body.after_seq)
+    except RuntimeConflict:
+        raise HTTPException(409, 'Event cursor exceeds the committed journal') from None
+    except psycopg.Error:
+        raise HTTPException(503, 'Approval persistence unavailable') from None
+    if page is None:
+        raise HTTPException(404, 'Approval events not found')
+    response.headers['Cache-Control'] = 'no-store'
+    return page

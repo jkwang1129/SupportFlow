@@ -89,11 +89,13 @@ def main():
                         'tests/test_approval_expiry_postgres.py',
                         'tests/test_runtime_approval_review_postgres.py',
                         'tests/test_runtime_trace_postgres.py',
+                        'tests/test_runtime_run_events_postgres.py',
                         f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)
         with connect('ai_db') as connection:
             audit_rows = connection.execute('SELECT * FROM agent_ticket_reconciliation ORDER BY tenant_code,run_id').fetchall()
             approval_rows = connection.execute('SELECT * FROM agent_approval ORDER BY tenant_code,run_id').fetchall()
+            run_events = connection.execute('SELECT * FROM agent_run_event ORDER BY tenant_code,run_id,seq').fetchall()
             usage_rows = connection.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall()
             quota_rows = connection.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall()
             token_rows = connection.execute('SELECT * FROM agent_model_token_reservation ORDER BY tenant_code,run_id,step_no').fetchall()
@@ -104,6 +106,11 @@ def main():
         with connect('ai_db') as connection:
             assert connection.execute('SELECT * FROM agent_ticket_reconciliation ORDER BY tenant_code,run_id').fetchall() == audit_rows
             assert connection.execute('SELECT * FROM agent_approval ORDER BY tenant_code,run_id').fetchall() == approval_rows
+            assert connection.execute('SELECT * FROM agent_run_event ORDER BY tenant_code,run_id,seq').fetchall() == run_events
+            assert connection.execute("""SELECT has_table_privilege('supportflow_ai','agent_run_event','SELECT'),
+                has_table_privilege('supportflow_ai','agent_run_event','INSERT,UPDATE,DELETE,TRUNCATE'),
+                has_table_privilege('supportflow_customer','agent_run_event','SELECT'),
+                has_table_privilege('supportflow_kb','agent_run_event','SELECT')""").fetchone() == (True, False, False, False)
             assert connection.execute('SELECT * FROM agent_model_usage ORDER BY tenant_code,run_id,step_no').fetchall() == usage_rows
             assert connection.execute('SELECT * FROM agent_model_quota ORDER BY tenant_code').fetchall() == quota_rows
             assert connection.execute('SELECT * FROM agent_model_token_reservation ORDER BY tenant_code,run_id,step_no').fetchall() == token_rows

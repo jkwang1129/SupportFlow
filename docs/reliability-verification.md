@@ -1685,3 +1685,18 @@ Windows 11、Temurin JDK 25、Python 3.11.5、Node 24.14.1、Chromium 和隔离 
 - 完整联调复跑通过 5 个签名访客工单案例。实际 Worker 消费审批并预留写步骤后，工单落库前客服只读接口返回 `RUNNING`、第 2 轮、7 步，当时工单数为 0。最终仍只有 1 次写请求、1 张工单、1 条回执和 1 条通知。查询期间匿名、普通坐席和其他租户管理员仍分别被拒绝。原始报告为 `.local/implementation/d22-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v15`，SHA-256 为 `f22d6f9b75d4e844936c02c02d89b0d16983114b180e027d571078a285b9f994`。完整日志为 `.local/implementation/d22-runtime-final.log`。
 
 本批验收覆盖按需进度恢复。任务事件序号、自动续传和用户取消单独验收。
+
+## D23 工单任务事件与序号补拉（2026-11-24）
+
+Windows 11、Temurin JDK 25、Python 3.11.5 和隔离 PostgreSQL 17。使用合成任务与账号。接口契约、部署顺序和回退见 [ADR-0066](decisions/0066-approval-run-event-cursor.md)。
+
+- `python scripts/test-versioned-migrations.py` 通过旧库升级和 17 项迁移器测试。014 → 015 后既有任务、步骤、审批、正文和核销保持一致，事件从切换后记录。新建初始化和结构漂移检查通过，覆盖六库 103 张表。结构检查拒绝 16 项 SQL 变更和 3 项元数据异常。
+- `python scripts/test-agent-runtime.py` 定向 `runtime_run_events or runtime_approval_review` 通过 18 项。新增测试重建客户端后按 `1–4`、`5–20`、`21–23` 读取连续事件；两个工具按预留次序开始并逆序完成。重复读返回相同事件，回滚不曝光未提交事件。另覆盖读角色写入拒绝、触发器 Readiness、错误快照、外租户、非授权调用者和超前游标。
+- 全模块 Maven `verify` 通过。普通全量 AI 测试 1,128 项通过，478 项按环境条件跳过。
+- 备份恢复演练重新校验六库 103 张表，并逐字段比对两个租户各 1 条已提交事件。恢复后的受限 AI 身份仍只能读当前租户。
+- 首轮客服数据库测试识别出跨 JSON 库返回树节点时事件数组序列化异常。改为从已校验字段显式构造响应，精确验证五个事件字段和可空字段。
+- 复测 `python scripts/test-customer-rls.py --with-ai` 通过 170 项客服数据库测试和 32 项 AI 知识库测试。新增客服覆盖匿名、普通坐席、其他租户、负数游标、序号跳跃、注入额外字段、源接管及超前游标。
+- 实际客服、AI、Worker 和实时服务联调通过 5 个签名访客工单场景。正常场景在审批等待时读到 10 条，重建 HTTP 客户端后从游标 10 补到 17，共 7 条。重发同一游标返回相同事件，读到尾部时得到空页。最终仍是 1 次写请求、1 张工单和 1 条回执。超前游标、会话被接管及快照过期分别返回 409、404、410。
+- 原始报告为 `.local/implementation/d23-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v16`，SHA-256 为 `da9a70023f7d88e5d07994e48f63b7296ec5dae7821c15562f225c988ca80377`。完整日志为 `.local/implementation/d23-runtime-final.log`。
+
+本批验收覆盖固定大小 HTTP 补拉及源权限检查。浏览器自动订阅、慢客户端、跨实例通知、进度推送延迟和用户取消入口留给后续验收。

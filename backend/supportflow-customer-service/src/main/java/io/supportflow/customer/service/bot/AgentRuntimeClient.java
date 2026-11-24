@@ -14,6 +14,8 @@ import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,6 +41,11 @@ public final class AgentRuntimeClient implements AutoCloseable {
     }
     private static final Set<String> STATES = Set.of("PENDING", "RUNNING", "WAITING_APPROVAL", "RETRY_WAIT", "SUCCEEDED", "FAILED", "CANCELLED");
     private static final Set<String> REVIEWED_PROGRESS_STATES = Set.of("RUNNING", "RETRY_WAIT", "SUCCEEDED", "FAILED", "CANCELLED");
+    private static final int EVENT_PAGE_SIZE = 16;
+    private static final Set<String> RUN_EVENT_TYPES = Set.of("run_started", "approval_required", "run_completed", "run_failed", "run_cancelled");
+    private static final Set<String> STEP_START_TYPES = Set.of("step_started", "tool_started");
+    private static final Set<String> STEP_END_TYPES = Set.of("step_completed", "tool_completed");
+    private static final Set<String> STEP_OUTCOMES = Set.of("SUCCEEDED", "FAILED", "UNKNOWN");
     private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private final HttpClient client;
@@ -213,6 +220,66 @@ public final class AgentRuntimeClient implements AutoCloseable {
             if (!STATES.contains(state)) throw new IllegalArgumentException();
             return new RunProgress(state, count(json, "attempt", Integer.MAX_VALUE), count(json, "step_count", 100));
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_PROGRESS"); }
+    }
+
+    public Map<String, Object> approvalEvents(AgentSourceSnapshots.Snapshot source, int afterSeq) {
+        if (source == null || afterSeq < 0) throw new IllegalArgumentException("Verified source and cursor required");
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Event lookup must run outside the business transaction");
+        final byte[] body;
+        try {
+            body = mapper.writeValueAsBytes(Map.of("source_event_id", source.eventId().toString(),
+                    "snapshot_id", source.snapshotId().toString(), "after_seq", afterSeq));
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_EVENT_REQUEST"); }
+        URI uri = URI.create(endpoint + "/" + source.runId() + "/ticket-approval-events");
+        var response = exchange(AgentRuntimeProtocol.request(uri, "POST", source.tenant(), body, secret), "APPROVAL_EVENTS");
+        int code = response.statusCode();
+        if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, "APPROVAL_EVENTS_HTTP_" + code);
+        if (!hasPlainJsonBody(response)) throw new DeliveryFailure(false, "INVALID_APPROVAL_EVENTS");
+        try {
+            JsonNode page = mapper.readTree(response.body());
+            if (!page.isObject() || page.size() != 8 || !"agent-run-events-v1".equals(text(page, "schema_version"))
+                    || !source.tenant().equals(text(page, "tenant_code")) || !source.eventId().equals(uuid(page, "source_event_id"))
+                    || !source.runId().equals(uuid(page, "run_id")) || !source.snapshotId().equals(uuid(page, "snapshot_id")))
+                throw new IllegalArgumentException();
+            JsonNode events = page.path("events"), more = page.path("has_more");
+            if (!events.isArray() || events.size() > EVENT_PAGE_SIZE || !more.isBoolean()
+                    || more.booleanValue() && events.size() != EVENT_PAGE_SIZE) throw new IllegalArgumentException();
+            int next = count(page, "next_seq", Integer.MAX_VALUE);
+            if ((long) next != (long) afterSeq + events.size()) throw new IllegalArgumentException();
+            int seq = afterSeq;
+            var view = new ArrayList<Map<String, Object>>(events.size());
+            for (JsonNode event : events) view.add(approvalEventView(event, ++seq));
+            return Map.of("schema_version", "agent-run-events-v1", "run_id", source.runId().toString(),
+                          "next_seq", next, "has_more", more.booleanValue(), "events", List.copyOf(view));
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_EVENTS"); }
+    }
+
+    private static Map<String, Object> approvalEventView(JsonNode event, int seq) {
+        if (!event.isObject() || event.size() != 5 || count(event, "seq", Integer.MAX_VALUE) != seq)
+            throw new IllegalArgumentException();
+        String timestamp = text(event, "occurred_at");
+        if (timestamp.length() > 40) throw new IllegalArgumentException();
+        Instant occurredAt = Instant.parse(timestamp);
+        String type = text(event, "event_type");
+        boolean started = STEP_START_TYPES.contains(type), ended = STEP_END_TYPES.contains(type);
+        Integer step = null;
+        if (started || ended) {
+            step = count(event, "step_no", 100);
+            if (step == 0) throw new IllegalArgumentException();
+        } else if (!RUN_EVENT_TYPES.contains(type) || !event.path("step_no").isNull()) {
+            throw new IllegalArgumentException();
+        }
+        String outcome = ended ? text(event, "outcome") : null;
+        if (ended ? !STEP_OUTCOMES.contains(outcome) : !event.path("outcome").isNull())
+            throw new IllegalArgumentException();
+        var view = new LinkedHashMap<String, Object>();
+        view.put("seq", seq);
+        view.put("event_type", type);
+        view.put("occurred_at", occurredAt.toString());
+        view.put("step_no", step);
+        view.put("outcome", outcome);
+        return view;
     }
 
     private AgentActionPermit authorize(AgentActionPermit.Request action,AgentActionPermit.Operation expectedOperation,

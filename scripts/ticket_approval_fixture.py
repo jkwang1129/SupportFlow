@@ -113,6 +113,23 @@ def _assert_latest_progress(base, key, source, facts=None, *, unavailable=False)
             None if facts is None else {name: facts[name] for name in ('state', 'attempt', 'step_count')})
 
 
+def _event_page(base, key, source, run, after_seq, *, expected_status=200):
+    path = _review_path(base, source, run) + '/timeline'
+    with httpx.Client(trust_env=False, timeout=3) as client:
+        auth = {'Authorization': _fixture_token(key, source.tenant, 123)}
+        response = client.get(path, headers=auth, params={'afterSeq': after_seq})
+        assert response.status_code == expected_status and response.headers['cache-control'] == 'no-store'
+        if expected_status != 200:
+            assert response.json().get('data') is None
+            return None
+        data = response.json()['data']
+        assert set(data) == {'schema_version', 'run_id', 'next_seq', 'has_more', 'events'}
+        assert data['schema_version'] == 'agent-run-events-v1' and data['run_id'] == str(run)
+        assert [event['seq'] for event in data['events']] == list(range(after_seq+1, data['next_seq']+1))
+        assert all(set(event) == {'seq', 'event_type', 'occurred_at', 'step_no', 'outcome'} for event in data['events'])
+        return data
+
+
 def _staff_review(client, base, key, source, run, row, title, content, *, revoke=False):
     auth = {'Authorization': _fixture_token(key, source.tenant, 123)}
     agent = {'Authorization': _fixture_token(key, source.tenant, 124)}
@@ -244,7 +261,13 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         assert asyncio.run(tickets.receipt(source, run)) is None
         _assert_progress(base, jwt_key, source, run, waiting)
         _assert_latest_progress(base, jwt_key, source)
+        waiting_page = None
+        event_resume = None
         if has_previous_read:
+            waiting_page = _event_page(base, jwt_key, source, run, 0)
+            assert not waiting_page['has_more'] and waiting_page['next_seq'] == 10
+            assert waiting_page['events'][0]['event_type'] == 'run_started'
+            assert waiting_page['events'][-1]['event_type'] == 'approval_required'
             track = timeline.for_event(tenant, source.source_event_id)
             assert track['binding_status'] == 'matched' and track['python_runtime']['approval']['status'] == 'PENDING'
             assert track['python_runtime']['run']['state'] == 'WAITING_APPROVAL'
@@ -393,6 +416,15 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             _assert_progress(base, jwt_key, source, run, result)
         _assert_latest_progress(base, jwt_key, source, result, unavailable=mode == 'taken_over_after_approval')
         if has_previous_read:
+            cursor = waiting_page['next_seq']
+            resumed = _event_page(base, jwt_key, source, run, cursor)
+            assert resumed == _event_page(base, jwt_key, source, run, cursor)
+            assert not resumed['has_more'] and resumed['next_seq'] == 17
+            assert resumed['events'][-1]['event_type'] == 'run_completed'
+            drained = _event_page(base, jwt_key, source, run, resumed['next_seq'])
+            assert drained['next_seq'] == 17 and not drained['has_more'] and drained['events'] == []
+            _event_page(base, jwt_key, source, run, 18, expected_status=409)
+            event_resume = dict(first_page=cursor, resumed_events=len(resumed['events']), final_cursor=drained['next_seq'])
             track = timeline.for_run(tenant, run)
             assert track['trace_id'] == timelines['approval_wait']['trace_id']
             assert track['python_runtime']['approval']['status'] == 'CONSUMED'
@@ -403,6 +435,9 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
                 db.execute("""UPDATE agent_source_snapshot SET created_at=clock_timestamp()-interval '2 hours',
                     expires_at=clock_timestamp()-interval '1 hour' WHERE tenant_code=%s AND run_id=%s""", (tenant, run))
             _assert_latest_progress(base, jwt_key, source, unavailable=True)
+            _event_page(base, jwt_key, source, run, cursor, expected_status=410)
+        if mode == 'taken_over_after_approval':
+            _event_page(base, jwt_key, source, run, 0, expected_status=404)
         observations.append(dict(case=mode, source_enrollment='SIGNED_VISITOR_APPEND',
             session_messages=message_count, delivered_source_events=len(ordered_sources), continued_from_ticket_read=has_previous_read,
             waiting_state=waiting['state'], before_review_writes=0, final_state=result['state'], error_code=result['error_code'],
@@ -413,9 +448,9 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             tickets=len(facts), receipts=len(stored_receipts), events=events, visitor_notices=len(visitor_messages),
             live_push=has_previous_read, synced_after_push_failure=fallback_history,
             latest_progress_restored=mode != 'taken_over_after_approval', expired_source_hidden=has_previous_read,
-            restored_while_running=running_progress))
+            restored_while_running=running_progress, event_resume=event_resume))
     artifact = ROOT / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v15', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v16', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
     print('Signed visitor -> Outbox -> proposal -> staff review -> approval Worker: 5 cases passed; '
           'same-session read then create, one visitor-visible notice per receipt including lost ACK, '
@@ -425,4 +460,6 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
     print('Latest reviewed progress: 4 terminal states recovered by session, 1 takeover and 1 expired snapshot hidden; '
           '1 consumed approval recovered in RUNNING before ticket creation; '
           'pending runs, anonymous users, regular agents and foreign tenants could not discover reviewed progress', flush=True)
+    print('Approval event cursor: first 10 events to approval, 7 later events replayed after reconnect without advancing the cursor twice; '
+          'takeover, expired source and future cursor hidden or rejected', flush=True)
     return timelines

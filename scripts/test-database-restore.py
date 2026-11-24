@@ -92,6 +92,7 @@ def projection(connect):
         token_reservations = database.execute('SELECT * FROM agent_model_token_reservation ORDER BY tenant_code').fetchall()
         token_days = database.execute('SELECT * FROM agent_model_token_day ORDER BY tenant_code,budget_day').fetchall()
         cost_days = database.execute('SELECT * FROM agent_model_cost_day ORDER BY tenant_code,budget_day,currency').fetchall()
+        run_events = database.execute('SELECT * FROM agent_run_event ORDER BY tenant_code,run_id,seq').fetchall()
     assert len(outbox) == len(runs) == 2
     assert [row[:4] for row in outbox] == [row[:4] for row in runs]
     assert len(usages) == 2
@@ -99,7 +100,8 @@ def projection(connect):
     assert len(token_reservations) == 2
     assert token_days == [('RESTORE_A', token_reservations[0][3], 20), ('RESTORE_B', token_reservations[1][3], 21)]
     assert cost_days == [('RESTORE_A', token_reservations[0][3], 'USD', 75), ('RESTORE_B', token_reservations[1][3], 'USD', 77)]
-    return outbox, runs, usages, quotas, token_reservations, token_days, cost_days
+    assert [row[:4] for row in run_events] == [(row[0], row[2], 1, 'run_completed') for row in runs]
+    return outbox, runs, usages, quotas, token_reservations, token_days, cost_days, run_events
 
 
 def table_counts(connect, name):
@@ -124,6 +126,7 @@ def assert_restricted_restored_reads(environment, passwords):
                     assert connection.execute('SELECT tenant_code FROM agent_model_token_reservation').fetchall() == expected
                     assert connection.execute('SELECT tenant_code FROM agent_model_token_day').fetchall() == expected
                     assert connection.execute('SELECT tenant_code FROM agent_model_cost_day').fetchall() == expected
+                    assert connection.execute('SELECT tenant_code FROM agent_run_event').fetchall() == expected
             assert connection.execute('SELECT has_table_privilege(current_user,%s,%s)', (table, 'TRUNCATE')).fetchone() == (False,)
 
 
@@ -170,6 +173,7 @@ def main():
             'matched_model_token_reservations': len(expected_projection[4]),
             'matched_model_token_days': len(expected_projection[5]),
             'matched_model_cost_days': len(expected_projection[6]),
+            'matched_run_events': len(expected_projection[7]),
             'restricted_roles_verified': 2, 'invalid_archive_rejected': True,
         }
         path = ROOT/'.local/verification/database-restore-drill.json'

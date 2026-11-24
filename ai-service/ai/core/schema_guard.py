@@ -38,10 +38,12 @@ MODEL_TOKEN_BUDGET_SOURCE = 'backend/deploy/migrations/sql/ai_db_011_agent_model
 MODEL_TOKEN_DAY_SOURCE = 'backend/deploy/migrations/sql/ai_db_012_agent_model_token_days.sql'
 MODEL_MONTHLY_QUOTA_SOURCE = 'backend/deploy/migrations/sql/ai_db_013_agent_model_monthly_quota.sql'
 MODEL_COST_BUDGET_SOURCE = 'backend/deploy/migrations/sql/ai_db_014_agent_model_cost_budget.sql'
+RUN_EVENT_SOURCE = 'backend/deploy/migrations/sql/ai_db_015_agent_run_events.sql'
 MODEL_TOKEN_POLICY_COLUMNS = ('daily_token_limit', 'tokens_per_attempt')
 MODEL_COST_POLICY_COLUMNS = ('daily_cost_limit_picos', 'monthly_cost_limit_picos', 'price_book')
 MODEL_COST_RESERVATION_COLUMNS = ('price_book_version', 'price_book_sha256', 'currency', 'input_rate', 'output_rate', 'reserved_cost_picos')
 RUNTIME_COLUMNS = {
+    'agent_run_event': ('tenant_code', 'run_id', 'seq', 'event_type', 'occurred_at', 'step_no', 'outcome'),
     'agent_run': ('tenant_code run_id source_event_id session_no event_seq message_id principal_ref trace_id runtime_version input_hash '
                   'state max_steps max_model_calls max_tool_calls max_retries step_count model_calls tool_calls retry_count attempt fence '
                   'owner lease_until ready_at deadline_at cancel_requested error_code result_ref created_at updated_at finished_at').split(),
@@ -73,7 +75,8 @@ def _runtime_source(table, column=None):
             'agent_ticket_reconciliation': TICKET_RECONCILIATION_SOURCE, 'agent_approval': APPROVAL_SOURCE,
             'agent_model_usage': MODEL_USAGE_SOURCE, 'agent_model_quota': MODEL_QUOTA_SOURCE,
             'agent_model_token_reservation': MODEL_TOKEN_BUDGET_SOURCE,
-            'agent_model_token_day': MODEL_TOKEN_DAY_SOURCE, 'agent_model_cost_day': MODEL_COST_BUDGET_SOURCE}.get(table, RUNTIME_SOURCE)
+            'agent_model_token_day': MODEL_TOKEN_DAY_SOURCE, 'agent_model_cost_day': MODEL_COST_BUDGET_SOURCE,
+            'agent_run_event': RUN_EVENT_SOURCE}.get(table, RUNTIME_SOURCE)
 
 
 def _kb_connect(**kwargs):
@@ -115,10 +118,10 @@ def runtime_missing(columns=None):
             SELECT c.relname, c.relrowsecurity AND c.relforcerowsecurity
               AND NOT pg_has_role(current_user,c.relowner,'MEMBER')
               AND has_table_privilege(current_user,c.oid,'SELECT')
-              AND CASE WHEN c.relname IN ('agent_model_quota','agent_model_token_day','agent_model_cost_day')
+              AND CASE WHEN c.relname IN ('agent_model_quota','agent_model_token_day','agent_model_cost_day','agent_run_event')
                   THEN NOT has_any_column_privilege(current_user,c.oid,'INSERT')
                   ELSE has_table_privilege(current_user,c.oid,'INSERT') END
-              AND CASE WHEN c.relname IN ('agent_model_quota','agent_model_token_day','agent_model_token_reservation','agent_model_cost_day')
+              AND CASE WHEN c.relname IN ('agent_model_quota','agent_model_token_day','agent_model_token_reservation','agent_model_cost_day','agent_run_event')
                   THEN NOT has_any_column_privilege(current_user,c.oid,'UPDATE')
                   WHEN c.relname='agent_approval' THEN NOT has_table_privilege(current_user,c.oid,'UPDATE')
                    AND NOT EXISTS (SELECT 1 FROM pg_attribute a WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped
@@ -150,6 +153,17 @@ def runtime_missing(columns=None):
         """).fetchone()
         if not projection['usable']:
             missing['ai_db.agent_model_token_day.triggers'] = MODEL_TOKEN_DAY_SOURCE
+        event_projection = connection.execute("""SELECT count(*) = 2 AS usable
+            FROM pg_trigger t JOIN pg_proc p ON p.oid=t.tgfoid
+            JOIN pg_attribute a ON a.attrelid=t.tgrelid AND a.attname='state'
+            WHERE p.oid=to_regprocedure('public.supportflow_append_run_event()')
+              AND p.prosecdef AND NOT has_function_privilege(current_user,p.oid,'EXECUTE')
+              AND t.tgenabled IN ('O','A') AND t.tgnargs=0 AND t.tgqual IS NULL AND t.tgattr::text=a.attnum::text
+              AND ((t.tgrelid=to_regclass('public.agent_run') AND t.tgname='agent_run_state_event' AND t.tgtype=17)
+                OR (t.tgrelid=to_regclass('public.agent_step') AND t.tgname='agent_step_state_event' AND t.tgtype=21))
+        """).fetchone()
+        if not event_projection['usable']:
+            missing['ai_db.agent_run_event.triggers'] = RUN_EVENT_SOURCE
     return missing
 
 

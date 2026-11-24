@@ -14,6 +14,7 @@ _VERSION = 'ticket-create-v1'
 _TOOL = 'create_ticket'
 _PURPOSE = 'customer-support-ticket'
 _CHECKPOINT = 'ticket-approval-plan'
+_EVENT_PAGE_SIZE = 16
 
 
 class TicketApprovals:
@@ -128,6 +129,27 @@ class TicketApprovals:
                     OR (r.state IN ('SUCCEEDED','FAILED','CANCELLED')
                        AND a.status IN ('APPROVED','CONSUMED','REVOKED','EXPIRED','CANCELLED')))
                 ORDER BY r.event_seq DESC LIMIT 1""", (tenant, session_no)).fetchone()
+
+    def event_page(self, tenant, run_id, source_event_id, snapshot_id, after_seq):
+        """Read a bounded committed prefix for one verified approval source."""
+        with self.store._scope(tenant, trace_read_only=True) as connection:
+            bound = connection.execute("""SELECT 1 FROM agent_run r JOIN agent_approval a
+                  ON a.tenant_code=r.tenant_code AND a.run_id=r.run_id AND a.principal_ref=r.principal_ref
+                WHERE r.tenant_code=%s AND r.run_id=%s AND r.source_event_id=%s AND a.snapshot_id=%s
+                  AND r.runtime_version='runtime-v1'""", (tenant, run_id, source_event_id, snapshot_id)).fetchone()
+            if bound is None:
+                return None
+            latest = connection.execute("""SELECT coalesce(max(seq),0) AS seq FROM agent_run_event
+                WHERE tenant_code=%s AND run_id=%s""", (tenant, run_id)).fetchone()['seq']
+            if after_seq > latest:
+                raise RuntimeConflict('Event cursor exceeds the committed journal')
+            rows = connection.execute("""SELECT seq,event_type,occurred_at,step_no,outcome FROM agent_run_event
+                WHERE tenant_code=%s AND run_id=%s AND seq>%s ORDER BY seq LIMIT %s""",
+                (tenant, run_id, after_seq, _EVENT_PAGE_SIZE+1)).fetchall()
+        events = rows[:_EVENT_PAGE_SIZE]
+        return dict(schema_version='agent-run-events-v1', tenant_code=tenant, run_id=run_id,
+                    source_event_id=source_event_id, snapshot_id=snapshot_id,
+                    next_seq=events[-1]['seq'] if events else after_seq, has_more=len(rows)>_EVENT_PAGE_SIZE, events=events)
 
     def decide(self, tenant, run_id, approval_id, reviewer, *, approve, expected=None):
         if type(approve) is not bool:

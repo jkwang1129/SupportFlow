@@ -99,6 +99,21 @@ public class AgentTicketApprovalController {
         });
     }
 
+    @GetMapping("/events/{eventId}/runs/{runId}/timeline")
+    public ApiResponse<Map<String, Object>> timeline(@PathVariable UUID eventId, @PathVariable UUID runId,
+            @RequestParam(name="afterSeq", defaultValue="0") int afterSeq, HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store");
+        String tenant = requireReviewer().tenantCode();
+        if (afterSeq < 0) throw new BizException(42207, "事件序号无效");
+        return TenantContext.bind(tenant, () -> {
+            var source = transaction.execute(status -> snapshots.read(tenant, eventId, runId));
+            var page = runtime.approvalEvents(source, afterSeq);
+            var current = transaction.execute(status -> snapshots.read(tenant, eventId, runId));
+            if (!source.snapshotId().equals(current.snapshotId())) throw new BizException(40407, "审批任务不可用");
+            return ApiResponse.ok(page);
+        });
+    }
+
     @GetMapping("/sessions/{sessionNo}/active")
     public ApiResponse<Map<String, String>> active(@PathVariable String sessionNo, HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-store");
@@ -224,6 +239,8 @@ public class AgentTicketApprovalController {
                     ResponseEntity.status(409).body(ApiResponse.fail(40907, "审批请求已变化或过期"));
             case "APPROVAL_PREVIEW_HTTP_404" -> ResponseEntity.status(404).body(ApiResponse.fail(40407, "审批提案不可用"));
             case "APPROVAL_PROGRESS_HTTP_404" -> ResponseEntity.status(404).body(ApiResponse.fail(40407, "审批任务不可用"));
+            case "APPROVAL_EVENTS_HTTP_404" -> ResponseEntity.status(404).body(ApiResponse.fail(40407, "审批任务不可用"));
+            case "APPROVAL_EVENTS_HTTP_409" -> ResponseEntity.status(409).body(ApiResponse.fail(40907, "事件序号超出当前进度"));
             default -> unavailable();
         };
     }

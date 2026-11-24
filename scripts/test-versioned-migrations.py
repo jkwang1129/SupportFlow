@@ -187,7 +187,7 @@ def main():
                     assert upgrade008['applied']==['008'] and read()==before and read_kb()==before_kb
                     read_ticket=existing_ticket(connection);before_ticket=read_ticket()
                 if database=='ai_db':
-                    assert [m.version for m in plan]==['001','002','003','004','005','006','007','008','009','010','011','012','013','014']
+                    assert [m.version for m in plan]==['001','002','003','004','005','006','007','008','009','010','011','012','013','014','015']
                     applied=run_plan(connection,plan[:2])["applied"]
                     read_ai=existing_ai_step(dsn(database));before_ai=read_ai()
                     applied+=run_plan(connection,plan[:3])['applied']
@@ -253,8 +253,8 @@ def main():
                     assert connection.execute('SELECT * FROM agent_model_quota').fetchone()==('PAYLOAD_UP',4,88,12,None)
                     print('AI 012 -> 013 retained daily quota; monthly policy defaults to NULL',flush=True)
                     connection.execute("UPDATE agent_model_quota SET monthly_token_limit=1000 WHERE tenant_code='PAYLOAD_UP'")
-                result=run_plan(connection,plan)
-                assert applied+result["applied"]==[migration.version for migration in plan]
+                result=run_plan(connection,plan[:-1] if database=='ai_db' else plan)
+                assert applied+result["applied"]==[migration.version for migration in (plan[:-1] if database=='ai_db' else plan)]
                 if database=='customer_db':
                     assert result['applied']==['009'] and read()==before and read_kb()==before_kb and read_ticket()==before_ticket
                     assert connection.execute('SELECT count(*) FROM agent_ticket_receipt').fetchone()==(0,)
@@ -282,6 +282,11 @@ def main():
                     assert connection.execute('SELECT tenant_code,budget_day::text,charged_tokens FROM agent_model_token_day ORDER BY budget_day').fetchall()==before_days
                     assert connection.execute('SELECT count(*) FROM agent_model_cost_day').fetchone()==(0,)
                     print('AI 013 -> 014 preserved daily and monthly Token budgets and source ledgers; cost policy starts disabled',flush=True)
+                    upgrade015=run_plan(connection,plan)
+                    assert upgrade015['applied']==['015'] and read_ai()==before_ai and read_approval()==before_approval
+                    assert read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
+                    assert connection.execute('SELECT count(*) FROM agent_run_event').fetchone()==(0,)
+                    print('AI 014 -> 015 preserved source and audit records; event journal starts at cutover',flush=True)
                 assert run_plan(connection,plan)["applied"]==[]
                 run_plan(connection,plan,verify=True)
         runtime_password=secrets.token_hex(24)

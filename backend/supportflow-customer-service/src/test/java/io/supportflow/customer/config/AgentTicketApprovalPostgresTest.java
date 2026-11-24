@@ -49,6 +49,7 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
     private final AtomicBoolean unmatchedProgressReference = new AtomicBoolean();
     private final AtomicBoolean unmatchedLatestSnapshot = new AtomicBoolean();
     private final AtomicReference<String> latestState = new AtomicReference<>("SUCCEEDED");
+    private final AtomicReference<String> invalidTimeline = new AtomicReference<>("");
     private static final String PROPOSAL_TITLE = "合成提案🙂";
     private static final String PROPOSAL_BODY = "原始内容\n ";
     private UUID event;
@@ -86,6 +87,21 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
                         "retry_count", 1, "error_code", "FIXTURE_PRIVATE_FAILURE")));
             }
             var node = JSON.readTree(request.body());
+            if (request.rawPath().endsWith("/ticket-approval-events")) {
+                int after = node.get("after_seq").intValue();
+                assertEquals(JSON.valueToTree(Map.of("source_event_id", event.toString(),
+                        "snapshot_id", snapshot.snapshotId().toString(), "after_seq", after)), node);
+                if (status.get() != 200) return new RuntimeReceiverStub.Reply(status.get(), "synthetic private upstream failure");
+                if (takeoverDuringPreview.get()) scoped(() -> jdbc.update("UPDATE session SET agent_id=99 WHERE id=?", sessionId));
+                var entry = JSON.createObjectNode().put("seq", after+1).put("event_type", "approval_required")
+                        .put("occurred_at", "2026-11-24T08:00:00+00:00").putNull("step_no").putNull("outcome");
+                if ("gap".equals(invalidTimeline.get())) entry.put("seq", after+2);
+                if ("private".equals(invalidTimeline.get())) entry.put("tool_output", "synthetic private tool output");
+                return new RuntimeReceiverStub.Reply(200, JSON.writeValueAsString(Map.of(
+                        "schema_version", "agent-run-events-v1", "tenant_code", "TENANT_A", "run_id", run.toString(),
+                        "source_event_id", event.toString(), "snapshot_id", snapshot.snapshotId().toString(),
+                        "next_seq", after+1, "has_more", false, "events", List.of(entry))));
+            }
             if (request.rawPath().endsWith("/ticket-approval-latest-progress")) {
                 assertEquals(JSON.valueToTree(Map.of("session_no", sessionNo)), node);
                 if (status.get() != 200) return new RuntimeReceiverStub.Reply(status.get(), "synthetic private upstream failure");
@@ -143,6 +159,51 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
     private MvcResult latest() throws Exception {
         return LoginUserContext.bind(AuthState.ok(ADMIN), () -> mvc.perform(
                 get("/api/customer/agent-approvals/sessions/" + sessionNo + "/latest-progress")).andReturn());
+    }
+
+    private MvcResult timeline(LoginUser user, int cursor) throws Exception {
+        return LoginUserContext.bind(user == null ? AuthState.anonymous() : AuthState.ok(user), () -> mvc.perform(
+                get(path.replace("/decisions", "/timeline")).param("afterSeq", Integer.toString(cursor))).andReturn());
+    }
+
+    @Test void timelineReauthorizesEachPageAndOnlyReturnsTheRedactedEvent() throws Exception {
+        assertEquals(401, timeline(null, 0).getResponse().getStatus());
+        assertEquals(404, timeline(new LoginUser(UID, "U_1", "Other tenant", 2, "TENANT_B"), 0).getResponse().getStatus());
+        when(roles.rolesOf(UID, "TENANT_A")).thenReturn(List.of("AGENT"));
+        assertEquals(403, timeline(ADMIN, 0).getResponse().getStatus());
+        when(roles.rolesOf(UID, "TENANT_A")).thenReturn(List.of("SUPERVISOR"));
+        assertEquals(422, timeline(ADMIN, -1).getResponse().getStatus());
+        assertEquals(0, server.calls.get());
+        var response = timeline(ADMIN, 3).getResponse();
+        assertEquals(200, response.getStatus());
+        assertEquals("no-store", response.getHeader("Cache-Control"));
+        var data = JSON.readTree(response.getContentAsString()).path("data");
+        assertEquals(5, data.size());
+        assertEquals(run.toString(), data.path("run_id").asText());
+        assertEquals("agent-run-events-v1", data.path("schema_version").asText());
+        assertEquals(4, data.path("next_seq").asInt());
+        assertTrue(data.path("events").isArray());
+        var entry = data.path("events").path(0);
+        assertEquals("approval_required", entry.path("event_type").asText());
+        assertEquals(5, entry.size());
+        assertTrue(entry.path("step_no").isNull());
+        assertTrue(entry.path("outcome").isNull());
+        status.set(409);
+        assertEquals(409, timeline(ADMIN, 6).getResponse().getStatus());
+        status.set(200);
+        takeoverDuringPreview.set(true);
+        assertEquals(404, timeline(ADMIN, 4).getResponse().getStatus());
+        assertNull(server.failure.get());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"gap", "private"})
+    void timelineRejectsInvalidUpstreamEvents(String invalid) throws Exception {
+        invalidTimeline.set(invalid);
+        var response = timeline(ADMIN, 0).getResponse();
+        assertEquals(503, response.getStatus());
+        assertFalse(response.getContentAsString().contains("synthetic private"));
+        assertNull(server.failure.get());
     }
 
     @ParameterizedTest

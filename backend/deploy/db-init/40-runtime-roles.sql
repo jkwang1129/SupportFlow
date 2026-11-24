@@ -112,6 +112,9 @@ DO $$ BEGIN
  IF to_regclass('public.agent_run') IS NOT NULL THEN
    REVOKE DELETE,TRUNCATE ON public.agent_run,public.agent_step FROM supportflow_ai,supportflow_agent_runtime;
  END IF;
+ IF to_regclass('public.agent_run_event') IS NOT NULL THEN
+   REVOKE INSERT,UPDATE,DELETE,TRUNCATE ON public.agent_run_event FROM supportflow_ai,supportflow_agent_runtime;
+ END IF;
  IF to_regclass('public.agent_payload') IS NOT NULL THEN
    REVOKE UPDATE,DELETE,TRUNCATE ON public.agent_payload FROM supportflow_ai,supportflow_agent_runtime;
  END IF;
