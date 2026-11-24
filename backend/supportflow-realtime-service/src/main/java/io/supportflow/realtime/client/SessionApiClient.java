@@ -12,6 +12,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -31,12 +32,17 @@ public class SessionApiClient {
     private static final Logger log = LoggerFactory.getLogger(SessionApiClient.class);
 
     private final RestClient restClient;
+    private final RestClient ticketNoticeReads;
 
     public SessionApiClient(@Value("${supportflow.customer.internal-base-url}") String baseUrl,
             @Value("${SUPPORTFLOW_CUSTOMER_REALTIME_SECRET:}") String secret) {
         this.restClient = RestClient.builder().baseUrl(baseUrl)
                 .requestInterceptor(CustomerInternalCredential.signer(secret, CustomerInternalCredential.Caller.REALTIME))
                 .build();
+        var factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(250);
+        factory.setReadTimeout(800);
+        this.ticketNoticeReads = restClient.mutate().requestFactory(factory).build();
     }
 
     public SessionInfo requireSession(String tenantCode, String sessionNo) {
@@ -52,16 +58,20 @@ public class SessionApiClient {
     }
 
     public List<MessageView> history(String tenantCode, String sessionNo, Long beforeId, int limit, boolean agentView) {
-        return messages(tenantCode, sessionNo, beforeId, null, limit, agentView);
+        return messages(restClient, tenantCode, sessionNo, beforeId, null, limit, agentView);
     }
 
     public List<MessageView> visitorMessagesAfter(String tenantCode, String sessionNo, long afterSeq, int limit) {
-        return messages(tenantCode, sessionNo, null, afterSeq, limit, false);
+        return messages(restClient, tenantCode, sessionNo, null, afterSeq, limit, false);
     }
 
-    private List<MessageView> messages(String tenantCode, String sessionNo, Long beforeId, Long afterSeq,
+    public List<MessageView> visitorTicketNotice(String tenantCode, String sessionNo, long sequence) {
+        return messages(ticketNoticeReads, tenantCode, sessionNo, null, sequence - 1, 1, false);
+    }
+
+    private List<MessageView> messages(RestClient client, String tenantCode, String sessionNo, Long beforeId, Long afterSeq,
                                        int limit, boolean agentView) {
-        ApiResponse<List<MessageView>> response = restClient.get()
+        ApiResponse<List<MessageView>> response = client.get()
                 .uri(uriBuilder -> {
                     uriBuilder.path("/api/customer/internal/sessions/{sessionNo}/messages")
                             .queryParam("tenantCode", tenantCode)

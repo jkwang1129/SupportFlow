@@ -98,6 +98,7 @@ supportflow:
     runtime-read-tools-enabled: ${SUPPORTFLOW_BOT_RUNTIME_READ_TOOLS_ENABLED:false}
     runtime-ticket-create-enabled: ${SUPPORTFLOW_BOT_RUNTIME_TICKET_CREATE_ENABLED:false}
     runtime-ticket-notice-tenant: ${SUPPORTFLOW_BOT_RUNTIME_TICKET_NOTICE_TENANT:}
+    runtime-ticket-notice-push-enabled: ${SUPPORTFLOW_BOT_RUNTIME_TICKET_NOTICE_PUSH_ENABLED:false}
     runtime-approval-review-enabled: ${SUPPORTFLOW_BOT_RUNTIME_APPROVAL_REVIEW_ENABLED:false}
     runtime-dispatch-enabled: ${SUPPORTFLOW_BOT_RUNTIME_DISPATCH_ENABLED:false}
     runtime-dispatch-tenant: ${SUPPORTFLOW_BOT_RUNTIME_DISPATCH_TENANT:}

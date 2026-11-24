@@ -12,14 +12,14 @@ import java.time.Clock;
 import java.util.HexFormat;
 import java.util.regex.Pattern;
 
-/** Separate signing audience for Java services calling the customer service. */
+/** Signed customer service traffic. The caller role binds the direction and purpose. */
 public final class CustomerInternalCredential {
     public static final String HEADER = "X-SupportFlow-Customer-Auth";
     private static final String AUDIENCE = "supportflow-customer:v1";
     private static final long TTL_SECONDS = 30;
     private static final Pattern FORMAT = Pattern.compile("([0-9]{1,12}):([a-f0-9]{64})");
 
-    public enum Caller { REALTIME, OPS, TENANT }
+    public enum Caller { REALTIME, OPS, TENANT, CUSTOMER_NOTICE }
 
     private CustomerInternalCredential() {
     }

@@ -1,6 +1,7 @@
 package io.supportflow.customer.config;
 
 import io.supportflow.common.context.TenantContext;
+import io.supportflow.common.auth.CustomerInternalCredential;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.common.id.SnowflakeIdGenerator;
 import io.supportflow.customer.dto.ticket.ChannelTicketCommand;
@@ -10,13 +11,19 @@ import io.supportflow.customer.service.bot.*;
 import io.supportflow.customer.service.customer.CustomerDynamics;
 import io.supportflow.customer.service.notification.NotificationService;
 import io.supportflow.customer.service.ticket.TicketService;
+import io.supportflow.customer.testkit.RuntimeReceiverStub;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.dao.DataAccessException;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.MapPropertySource;
+import org.springframework.transaction.event.TransactionalEventListenerFactory;
 import java.sql.DriverManager;
 import java.time.Instant;
+import java.time.Clock;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -142,6 +149,45 @@ class AgentTicketCreationsPostgresTest extends SessionPostgresFixture {
             assertEquals("synthetic conflict",history.getFirst().content());
             return null;
         });
+    }
+    @Test void liveNoticeListenerSkipsTransactionRollbackAndUnscopedEvents() throws Exception {
+        source(true);
+        String key = "disposable-notice-transport-fixture-key";
+        try (var receiver = new RuntimeReceiverStub(request -> {
+            assertEquals("POST", request.method());
+            assertTrue(request.rawPath().startsWith("/api/realtime/internal/ticket-notices/"+sessionNo+"/2/"));
+            assertEquals(0, request.body().length);
+            assertTrue(CustomerInternalCredential.verify(request.headers().get(CustomerInternalCredential.HEADER).getFirst(),
+                    key, CustomerInternalCredential.Caller.CUSTOMER_NOTICE, "POST", request.rawPath(), "", "TENANT_A", Clock.systemUTC()));
+            return new RuntimeReceiverStub.Reply(503, "");
+        }); var context = new AnnotationConfigApplicationContext()) {
+            context.getEnvironment().getPropertySources().addFirst(new MapPropertySource("ticket-notice-fixture",
+                    Map.of("supportflow.bot.runtime-ticket-notice-push-enabled", "true")));
+            context.registerBean(TransactionalEventListenerFactory.class);
+            context.registerBean(AgentTicketNoticePublisher.class,
+                    () -> new AgentTicketNoticePublisher(receiver.endpoint().resolve("/").toString(), key));
+            context.refresh();
+            var boundary = new AgentTicketCreations(jdbc, tickets, service, context);
+            scoped(()->transaction.execute(status->{
+                boundary.create(AgentActionPermitFixtures.noticePermit(args,Instant.now().plusSeconds(4)),args);
+                assertEquals(0,receiver.calls.get());
+                status.setRollbackOnly();
+                return null;
+            }));
+            assertEquals(0,receiver.calls.get());
+            assertNull(tx(()->boundary.find(args)));
+            var permit = AgentActionPermitFixtures.noticePermit(args,Instant.now().plusSeconds(4));
+            var receipt = tx(()->{
+                var created = boundary.create(permit,args);
+                assertEquals(0,receiver.calls.get());
+                return created;
+            });
+            assertEquals(receipt,tx(()->boundary.find(args)));
+            assertEquals(1,receiver.calls.get());
+            assertNull(receiver.failure.get());
+            context.publishEvent(new io.supportflow.customer.event.AgentTicketNotice("TENANT_A",sessionNo,2,"123"));
+            assertEquals(1,receiver.calls.get());
+        }
     }
     @Test void exactUnicodeTitleAndMaximumUtf8BodyAreStoredWithoutSilentTruncation(){
         source(false);args=new AgentTicketArguments(args.tenant(),run,event.eventId(),args.snapshotId(),"🙂".repeat(128),"中".repeat(2730)+"xx");

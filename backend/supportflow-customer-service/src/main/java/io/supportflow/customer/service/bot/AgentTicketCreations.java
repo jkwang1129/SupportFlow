@@ -3,9 +3,11 @@ package io.supportflow.customer.service.bot;
 import io.supportflow.common.context.TenantContext;
 import io.supportflow.common.exception.BizException;
 import io.supportflow.customer.dto.ticket.ChannelTicketCommand;
+import io.supportflow.customer.event.AgentTicketNotice;
 import io.supportflow.customer.service.ticket.TicketService;
 import io.supportflow.customer.service.session.SessionService;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -22,9 +24,13 @@ public final class AgentTicketCreations {
     private final AgentSourceSnapshots snapshots;
     private final TicketService tickets;
     private final SessionService sessions;
+    private final ApplicationEventPublisher events;
     public AgentTicketCreations(JdbcTemplate jdbc,TicketService tickets){this(jdbc,tickets,null);}
     public AgentTicketCreations(JdbcTemplate jdbc,TicketService tickets,SessionService sessions){
-        this.jdbc=jdbc;this.tickets=tickets;this.sessions=sessions;snapshots=new AgentSourceSnapshots(jdbc);
+        this(jdbc,tickets,sessions,null);
+    }
+    public AgentTicketCreations(JdbcTemplate jdbc,TicketService tickets,SessionService sessions,ApplicationEventPublisher events){
+        this.jdbc=jdbc;this.tickets=tickets;this.sessions=sessions;this.events=events;snapshots=new AgentSourceSnapshots(jdbc);
     }
 
     /** Confirms only the committed creation, never current ticket status or another execution. */
@@ -103,6 +109,7 @@ public final class AgentTicketCreations {
                 || saved.senderId()!=null || !Integer.valueOf(5).equals(saved.msgType())
                 || !Integer.valueOf(SessionService.VISIBLE_ALL).equals(saved.visibleTo())
                 || !Long.valueOf(source.id()).equals(saved.sessionId()) || saved.seq()==null || saved.seq()<=0) throw conflict();
+        if (events!=null) events.publishEvent(new AgentTicketNotice(args.tenant(),source.no(),saved.seq(),saved.msgId()));
     }
     private void validNow(AgentActionPermit permit){
         var now=jdbc.queryForObject("SELECT clock_timestamp()",Timestamp.class);

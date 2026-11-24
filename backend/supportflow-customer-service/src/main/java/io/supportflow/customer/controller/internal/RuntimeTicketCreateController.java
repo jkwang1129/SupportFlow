@@ -9,6 +9,7 @@ import io.supportflow.customer.service.ticket.TicketService;
 import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -30,22 +31,23 @@ public class RuntimeTicketCreateController {
     private final AgentRuntimeClient authority;
     private final String noticeTenant;
     @Autowired public RuntimeTicketCreateController(JdbcTemplate jdbc,PlatformTransactionManager manager,TicketService tickets,
-            SessionService sessions, @Value("${supportflow.bot.runtime-ticket-notice-tenant:}") String noticeTenant,
+            SessionService sessions, ApplicationEventPublisher events,
+            @Value("${supportflow.bot.runtime-ticket-notice-tenant:}") String noticeTenant,
             @Value("${supportflow.bot.runtime-ticket-create-enabled:false}") boolean enabled,
             @Value("${supportflow.ai.bot-base-url:http://127.0.0.1:9100}") String ai,
             @Value("${SUPPORTFLOW_AI_CUSTOMER_SECRET:}") String secret){
-        this(jdbc,manager,tickets,sessions,noticeTenant,enabled ? new AgentRuntimeClient(
+        this(jdbc,manager,tickets,sessions,events,noticeTenant,enabled ? new AgentRuntimeClient(
                 URI.create(ai.replaceAll("/+$","")+"/api/ai/v1/runtime/runs"),secret,Duration.ofSeconds(3)) : null);
     }
     public RuntimeTicketCreateController(JdbcTemplate jdbc,PlatformTransactionManager manager,TicketService tickets,AgentRuntimeClient authority){
-        this(jdbc,manager,tickets,null,"",authority);
+        this(jdbc,manager,tickets,null,null,"",authority);
     }
     private RuntimeTicketCreateController(JdbcTemplate jdbc,PlatformTransactionManager manager,TicketService tickets,
-                                          SessionService sessions,String noticeTenant,AgentRuntimeClient authority){
+                                          SessionService sessions,ApplicationEventPublisher events,String noticeTenant,AgentRuntimeClient authority){
         if (!noticeTenant.isEmpty() && (!noticeTenant.matches("[A-Za-z0-9][A-Za-z0-9_-]{0,15}")
                 || noticeTenant.equalsIgnoreCase("PLATFORM"))) throw new IllegalArgumentException("Invalid ticket notice tenant");
         this.noticeTenant=noticeTenant;
-        creations=new AgentTicketCreations(jdbc,tickets,sessions);transaction=new TransactionTemplate(manager);transaction.setTimeout(5);this.authority=authority;
+        creations=new AgentTicketCreations(jdbc,tickets,sessions,events);transaction=new TransactionTemplate(manager);transaction.setTimeout(5);this.authority=authority;
     }
     @PostMapping public ApiResponse<Map<String,String>> create(@RequestAttribute(RuntimeCustomerCall.ATTRIBUTE) RuntimeCustomerCall call,
             @RequestAttribute(RuntimeTicketCreateCommand.ATTRIBUTE) RuntimeTicketCreateCommand command,@PathVariable UUID eventId,@PathVariable UUID runId){

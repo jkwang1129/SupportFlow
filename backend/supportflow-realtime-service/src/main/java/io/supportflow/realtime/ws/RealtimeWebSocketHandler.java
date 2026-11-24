@@ -490,6 +490,17 @@ public class RealtimeWebSocketHandler extends TextWebSocketHandler {
         return delivered;
     }
 
+    public void notifyTicketNotice(String tenantCode, String sessionNo, MessageView message) {
+        var frame = RealtimeMessage.withData("MESSAGE", sessionNo, message);
+        for (String socketId : registry.subscribersOf(sessionNo)) {
+            var client = registry.get(socketId);
+            if (client != null && client.principal().isVisitor()
+                    && tenantCode.equals(client.principal().tenantCode()) && sessionNo.equals(client.principal().sessionNo())) {
+                send(client.socket(), frame);
+            }
+        }
+    }
+
     /**
      * 访客离线超时自动结束会话。
      *

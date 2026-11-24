@@ -108,3 +108,16 @@ test('visitor sees the confirmed ticket number once after reconnect', async ({ p
   await expect(page.locator('.v-system')).toHaveText([content])
   await expect(page.getByText(messages[0].content, { exact: true })).toBeVisible()
 })
+
+test('online visitor sees a pushed ticket notice once even if delivered again', async ({ page }) => {
+  const content = '工单已创建，编号：ONLINE123'
+  const notice = { ...messages[1], senderType: 4, msgType: 5, content }
+  const { sockets, requests } = await openVisitor(page, (socket) => {
+    push(socket, 'JOINED', { messages: [messages[0]], lastSeq: 1 })
+  })
+  push(sockets[0], 'MESSAGE', notice)
+  push(sockets[0], 'MESSAGE', notice)
+  await expect(page.locator('.v-system')).toHaveText([content])
+  expect(sockets).toHaveLength(1)
+  expect(requests.filter((request) => request.type === 'SYNC')).toHaveLength(0)
+})

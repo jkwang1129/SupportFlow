@@ -1647,3 +1647,14 @@ Windows 11、Temurin JDK 25、Python 3.11.5、Node 24.14.1、Chromium 和隔离 
 - 更新 JAR 后的第一次联调已读到通知，夹具把 JSON 中的字符串序号与整数直接比较导致失败。按接口序号格式解码后复跑。日志为 `.local/implementation/d19-runtime-retested.log`，报告为 `.local/implementation/d19-evidence/runtime-ticket-approval.json`，SHA-256 为 `bacab0604912101b2d2238357a5c7337041879ed528aa410ca1936a580398ef9`。
 
 本批覆盖已获批工单的确认结果入库及同会话历史读取。Widget 在线主动通知、跨服务送达确认和第三方渠道展示继续单独验收。
+
+## D20 获批工单的在线访客通知（2026-11-24）
+
+Windows 11、Temurin JDK 25、Python 3.11.5、Node 24.14.1、Chromium 与隔离 PostgreSQL 17。全模块 Maven `verify` 通过。客服 PostgreSQL 测试 162 项通过，其中工单创建事务 19 项。新增测试在真实事务内安排通知，确认提交前、回滚后及事务外发布时收到 0 次 HTTP 请求；提交后收到 1 次。注入 HTTP 503 后原工单回执仍可查询。
+
+- 浏览器 13 项通过。新增在线用例通过受控 WebSocket 交付同一条系统消息两次，访客只看到一条，无需重连或发起补拉。报告为 `.local/implementation/d20-browser.xml`。
+- 运行 `python scripts/test-agent-runtime.py --with-java-delivery`，本地限定 `approval_consumption or runtime_ticket_authority` 的 27 项 PostgreSQL 测试通过。真实客服和实时服务的合成访客组合验收 5 项通过。在线案通过实际 WebSocket 收到 1 条确认，第二会话收到 0 条；推送失败案观测到 1 次 HTTP 503，原连接用 `SYNC` 读回同一消息。两次请求到达时，独立连接均已经读到工单、回执和消息。三条业务拒绝路径发起 0 次推送。无签名、错误角色、替换租户、引用不匹配及普通消息均被拒绝。
+- 原始报告为 `.local/implementation/d20-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v13`，SHA-256 为 `2988f0f99ce68ca5faa36bf00d2e3b7a0e4cb3d9281ade74aa430f988b072fee`。完整日志为 `.local/implementation/d20-runtime-final.log`。
+- 本机共享 Python 缺少可执行的 pytest 模块。Java 数据库套件先独立通过，Runtime 联调切换到新建 Python 环境。Windows 启动实时 JAR 时也需保留系统目录变量，调整夹具后用隔离环境复跑。
+
+默认关闭在线推送开关。验收覆盖单实例指定租户和会话；多实例分发、第三方渠道回执和自动重试单独评估。 [设计、复现与回退](decisions/0063-online-approved-ticket-notice.md)
