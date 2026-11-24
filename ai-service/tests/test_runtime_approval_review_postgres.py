@@ -7,9 +7,9 @@ from fastapi.testclient import TestClient
 import pytest
 
 from runtime_api_support import PATH, build_app
-from test_approval_lifecycle_postgres import CONTENT, TITLE, elapsed, wait
+from test_approval_lifecycle_postgres import CONTENT, TITLE, decide, elapsed, wait
 from test_runtime_approval_review import post
-from test_runtime_store_postgres import admin, store
+from test_runtime_store_postgres import admin, request, store
 
 pytestmark = pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'), reason='requires disposable runtime PostgreSQL')
 
@@ -147,3 +147,37 @@ def test_elapsed_approval_is_hidden_even_before_worker_settles_it(store, monkeyp
     assert reply.status_code == 404 and reply.json() == {'detail': 'Active approval not found'}
     assert store.get(source.tenant, row['run_id']) == waiting
     assert approvals.get(source.tenant, row['run_id'])['status'] == 'PENDING'
+
+
+def test_latest_terminal_progress_ignores_denied_unreviewed_and_live_runs(store, monkeypatch):
+    app, _, _, source, _, approvals, _ = setup(store, monkeypatch)
+    route, ref = f'{PATH}/ticket-approval-latest-progress', {'session_no': source.session_no}
+    with TestClient(app) as client:
+        assert post(client, route, ref).status_code == 404
+    # Start a different session for a deterministic event ordering comparison.
+    selected = None
+    for sequence, should_approve in [(1, True), (2, True), (3, False)]:
+        candidate = request(session='PROGRESS_ORDER', seq=sequence)
+        _, _, approvals, row = wait(store, source=candidate)
+        decide(approvals, candidate, row, approve=should_approve)
+        if should_approve:
+            approvals.revoke(candidate.tenant, row['run_id'], row['approval_id'], 'staff:124')
+            selected = row
+    unreviewed = request(session='PROGRESS_ORDER', seq=4)
+    _, _, _, unfinished = wait(store, source=unreviewed)
+    store.cancel(unreviewed.tenant, unfinished['run_id'])
+    candidate = request(session='PROGRESS_ORDER', seq=5)
+    _, _, approvals, live = wait(store, source=candidate)
+    decide(approvals, candidate, live)
+    state = store.get(candidate.tenant, selected['run_id'])
+    live_before = store.get(candidate.tenant, live['run_id'])
+    with TestClient(app) as client:
+        result = post(client, route, {'session_no': candidate.session_no})
+        assert result.status_code == 200 and result.headers['cache-control'] == 'no-store'
+        assert result.json() == dict(tenant_code=candidate.tenant, session_no=candidate.session_no,
+            source_event_id=str(state['source_event_id']),run_id=str(state['run_id']),snapshot_id=str(selected['snapshot_id']),
+            state='FAILED',attempt=state['attempt'],step_count=state['step_count'])
+        assert post(client, route, {'session_no': candidate.session_no}, tenant='TENANT_B').status_code == 404
+        assert post(client, route, {'session_no': 'OTHER_SESSION'}).status_code == 404
+    assert store.get(candidate.tenant, selected['run_id']) == state
+    assert store.get(candidate.tenant, live['run_id']) == live_before

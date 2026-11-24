@@ -30,6 +30,9 @@ async function workspace(page: Page, role = 'ADMIN') {
     progress: { state: 'PENDING', attempt: 1, step_count: 4 } as ApprovalProgress,
     progressUnavailable: false,
     progressReads: 0,
+    latest: null as ApprovalProgress | null,
+    latestStatus: 200,
+    latestSessions: [] as string[],
     activeSessions: [] as string[],
     decisions: [] as unknown[],
   }
@@ -46,6 +49,12 @@ async function workspace(page: Page, role = 'ADMIN') {
       fixture.activeSessions.push(sessionNo)
       return reply(route, sessionNo === firstSession.sessionNo && fixture.active
         ? { ...reference, status: fixture.active } : null)
+    }
+    if (path.startsWith(`${approvalPath}/sessions/`) && path.endsWith('/latest-progress')) {
+      const sessionNo = path.split('/').at(-2)!
+      fixture.latestSessions.push(sessionNo)
+      if (fixture.latestStatus !== 200) return route.fulfill({ status: fixture.latestStatus, json: {} })
+      return reply(route, sessionNo === firstSession.sessionNo ? fixture.latest : null)
     }
     if (path === `${eventsPath}/proposal`) {
       if (fixture.previewStatus !== 200) return route.fulfill({ status: fixture.previewStatus, json: {} })
@@ -225,4 +234,44 @@ test('does not expose approval to a regular agent', async ({ page }) => {
   await expect(page.getByText(/会话 SESSION_ALPHA/)).toBeVisible()
   await expect(page.getByRole('button', { name: '工单审批', exact: true })).toHaveCount(0)
   expect(fixture.activeSessions).toHaveLength(0)
+  expect(fixture.latestSessions).toHaveLength(0)
+})
+
+test('after a full reload the reviewer finds terminal progress by the selected session', async ({ page }) => {
+  const fixture = await workspace(page)
+  await page.goto('/modules/workspace')
+  await selectSession(page)
+  const dialog = await openReview(page)
+  await dialog.getByRole('button', { name: '批准', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: '撤销批准' })).toBeVisible()
+  fixture.active = null
+  fixture.latest = { state: 'SUCCEEDED', attempt: 2, step_count: 7 }
+
+  await page.reload()
+  await selectSession(page)
+  await openReview(page)
+  await expect(dialog.getByText('任务执行完成')).toBeVisible()
+  await expect(dialog.getByText('7', { exact: true })).toBeVisible()
+  await expect(dialog.getByText(proposal.content)).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '撤销批准' })).toHaveCount(0)
+  expect(fixture.latestSessions).toEqual([firstSession.sessionNo])
+  expect(fixture.progressReads).toBe(0)
+  expect(fixture.decisions).toHaveLength(1)
+
+  fixture.latestStatus = 404
+  await dialog.getByRole('button', { name: '查询执行进度' }).click()
+  await expect(dialog.getByText('会话或提案已不可审查。')).toBeVisible()
+  await expect(dialog.getByText('任务执行完成')).toHaveCount(0)
+})
+
+test('an active proposal takes priority over reviewable terminal history', async ({ page }) => {
+  const fixture = await workspace(page)
+  fixture.latest = { state: 'FAILED', attempt: 1, step_count: 6 }
+  await page.goto('/modules/workspace')
+  await selectSession(page)
+  const dialog = await openReview(page)
+  await expect(dialog.getByText(proposal.title)).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '批准', exact: true })).toBeVisible()
+  await expect(dialog.getByText('任务执行失败')).toHaveCount(0)
+  expect(fixture.latestSessions).toHaveLength(0)
 })

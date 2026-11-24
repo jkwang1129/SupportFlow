@@ -244,3 +244,18 @@ def active_ticket_approval(body: TicketApprovalSession, request: Request, respon
         raise HTTPException(404, 'Active approval not found')
     response.headers['Cache-Control'] = 'no-store'
     return row
+
+
+@router.post('/ticket-approval-latest-progress')
+def latest_ticket_approval_progress(body: TicketApprovalSession, request: Request, response: Response,
+                                    store=Depends(runtime_store)):
+    if not get_settings().runtime_approval_review_enabled:
+        raise HTTPException(503, 'Runtime approval review is disabled')
+    try:
+        row = TicketApprovals(store).latest_terminal_progress(request.state.runtime_tenant, body.session_no)
+    except psycopg.Error:
+        raise HTTPException(503, 'Approval persistence unavailable') from None
+    if row is None:
+        raise HTTPException(404, 'Finished approval task not found')
+    response.headers['Cache-Control'] = 'no-store'
+    return row

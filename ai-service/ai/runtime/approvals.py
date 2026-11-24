@@ -115,6 +115,18 @@ class TicketApprovals:
             raise RuntimeConflict('Multiple live approvals for the same session')
         return rows[0] if rows else None
 
+    def latest_terminal_progress(self, tenant, session_no):
+        """Project only progress and its authorization references for a previously approved Run."""
+        identifier(session_no)
+        with self.store._scope(tenant) as connection:
+            return connection.execute("""SELECT r.tenant_code,r.session_no,r.source_event_id,r.run_id,
+                                                a.snapshot_id,r.state,r.attempt,r.step_count
+                FROM agent_run r JOIN agent_approval a ON a.tenant_code=r.tenant_code AND a.run_id=r.run_id
+                WHERE r.tenant_code=%s AND r.session_no=%s AND a.principal_ref=r.principal_ref
+                  AND r.runtime_version='runtime-v1' AND r.state IN ('SUCCEEDED','FAILED','CANCELLED')
+                  AND a.decided_at IS NOT NULL AND a.status IN ('APPROVED','CONSUMED','REVOKED','EXPIRED','CANCELLED')
+                ORDER BY r.event_seq DESC LIMIT 1""", (tenant, session_no)).fetchone()
+
     def decide(self, tenant, run_id, approval_id, reviewer, *, approve, expected=None):
         if type(approve) is not bool:
             raise ValueError('Approval decision must be explicit')

@@ -17,8 +17,8 @@ pytestmark = pytest.mark.skipif(not os.getenv('SUPPORTFLOW_RUNTIME_TEST_DSN'), r
 TITLE, CONTENT = '工单标题🙂', '合成内容\r\nexact '
 
 
-def wait(store, *, wait_seconds=60):
-    source = request()
+def wait(store, *, wait_seconds=60, source=None):
+    source = source or request()
     run = store.enqueue(source)['run_id']
     approvals = TicketApprovals(store)
     snapshot = uuid4()

@@ -10,7 +10,7 @@
     :close-on-press-escape="!submitting"
   >
     <div class="approval-dialog" aria-live="polite" :aria-busy="loading || submitting || checkingProgress">
-      <p v-if="loading">正在获取当前会话的审批提案…</p>
+      <p v-if="loading">正在查询当前会话的工单任务…</p>
       <el-alert v-else-if="failure" :title="failure" type="warning" :closable="false" show-icon />
       <template v-else-if="proposal || progress">
         <p>{{ progress ? progressLabels[progress.state] : proposal?.status === 'APPROVED' ? '已批准，执行前可撤销' : '请核对将写入工单的标题和正文' }}</p>
@@ -55,7 +55,7 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
 import { ElMessage } from 'element-plus'
-import { activeApproval, decideApproval, readApproval, readApprovalProgress } from '../api/customer/agentApproval'
+import { activeApproval, decideApproval, latestApprovalProgress, readApproval, readApprovalProgress } from '../api/customer/agentApproval'
 import type { ApprovalDecision, ApprovalProgress, ApprovalProposal, ApprovalReference } from '../api/customer/agentApproval'
 
 const props = defineProps<{ sessionNo: string }>()
@@ -140,8 +140,9 @@ async function load() {
       }
     }
     const previous = approvedReference
-    if (!previous) return
-    const state = await readApprovalProgress(previous, pending.signal)
+    const state = previous
+      ? await readApprovalProgress(previous, pending.signal)
+      : await latestApprovalProgress(props.sessionNo, pending.signal)
     if (!pending.signal.aborted) {
       reference = previous
       progress.value = state
@@ -162,7 +163,11 @@ function openApproval() {
 }
 
 async function loadProgress() {
-  if (!visible.value || !reference || submitting.value || checkingProgress.value) return
+  if (!visible.value || submitting.value || checkingProgress.value) return
+  if (!reference) {
+    if (progress.value) await load()
+    return
+  }
   const request = new AbortController()
   progressLoader = request
   checkingProgress.value = true

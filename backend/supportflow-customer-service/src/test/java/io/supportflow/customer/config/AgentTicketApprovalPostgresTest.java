@@ -44,6 +44,7 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
     private final AtomicBoolean takeoverDuringPreview = new AtomicBoolean();
     private final AtomicBoolean unmatchedActiveReference = new AtomicBoolean();
     private final AtomicBoolean unmatchedProgressReference = new AtomicBoolean();
+    private final AtomicBoolean unmatchedLatestSnapshot = new AtomicBoolean();
     private static final String PROPOSAL_TITLE = "合成提案🙂";
     private static final String PROPOSAL_BODY = "原始内容\n ";
     private UUID event;
@@ -81,6 +82,16 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
                         "retry_count", 1, "error_code", "FIXTURE_PRIVATE_FAILURE")));
             }
             var node = JSON.readTree(request.body());
+            if (request.rawPath().endsWith("/ticket-approval-latest-progress")) {
+                assertEquals(JSON.valueToTree(Map.of("session_no", sessionNo)), node);
+                if (status.get() != 200) return new RuntimeReceiverStub.Reply(status.get(), "synthetic private upstream failure");
+                if (takeoverDuringPreview.get()) scoped(() -> jdbc.update("UPDATE session SET agent_id=99 WHERE id=?", sessionId));
+                return new RuntimeReceiverStub.Reply(200, JSON.writeValueAsString(Map.of(
+                        "tenant_code", "TENANT_A", "session_no", sessionNo,
+                        "source_event_id", event.toString(), "run_id", run.toString(),
+                        "snapshot_id", (unmatchedLatestSnapshot.get() ? UUID.randomUUID() : snapshot.snapshotId()).toString(),
+                        "state", "SUCCEEDED", "attempt", 2, "step_count", 7)));
+            }
             if (request.rawPath().endsWith("/ticket-approval-active")) {
                 assertEquals(JSON.valueToTree(Map.of("session_no", sessionNo)), node);
                 if (status.get() != 200) return new RuntimeReceiverStub.Reply(status.get(), "synthetic private upstream failure");
@@ -123,6 +134,31 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
     private MvcResult preview(LoginUser user) throws Exception {
         return LoginUserContext.bind(user == null ? AuthState.anonymous() : AuthState.ok(user), () ->
                 mvc.perform(get(path.replace("/decisions", "/proposal")).header("X-Tenant-Code", "FORGED")).andReturn());
+    }
+
+    private MvcResult latest() throws Exception {
+        return LoginUserContext.bind(AuthState.ok(ADMIN), () -> mvc.perform(
+                get("/api/customer/agent-approvals/sessions/" + sessionNo + "/latest-progress")).andReturn());
+    }
+
+    @Test void latestProgressProjectsOnlyThreeFieldsAndRejectsAnUnmatchedSnapshot() throws Exception {
+        var response = latest().getResponse();
+        assertEquals(200, response.getStatus());
+        assertEquals("no-store", response.getHeader("Cache-Control"));
+        assertEquals(JSON.valueToTree(Map.of("state", "SUCCEEDED", "attempt", 2, "step_count", 7)),
+                JSON.readTree(response.getContentAsString()).get("data"));
+        unmatchedLatestSnapshot.set(true);
+        assertEquals(404, latest().getResponse().getStatus());
+        assertNull(server.failure.get());
+    }
+
+    @Test void latestProgressReauthorizesAfterTakeoverDuringTheLookup() throws Exception {
+        takeoverDuringPreview.set(true);
+        var response = latest().getResponse();
+        assertEquals(404, response.getStatus());
+        assertFalse(response.getContentAsString().contains("SUCCEEDED"));
+        assertEquals(1, server.calls.get());
+        assertNull(server.failure.get());
     }
 
     private MvcResult active(LoginUser user) throws Exception {

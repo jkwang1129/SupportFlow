@@ -38,7 +38,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M06 Evaluation | 部分实现，真实模型配对基线、逐题语义复核与确定性工程门禁 | 25 题单次检索与 Agentic RAG 对照、实际 Token 回执与逐题复评分、拒答与引用契约、4 类故障轨迹基线、真实联调录制的只读模型与工具回放 | 扩大样本和留出集，增加独立人工复核、模型评审器一致性及多轮尝试的回归。A/D |
 | M07 Trace/Observability | 部分实现，工单跨服务查询及只读规划回放已联调 | 按租户关联 Java 投递回执、Python Run/Step、失败重试和审批，版本化轨迹、模型用量、离线故障基线与工单只读回放 | 完善浏览器展示、服务覆盖、聚合指标和轨迹保留。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界 Chat/查询 Embedding 与 Runtime 适配 | 单次 HTTP、稳定错误、显式租户 Profile、Prompt/请求摘要、MODEL 检查点和持久化 Token 回执、实际协议故障与恢复 | 视觉和旧 RAG 同步 Embedding、租户选择、Prompt 发布、供应商权限和金额结算待验收。E |
-| M09 Streaming/交互 | 部分实现，获批工单通知、坐席进度与访客消息重连已覆盖 | 既有 WebSocket、消息 seq/ACK、访客授权增量补拉、工单确认提交后推送及历史补偿、坐席审批与进度 | 跨实例通知路由、任务事件续传、整页重载的任务进度恢复及用户取消还需验证。依赖 B、M07。E |
+| M09 Streaming/交互 | 部分实现，获批工单通知、坐席进度与访客消息重连已覆盖 | 既有 WebSocket、消息 seq/ACK、访客授权增量补拉、工单确认推送及历史补偿、整页重载后按会话恢复受限终态 | 跨实例通知路由、任务事件续传及用户取消还需验证。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
 | M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、计费日聚合与月预算告警/降级/暂停；Runtime 有跨 Worker 租约、Run 预算、租户积压上限、模型并发额度和按日、月的 Token 与金额预留及结算 | 旧客服月预算读取仍有 60 秒缓存和失败放行；真实账单对账与生产并发容量待验收。计费去重 A4，运行预算随 M01。B/E |
 | M12 Production Operations | 部分实现，六库备份恢复已本地演练 | Compose、CI、新旧库验收、迁移清单、受限凭据、两个 PostgreSQL 17 集群的六库恢复 | 生产部署、跨库一致性策略、WAL、对象存储恢复和 SLO 演练待验收。A5/E |
@@ -225,3 +225,5 @@ D18 修复访客 Widget 的消息补拉。复用已认证的 WebSocket，按当�
 D19 在显式启用的租户中，把获批工单的确认消息、工单及回执放入同一事务。审批许可和存储事务分别验收。访客通过既有历史或补拉读取确认结果。见 [ADR-0062](decisions/0062-approved-ticket-visitor-notice.md) 和 [本地验收](reliability-verification.md#d19-获批工单的访客确认消息2026-11-24)。
 
 D20 客服提交后签发工单确认的消息引用。实时服务回读已提交记录，只对同租户同会话的在线访客发送。推送失败时用原聊天补拉恢复。见 [ADR-0063](decisions/0063-online-approved-ticket-notice.md) 和 [本地验收](reliability-verification.md#d20-获批工单的在线访客通知2026-11-24)。
+
+D21 工作台支持整页刷新后按当前会话恢复最近的已审批终态。客服服务重新核验角色、会话、投递事件及来源快照，浏览器只收到状态与执行计数。活动提案优先显示。见 [ADR-0064](decisions/0064-session-terminal-approval-progress.md) 和 [本地验收](reliability-verification.md#d21-整页刷新后恢复工单任务终态2026-11-24)。

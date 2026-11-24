@@ -49,6 +49,12 @@ export function readApprovalProgress(reference: ApprovalReference, signal: Abort
   })
 }
 
+export function latestApprovalProgress(sessionNo: string, signal: AbortSignal) {
+  return request<ApprovalProgress | null>({
+    url: `${APPROVALS}/sessions/${encodeURIComponent(sessionNo)}/latest-progress`, signal, silent: true,
+  })
+}
+
 export function decideApproval(reference: ApprovalReference, proposal: ApprovalProposal, decision: ApprovalDecision) {
   return request<{ approval_id: string; status: 'APPROVED' | 'DENIED' | 'REVOKED' }>({
     url: `${proposalPath(reference)}/decisions`,

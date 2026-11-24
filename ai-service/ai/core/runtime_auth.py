@@ -63,7 +63,8 @@ class RuntimeAuthMiddleware:
             return await reject(401, 'Invalid runtime service credential')
         path = scope['path'][len(self.prefix):]
         allowed = ((scope['method'] == 'POST' and path == '/ai/v1/runtime/runs')
-                   or (scope['method'] == 'POST' and path == '/ai/v1/runtime/runs/ticket-approval-active')
+                   or (scope['method'] == 'POST' and path in (
+                       '/ai/v1/runtime/runs/ticket-approval-active', '/ai/v1/runtime/runs/ticket-approval-latest-progress'))
                    or (scope['method'] == 'GET' and RUN_PATH.fullmatch(path))
                    or (scope['method'] == 'POST' and path.endswith('/authorize') and RUN_PATH.fullmatch(path[:-10]))
                    or (scope['method'] == 'POST' and path.endswith('/review-ticket-approval')

@@ -95,6 +95,24 @@ def _assert_progress(base, key, source, run, facts):
         assert response.json()['data'] == {name: facts[name] for name in ('state', 'attempt', 'step_count')}
 
 
+def _assert_latest_progress(base, key, source, facts=None, *, unavailable=False):
+    path = base + f'/api/customer/agent-approvals/sessions/{source.session_no}/latest-progress'
+    admin = {'Authorization': _fixture_token(key, source.tenant, 123)}
+    agent = {'Authorization': _fixture_token(key, source.tenant, 124)}
+    foreign = {'Authorization': _fixture_token(key, FOREIGN_TENANT, 123)}
+    with httpx.Client(trust_env=False, timeout=3) as client:
+        assert client.get(path).status_code == 401
+        assert client.get(path, headers=agent).status_code == 403
+        assert client.get(path, headers=foreign).status_code == 404
+        response = client.get(path, headers=admin)
+        if unavailable:
+            assert response.status_code == 404 and response.json().get('data') is None
+            return
+        assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+        assert response.json().get('data') == (
+            None if facts is None else {name: facts[name] for name in ('state', 'attempt', 'step_count')})
+
+
 def _staff_review(client, base, key, source, run, row, title, content, *, revoke=False):
     auth = {'Authorization': _fixture_token(key, source.tenant, 123)}
     agent = {'Authorization': _fixture_token(key, source.tenant, 124)}
@@ -225,6 +243,7 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         assert not any(step['effect'] == 'WRITE' for step in store.steps(tenant, run))
         assert asyncio.run(tickets.receipt(source, run)) is None
         _assert_progress(base, jwt_key, source, run, waiting)
+        _assert_latest_progress(base, jwt_key, source)
         if has_previous_read:
             track = timeline.for_event(tenant, source.source_event_id)
             assert track['binding_status'] == 'matched' and track['python_runtime']['approval']['status'] == 'PENDING'
@@ -349,6 +368,7 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             assert session_no not in live_notices.requests
         if mode not in ('taken_over_after_approval', 'expired_before_resume'):
             _assert_progress(base, jwt_key, source, run, result)
+        _assert_latest_progress(base, jwt_key, source, result, unavailable=mode == 'taken_over_after_approval')
         if has_previous_read:
             track = timeline.for_run(tenant, run)
             assert track['trace_id'] == timelines['approval_wait']['trace_id']
@@ -356,6 +376,10 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             assert track['python_runtime']['approval']['consumed_step_no'] == writes[0]['step_no']
             assert track['python_runtime']['run']['state'] == 'SUCCEEDED'
             timelines['approval_consumed'] = track
+            with connect('customer_db') as db:
+                db.execute("""UPDATE agent_source_snapshot SET created_at=clock_timestamp()-interval '2 hours',
+                    expires_at=clock_timestamp()-interval '1 hour' WHERE tenant_code=%s AND run_id=%s""", (tenant, run))
+            _assert_latest_progress(base, jwt_key, source, unavailable=True)
         observations.append(dict(case=mode, source_enrollment='SIGNED_VISITOR_APPEND',
             session_messages=message_count, delivered_source_events=len(ordered_sources), continued_from_ticket_read=has_previous_read,
             waiting_state=waiting['state'], before_review_writes=0, final_state=result['state'], error_code=result['error_code'],
@@ -364,13 +388,16 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             recovery_receipt_requests=network['gets'] if network is not None else None,
             steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=len(stored_receipts), events=events, visitor_notices=len(visitor_messages),
-            live_push=has_previous_read, synced_after_push_failure=fallback_history))
+            live_push=has_previous_read, synced_after_push_failure=fallback_history,
+            latest_progress_restored=mode != 'taken_over_after_approval', expired_source_hidden=has_previous_read))
     artifact = ROOT / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v13', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v14', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
     print('Signed visitor -> Outbox -> proposal -> staff review -> approval Worker: 5 cases passed; '
           'same-session read then create, one visitor-visible notice per receipt including lost ACK, '
           'and zero writes after takeover, expiry or revocation', flush=True)
     print('Ticket notices: actual visitor WebSocket received one committed notice; a second session received none; '
           'HTTP 503 preserved one notice recovered through SYNC; unsigned, wrong-role and mismatched references rejected', flush=True)
+    print('Latest reviewed progress: 4 terminal states recovered by session, 1 takeover and 1 expired snapshot hidden; '
+          'pending runs, anonymous users, regular agents and foreign tenants could not discover terminal progress', flush=True)
     return timelines

@@ -95,7 +95,7 @@ public class AgentTicketApprovalController {
             var source = transaction.execute(status -> snapshots.read(tenant, eventId, runId));
             var progress = runtime.approvalProgress(source);
             transaction.executeWithoutResult(status -> snapshots.read(tenant, eventId, runId));
-            return ApiResponse.ok(Map.of("state", progress.state(), "attempt", progress.attempt(), "step_count", progress.stepCount()));
+            return ApiResponse.ok(progressView(progress));
         });
     }
 
@@ -103,26 +103,56 @@ public class AgentTicketApprovalController {
     public ApiResponse<Map<String, String>> active(@PathVariable String sessionNo, HttpServletResponse response) {
         response.setHeader("Cache-Control", "no-store");
         String tenant = requireReviewer().tenantCode();
-        if (!sessionNo.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")) throw new BizException(42207, "会话编号无效");
         return TenantContext.bind(tenant, () -> {
-            Boolean eligible = transaction.execute(status -> jdbc.queryForObject("""
-                    SELECT EXISTS(SELECT 1 FROM session WHERE tenant_code=? AND session_no=?
-                        AND is_deleted=false AND agent_id IS NULL AND status IN (1,2))
-                    """, Boolean.class, tenant, sessionNo));
-            if (!Boolean.TRUE.equals(eligible)) throw new BizException(40407, "可用的审批会话不存在");
+            requireReviewableSession(tenant, sessionNo);
             var reference = runtime.activeTicketApproval(tenant, sessionNo);
             if (reference == null) return ApiResponse.ok();
-            transaction.executeWithoutResult(status -> {
-                Boolean delivered = jdbc.queryForObject("""
-                        SELECT EXISTS(SELECT 1 FROM agent_event_outbox WHERE tenant_code=? AND session_no=?
-                            AND event_id=? AND run_id=? AND state='DELIVERED')
-                        """, Boolean.class, tenant, sessionNo, reference.eventId(), reference.runId());
-                if (!Boolean.TRUE.equals(delivered)) throw new BizException(40407, "审批来源不可用");
-                snapshots.read(tenant, reference.eventId(), reference.runId());
-            });
+            transaction.executeWithoutResult(status -> sessionSource(tenant, sessionNo, reference.eventId(), reference.runId()));
             return ApiResponse.ok(Map.of("source_event_id", reference.eventId().toString(), "run_id", reference.runId().toString(),
                     "status", reference.status(), "expires_at", reference.expiresAt().toString()));
         });
+    }
+
+    @GetMapping("/sessions/{sessionNo}/latest-progress")
+    public ApiResponse<Map<String, Object>> latestProgress(@PathVariable String sessionNo, HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store");
+        String tenant = requireReviewer().tenantCode();
+        return TenantContext.bind(tenant, () -> {
+            requireReviewableSession(tenant, sessionNo);
+            var approved = runtime.latestTerminalApproval(tenant, sessionNo);
+            if (approved == null) return ApiResponse.ok();
+            AgentSourceSnapshots.Snapshot source;
+            try {
+                source = transaction.execute(status -> sessionSource(tenant, sessionNo, approved.eventId(), approved.runId()));
+            } catch (BizException unavailable) {
+                throw new BizException(40407, "审批任务不可用");
+            }
+            if (source == null || !approved.snapshotId().equals(source.snapshotId()))
+                throw new BizException(40407, "审批任务不可用");
+            return ApiResponse.ok(progressView(approved.progress()));
+        });
+    }
+
+    private void requireReviewableSession(String tenant, String sessionNo) {
+        if (!sessionNo.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}")) throw new BizException(42207, "会话编号无效");
+        Boolean eligible = transaction.execute(status -> jdbc.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM session WHERE tenant_code=? AND session_no=?
+                    AND is_deleted=false AND agent_id IS NULL AND status IN (1,2))
+                """, Boolean.class, tenant, sessionNo));
+        if (!Boolean.TRUE.equals(eligible)) throw new BizException(40407, "可用的审批会话不存在");
+    }
+
+    private AgentSourceSnapshots.Snapshot sessionSource(String tenant, String sessionNo, UUID eventId, UUID runId) {
+        Boolean delivered = jdbc.queryForObject("""
+                SELECT EXISTS(SELECT 1 FROM agent_event_outbox WHERE tenant_code=? AND session_no=?
+                    AND event_id=? AND run_id=? AND state='DELIVERED')
+                """, Boolean.class, tenant, sessionNo, eventId, runId);
+        if (!Boolean.TRUE.equals(delivered)) throw new BizException(40407, "审批来源不可用");
+        return snapshots.read(tenant, eventId, runId);
+    }
+
+    private static Map<String, Object> progressView(AgentRuntimeClient.RunProgress progress) {
+        return Map.of("state", progress.state(), "attempt", progress.attempt(), "step_count", progress.stepCount());
     }
 
     private LoginUser requireReviewer() {

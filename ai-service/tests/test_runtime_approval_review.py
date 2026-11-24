@@ -115,8 +115,9 @@ def test_preview_input_only_accepts_canonical_source_reference(monkeypatch, valu
     ('customer', True, {'session_no': '../invalid'}, 422),
     ('customer', True, {'session_no': 'SESSION_1', 'limit': 100}, 422),
 ])
-def test_active_reference_requires_signed_customer_and_only_one_session(monkeypatch, caller, enabled, value, status):
+@pytest.mark.parametrize('lookup', ['ticket-approval-active', 'ticket-approval-latest-progress'])
+def test_session_lookup_requires_signed_customer_and_only_one_session(monkeypatch, caller, enabled, value, status, lookup):
     monkeypatch.setattr(runtime, 'TicketApprovals', lambda _: pytest.fail('Forbidden approval discovery reached storage'))
     app = build_app(monkeypatch, store=object(), approval_enabled=enabled)
     with TestClient(app) as client:
-        assert post(client, f'{PATH}/ticket-approval-active', value, caller=caller).status_code == status
+        assert post(client, f'{PATH}/{lookup}', value, caller=caller).status_code == status

@@ -1658,3 +1658,16 @@ Windows 11、Temurin JDK 25、Python 3.11.5、Node 24.14.1、Chromium 与隔离 
 - 本机共享 Python 缺少可执行的 pytest 模块。Java 数据库套件先独立通过，Runtime 联调切换到新建 Python 环境。Windows 启动实时 JAR 时也需保留系统目录变量，调整夹具后用隔离环境复跑。
 
 默认关闭在线推送开关。验收覆盖单实例指定租户和会话；多实例分发、第三方渠道回执和自动重试单独评估。 [设计、复现与回退](decisions/0063-online-approved-ticket-notice.md)
+
+## D21 整页刷新后恢复工单任务终态（2026-11-24）
+
+Windows 11、Temurin JDK 25、Python 3.11.5、Node 24.14.1、Chromium 和隔离 PostgreSQL。首轮客服数据库联调识别出新查询缺少 Java 签名路由登记，按精确路径补齐后复跑。接口设计、复现命令、部署顺序和回退见 [ADR-0064](decisions/0064-session-terminal-approval-progress.md)。
+
+- 原界面整页刷新后无法重新定位终态，新增浏览器回归复现了这一行为，日志为 `.local/implementation/d21-browser-before.log`。修复后通过 15 项浏览器测试，包括重新选会话恢复终态、过期后清除显示、活动提案优先与普通坐席入口限制。报告为 `.local/implementation/d21-browser.xml`。
+- 普通全量 AI 测试 1,128 项通过，474 项按环境条件跳过。新增签名查询测试覆盖禁用、外部服务角色和非法输入。
+- 全模块 Maven `verify` 和前端构建通过。`python scripts/test-customer-rls.py --with-ai` 通过 164 项客服数据库测试、32 项 AI 知识库测试。新增客服用例验证回包仅包含三个状态字段、禁止缓存、来源快照不匹配和查询期间会话被接管均隐藏结果。
+- `python scripts/test-agent-runtime.py --with-java-delivery` 本地限定 `runtime_approval_review or approval_lifecycle` 的 30 项 PostgreSQL 测试通过。新增数据库用例验证按来源序号选最近已批准终态，跳过拒绝、未获批取消和仍待执行的任务，且查询不改任务状态。
+- 启动真实客服服务、AI、Worker 和实时服务后，5 个签名访客案例通过。4 个终态按会话找回，接管和来源快照过期各有 1 次查询返回 404。每个案例均检查待审批时返回空结果，以及匿名、普通坐席、其他租户管理员分别返回 401、403、404。
+- 原始报告为 `.local/implementation/d21-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v14`，SHA-256 为 `691d54f3266a19662d21af1dba001588dbb11559a495569487e38b7b75afaf16`。完整日志为 `.local/implementation/d21-runtime.log`。
+
+本批覆盖授权窗口内的最近已批准终态，使用按需查询。审批已消费且仍在执行的任务整页恢复、任务事件续传和用户取消留在后续批次。

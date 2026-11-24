@@ -30,6 +30,7 @@ public final class AgentRuntimeClient implements AutoCloseable {
     public record Receipt(UUID eventId, UUID runId) { }
     public record ApprovalReference(UUID eventId, UUID runId, String status, Instant expiresAt) { }
     public record RunProgress(String state, int attempt, int stepCount) { }
+    public record TerminalApproval(UUID eventId, UUID runId, UUID snapshotId, RunProgress progress) { }
     public static final class DeliveryFailure extends RuntimeException {
         private final boolean retryable;
         DeliveryFailure(boolean retryable, String code) { super(code); this.retryable = retryable; }
@@ -146,28 +147,50 @@ public final class AgentRuntimeClient implements AutoCloseable {
     }
 
     public ApprovalReference activeTicketApproval(String tenant, String sessionNo) {
-        if (sessionNo == null || !sessionNo.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}"))
-            throw new IllegalArgumentException("Valid session reference required");
-        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
-            throw new IllegalStateException("Approval lookup must run outside the business transaction");
-        final byte[] body;
-        try { body = mapper.writeValueAsBytes(Map.of("session_no", sessionNo)); }
-        catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_QUEUE_REFERENCE"); }
-        URI uri = URI.create(endpoint + "/ticket-approval-active");
-        var response = exchange(AgentRuntimeProtocol.request(uri, "POST", tenant, body, secret), "APPROVAL_QUEUE");
-        int code = response.statusCode();
-        if (code == 404) return null;
-        if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, "APPROVAL_QUEUE_HTTP_" + code);
-        if (!hasPlainJsonBody(response)) throw new DeliveryFailure(false, "INVALID_APPROVAL_QUEUE_RESULT");
+        JsonNode json = approvalSessionLookup(tenant, sessionNo, "ticket-approval-active", "APPROVAL_QUEUE");
+        if (json == null) return null;
         try {
-            JsonNode json = mapper.readTree(response.body());
-            if (json == null || !json.isObject() || json.size() != 4) throw new IllegalArgumentException();
+            if (!json.isObject() || json.size() != 4) throw new IllegalArgumentException();
             String phase = text(json, "status");
             Instant expiry = Instant.parse(text(json, "expires_at"));
             if (!("PENDING".equals(phase) || "APPROVED".equals(phase)) || !expiry.isAfter(Instant.now()))
                 throw new IllegalArgumentException();
             return new ApprovalReference(uuid(json, "source_event_id"), uuid(json, "run_id"), phase, expiry);
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_QUEUE_RESULT"); }
+    }
+
+    public TerminalApproval latestTerminalApproval(String tenant, String sessionNo) {
+        JsonNode json = approvalSessionLookup(tenant, sessionNo, "ticket-approval-latest-progress", "APPROVAL_HISTORY");
+        if (json == null) return null;
+        try {
+            if (!json.isObject() || json.size() != 8 || !tenant.equals(text(json, "tenant_code"))
+                    || !sessionNo.equals(text(json, "session_no"))) throw new IllegalArgumentException();
+            String state = text(json, "state");
+            if (!Set.of("SUCCEEDED", "FAILED", "CANCELLED").contains(state)) throw new IllegalArgumentException();
+            return new TerminalApproval(uuid(json, "source_event_id"), uuid(json, "run_id"), uuid(json, "snapshot_id"),
+                    new RunProgress(state, count(json, "attempt", Integer.MAX_VALUE), count(json, "step_count", 100)));
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_HISTORY_RESULT"); }
+    }
+
+    private JsonNode approvalSessionLookup(String tenant, String sessionNo, String path, String operation) {
+        if (sessionNo == null || !sessionNo.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}"))
+            throw new IllegalArgumentException("Valid session reference required");
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Approval lookup must run outside the business transaction");
+        final byte[] body;
+        try { body = mapper.writeValueAsBytes(Map.of("session_no", sessionNo)); }
+        catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_" + operation + "_REFERENCE"); }
+        URI uri = URI.create(endpoint + "/" + path);
+        var response = exchange(AgentRuntimeProtocol.request(uri, "POST", tenant, body, secret), operation);
+        int code = response.statusCode();
+        if (code == 404) return null;
+        if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, operation + "_HTTP_" + code);
+        if (!hasPlainJsonBody(response)) throw new DeliveryFailure(false, "INVALID_" + operation + "_RESULT");
+        try {
+            JsonNode json = mapper.readTree(response.body());
+            if (json == null || !json.isObject()) throw new IllegalArgumentException();
+            return json;
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_" + operation + "_RESULT"); }
     }
 
     public RunProgress approvalProgress(AgentSourceSnapshots.Snapshot source) {
