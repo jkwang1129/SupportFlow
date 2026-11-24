@@ -53,6 +53,9 @@
         <el-button v-if="proposal?.status === 'APPROVED' && !terminal" type="danger" plain :disabled="submitting || checkingProgress" @click="submit('revoke')">
           撤销批准
         </el-button>
+        <el-button v-if="canCancel" type="danger" plain :disabled="submitting || checkingProgress" @click="cancelRun">
+          取消任务
+        </el-button>
       </template>
       <span v-if="submitting" class="approval-feedback" role="status">正在提交…</span>
     </template>
@@ -62,8 +65,8 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { isAxiosError } from 'axios'
-import { ElMessage } from 'element-plus'
-import { activeApproval, decideApproval, latestApprovalProgress, readApproval, readApprovalProgress } from '../api/customer/agentApproval'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { activeApproval, cancelApprovalRun, decideApproval, latestApprovalProgress, readApproval, readApprovalProgress } from '../api/customer/agentApproval'
 import type { ApprovalDecision, ApprovalProgress, ApprovalProposal, ApprovalReference, ApprovalRunReference, ApprovalTerminalState } from '../api/customer/agentApproval'
 import TicketApprovalTimeline from './TicketApprovalTimeline.vue'
 
@@ -78,6 +81,9 @@ const timelineReference = ref<ApprovalRunReference | null>(null)
 const timelineStatus = ref<ApprovalTerminalState | null>(null)
 const terminal = computed(() => timelineStatus.value !== null || (progress.value !== null
   && ['SUCCEEDED', 'FAILED', 'CANCELLED'].includes(progress.value.state)))
+const canCancel = computed(() => !!timelineReference.value && !terminal.value && !progress.value?.write_status
+  && (proposal.value?.status === 'APPROVED' || (progress.value !== null
+    && ['PENDING', 'RUNNING', 'RETRY_WAIT'].includes(progress.value.state))))
 const progressLabels: Record<ApprovalProgress['state'], string> = {
   PENDING: '已批准，等待执行',
   RUNNING: '任务执行中',
@@ -88,6 +94,8 @@ const progressLabels: Record<ApprovalProgress['state'], string> = {
   CANCELLED: '任务已取消',
 }
 const statusLabel = computed(() => {
+  if (progress.value?.write_status === 'UNCERTAIN') return '工单写入结果待人工核查'
+  if (progress.value?.write_status === 'COMMITTED') return terminal.value ? '任务已结束，工单写入已确认' : '工单写入已确认，任务仍在收尾'
   const state = timelineStatus.value ?? progress.value?.state
   if (state) return progressLabels[state]
   return proposal.value?.status === 'APPROVED' ? '已批准，执行前可撤销' : '请核对将写入工单的标题和正文'
@@ -229,6 +237,34 @@ function timelineSettled(state: ApprovalTerminalState) {
 function timelineUnavailable(error: unknown) {
   clear()
   showFailure(error)
+}
+
+async function cancelRun() {
+  const selected = timelineReference.value
+  if (!selected || !canCancel.value || submitting.value || checkingProgress.value) return
+  try {
+    await ElMessageBox.confirm('确认提交取消请求？已提交的工单和回执会保留。', '确认取消任务', {
+      type: 'warning', confirmButtonText: '确认取消', cancelButtonText: '继续执行',
+    })
+  } catch {
+    return
+  }
+  if (!visible.value || timelineReference.value !== selected || !canCancel.value || submitting.value || checkingProgress.value) return
+  submitting.value = true
+  try {
+    const result = await cancelApprovalRun(selected)
+    if (!mounted || timelineReference.value !== selected) return
+    progress.value = result
+    proposal.value = null
+  } catch (error) {
+    if (!mounted || timelineReference.value !== selected) return
+    const status = statusOf(error)
+    if (status === 401 || status === 403 || status === 404 || status === 410) timelineUnavailable(error)
+    else if (status === 409) ElMessage.warning('任务当前不可取消，请查询执行进度。')
+    else ElMessage.warning('暂未确认取消结果，请先查询执行进度。')
+  } finally {
+    if (mounted) submitting.value = false
+  }
 }
 
 async function submit(decision: ApprovalDecision) {

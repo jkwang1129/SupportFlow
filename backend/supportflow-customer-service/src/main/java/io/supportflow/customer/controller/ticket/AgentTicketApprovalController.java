@@ -95,7 +95,21 @@ public class AgentTicketApprovalController {
             var source = transaction.execute(status -> snapshots.read(tenant, eventId, runId));
             var progress = runtime.approvalProgress(source);
             transaction.executeWithoutResult(status -> snapshots.read(tenant, eventId, runId));
-            return ApiResponse.ok(progressView(progress));
+            return ApiResponse.ok(progressDetails(progress));
+        });
+    }
+
+    @PostMapping("/events/{eventId}/runs/{runId}/cancel")
+    public ApiResponse<Map<String, Object>> cancel(@PathVariable UUID eventId, @PathVariable UUID runId, HttpServletResponse response) {
+        response.setHeader("Cache-Control", "no-store");
+        var user = requireReviewer();
+        String tenant = user.tenantCode();
+        return TenantContext.bind(tenant, () -> {
+            var source = transaction.execute(status -> snapshots.read(tenant, eventId, runId));
+            var progress = runtime.cancelApproval(source, user.userId());
+            var current = transaction.execute(status -> snapshots.read(tenant, eventId, runId));
+            if (!source.snapshotId().equals(current.snapshotId())) throw new BizException(40407, "审批任务不可用");
+            return ApiResponse.ok(progressDetails(progress));
         });
     }
 
@@ -147,7 +161,7 @@ public class AgentTicketApprovalController {
                 throw new BizException(40407, "审批任务不可用");
             var progress = progressView(approved.progress());
             if (!includeTimeline) return ApiResponse.ok(progress);
-            var details = new java.util.LinkedHashMap<>(progress);
+            var details = new java.util.LinkedHashMap<>(progressDetails(approved.progress()));
             details.put("timeline", Map.of("source_event_id", approved.eventId().toString(), "run_id", approved.runId().toString()));
             return ApiResponse.ok(details);
         });
@@ -173,6 +187,12 @@ public class AgentTicketApprovalController {
 
     private static Map<String, Object> progressView(AgentRuntimeClient.RunProgress progress) {
         return Map.of("state", progress.state(), "attempt", progress.attempt(), "step_count", progress.stepCount());
+    }
+
+    private static Map<String, Object> progressDetails(AgentRuntimeClient.RunProgress progress) {
+        if (progress.writeStatus() == null) return progressView(progress);
+        return Map.of("state", progress.state(), "attempt", progress.attempt(), "step_count", progress.stepCount(),
+                      "write_status", progress.writeStatus());
     }
 
     private LoginUser requireReviewer() {
@@ -246,6 +266,8 @@ public class AgentTicketApprovalController {
             case "APPROVAL_PROGRESS_HTTP_404" -> ResponseEntity.status(404).body(ApiResponse.fail(40407, "审批任务不可用"));
             case "APPROVAL_EVENTS_HTTP_404" -> ResponseEntity.status(404).body(ApiResponse.fail(40407, "审批任务不可用"));
             case "APPROVAL_EVENTS_HTTP_409" -> ResponseEntity.status(409).body(ApiResponse.fail(40907, "事件序号超出当前进度"));
+            case "APPROVAL_CANCEL_HTTP_404" -> ResponseEntity.status(404).body(ApiResponse.fail(40407, "审批任务不可用"));
+            case "APPROVAL_CANCEL_HTTP_409" -> ResponseEntity.status(409).body(ApiResponse.fail(40907, "任务当前不可取消"));
             default -> unavailable();
         };
     }

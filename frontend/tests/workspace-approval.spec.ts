@@ -48,6 +48,9 @@ async function workspace(page: Page, role = 'ADMIN') {
     timelineReply: undefined as ((route: Route, after: number) => Promise<void>) | undefined,
     activeSessions: [] as string[],
     decisions: [] as unknown[],
+    cancellation: { state: 'CANCELLED', attempt: 1, step_count: 4 } as ApprovalProgress,
+    cancellationUnavailable: false,
+    cancellations: 0,
   }
   await page.addInitScript(() => {
     localStorage.setItem('supportflow_admin_token', 'test-workspace-user')
@@ -86,6 +89,11 @@ async function workspace(page: Page, role = 'ADMIN') {
       if (fixture.progressUnavailable) return route.abort('internetdisconnected')
       if (fixture.progressStatus !== 200) return route.fulfill({ status: fixture.progressStatus, json: {} })
       return reply(route, fixture.progress)
+    }
+    if (path === `${eventsPath}/cancel` && route.request().method() === 'POST') {
+      fixture.cancellations++
+      if (fixture.cancellationUnavailable) return route.abort('internetdisconnected')
+      return reply(route, fixture.cancellation)
     }
     if (path === `${eventsPath}/decisions` && route.request().method() === 'POST') {
       fixture.decisions.push(route.request().postDataJSON())
@@ -457,4 +465,74 @@ test('drains a multi-page history and keeps the display bounded', async ({ page 
   await page.clock.runFor(6000)
   expect(fixture.timelineReads).toEqual([0, 16, 32])
   expect(fixture.progressReads).toBe(0)
+})
+
+test('requires confirmation and sends one cancellation for an approved task', async ({ page }) => {
+  const fixture = await workspace(page)
+  await page.goto('/modules/workspace')
+  await selectSession(page)
+  const dialog = await openReview(page)
+  await expect(dialog.getByRole('button', { name: '取消任务', exact: true })).toHaveCount(0)
+  await dialog.getByRole('button', { name: '批准', exact: true }).click()
+  const cancel = dialog.getByRole('button', { name: '取消任务', exact: true })
+  await cancel.click()
+  await page.getByRole('button', { name: '继续执行', exact: true }).click()
+  expect(fixture.cancellations).toBe(0)
+  await cancel.click()
+  await page.getByRole('button', { name: '确认取消', exact: true }).click()
+  await expect(dialog.getByText('任务已取消')).toBeVisible()
+  await expect(cancel).toHaveCount(0)
+  expect(fixture.cancellations).toBe(1)
+  expect(fixture.decisions).toHaveLength(1)
+})
+
+const cancellationStates: [ApprovalProgress, string][] = [
+  [{ state: 'SUCCEEDED', attempt: 2, step_count: 7 }, '任务执行完成'],
+  [{ state: 'FAILED', attempt: 2, step_count: 7, write_status: 'UNCERTAIN' }, '工单写入结果待人工核查'],
+  [{ state: 'RUNNING', attempt: 2, step_count: 7, write_status: 'COMMITTED' }, '工单写入已确认，任务仍在收尾'],
+]
+for (const [state, label] of cancellationStates) {
+  test(`shows the observed cancellation outcome: ${label}`, async ({ page }) => {
+    const fixture = await workspace(page)
+    fixture.active = null
+    fixture.latest = { state: 'RUNNING', attempt: 2, step_count: 6,
+      timeline: { source_event_id: reference.source_event_id, run_id: reference.run_id } }
+    fixture.cancellation = state
+    await page.goto('/modules/workspace')
+    await selectSession(page)
+    const dialog = await openReview(page)
+    await expect(dialog.getByText('任务执行中')).toBeVisible()
+    await dialog.getByRole('button', { name: '取消任务', exact: true }).click()
+    await page.getByRole('button', { name: '确认取消', exact: true }).click()
+    await expect(dialog.getByText(label)).toBeVisible()
+    await expect(dialog.getByText('任务已取消')).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: '取消任务', exact: true })).toHaveCount(0)
+    expect(fixture.cancellations).toBe(1)
+    expect(fixture.decisions).toHaveLength(0)
+    if (state.write_status === 'UNCERTAIN') {
+      fixture.latest = { ...state, timeline: fixture.latest.timeline }
+      await page.reload()
+      await selectSession(page)
+      await openReview(page)
+      await expect(dialog.getByText(label)).toBeVisible()
+    }
+  })
+}
+
+test('does not retry a cancellation after a lost response', async ({ page }) => {
+  const fixture = await workspace(page)
+  fixture.active = 'APPROVED'
+  fixture.cancellationUnavailable = true
+  fixture.progress = { state: 'CANCELLED', attempt: 1, step_count: 4 }
+  await page.goto('/modules/workspace')
+  await selectSession(page)
+  const dialog = await openReview(page)
+  await dialog.getByRole('button', { name: '取消任务', exact: true }).click()
+  await page.getByRole('button', { name: '确认取消', exact: true }).click()
+  await expect(page.getByText('暂未确认取消结果，请先查询执行进度。')).toBeVisible()
+  await expect(dialog.getByText('任务已取消')).toHaveCount(0)
+  await dialog.getByRole('button', { name: '查询执行进度', exact: true }).click()
+  await expect(dialog.getByText('任务已取消')).toBeVisible()
+  expect(fixture.cancellations).toBe(1)
+  expect(fixture.progressReads).toBe(1)
 })

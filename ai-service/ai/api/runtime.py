@@ -80,14 +80,26 @@ class TicketApprovalReviewRequest(TicketApprovalSource):
         return value
 
 
-class TicketApprovalEvents(TicketApprovalSource):
+class TicketApprovalSnapshot(TicketApprovalSource):
     snapshot_id: StrictStr = Field(min_length=36, max_length=36)
-    after_seq: StrictInt = Field(ge=0, le=2147483647)
 
     @field_validator('snapshot_id')
     @classmethod
     def snapshot_uuid(cls, value):
         return cls.event_uuid(value)
+
+
+class TicketApprovalEvents(TicketApprovalSnapshot):
+    after_seq: StrictInt = Field(ge=0, le=2147483647)
+
+
+class TicketApprovalCancellation(TicketApprovalSnapshot):
+    reviewer_ref: StrictStr = Field(pattern=r'^staff:[1-9][0-9]{0,18}$')
+
+    @field_validator('reviewer_ref')
+    @classmethod
+    def reviewer_id_range(cls, value):
+        return TicketApprovalReviewRequest.reviewer_id_range(value)
 
 
 class TicketApprovalSession(BaseModel):
@@ -287,3 +299,21 @@ def ticket_approval_events(run_id: UUID, body: TicketApprovalEvents, request: Re
         raise HTTPException(404, 'Approval events not found')
     response.headers['Cache-Control'] = 'no-store'
     return page
+
+
+@router.post('/{run_id}/ticket-approval-cancel')
+def cancel_ticket_approval(run_id: UUID, body: TicketApprovalCancellation, request: Request, response: Response,
+                           store=Depends(runtime_store)):
+    if not get_settings().runtime_approval_review_enabled:
+        raise HTTPException(503, 'Runtime approval review is disabled')
+    try:
+        result = TicketApprovals(store).cancel_approved(request.state.runtime_tenant, run_id, UUID(body.source_event_id),
+                                                         UUID(body.snapshot_id), body.reviewer_ref)
+    except RuntimeConflict:
+        raise HTTPException(409, 'Approved ticket task is unavailable for cancellation') from None
+    except psycopg.Error:
+        raise HTTPException(503, 'Approval persistence unavailable') from None
+    if result is None:
+        raise HTTPException(404, 'Approved ticket task not found')
+    response.headers['Cache-Control'] = 'no-store'
+    return result

@@ -216,6 +216,94 @@ def _visitor_messages(base, secret, source):
         return response.json()['data']
 
 
+def verify_ticket_cancellation(connect, base, key, secret, store, runtime_dsn, tenant, append_visitor,
+                               title, content):
+    from ai.runtime.approvals import TicketApprovals
+    from ai.runtime.reconciliation import TicketReconciler
+    from ai.runtime.ticket_creation import TicketCreationClient
+
+    approvals = TicketApprovals(store)
+    tickets = TicketCreationClient(base, secret)
+    observations = []
+    for index, mode in enumerate(('before_resume', 'after_commit_before_ack')):
+        session_id, session_no = 20500800 + index, f'TICKET_CANCEL_{index}'
+        with connect('customer_db') as db:
+            db.execute('''INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
+                VALUES(%s,%s,%s,1,2,0,CURRENT_TIMESTAMP)''', (session_id, tenant, session_no))
+        source, run = append_visitor(session_no, '/ticket-request\n' + title + '\n' + content, 1)
+        assert _run_ticket_worker(tenant, base, secret, runtime_dsn, propose=True).returncode == 0
+        row = approvals.get(tenant, run)
+        path = _review_path(base, source, run)
+        auth = {'Authorization': _fixture_token(key, tenant, 123)}
+        with httpx.Client(trust_env=False, timeout=3) as client:
+            assert client.post(path+'/cancel').status_code == 401
+            assert client.post(path+'/cancel', headers={'Authorization': _fixture_token(key, tenant, 124)}).status_code == 403
+            assert client.post(path+'/cancel', headers={'Authorization': _fixture_token(key, FOREIGN_TENANT, 123)}).status_code == 404
+            assert client.post(path+'/cancel', headers=auth).status_code == 409
+            _staff_review(client, base, key, source, run, row, title, content)
+
+        cancel_result = None
+
+        def cancel():
+            nonlocal cancel_result
+            with httpx.Client(trust_env=False, timeout=3) as client:
+                response = client.post(path+'/cancel', headers=auth)
+                assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+                cancel_result = response.json()['data']
+
+        if mode == 'before_resume':
+            cancel()
+            worker = _run_ticket_worker(tenant, base, secret, runtime_dsn, authority_enabled=True)
+            write_requests = 0
+            assert cancel_result['state'] == 'CANCELLED' and approvals.get(tenant, run)['closed_by'] == 'staff:123'
+        else:
+            with ticket_proxy(base, 'cancel_after_commit', cancel) as (proxy, network):
+                worker = _run_ticket_worker(tenant, proxy, secret, runtime_dsn, authority_enabled=True)
+            assert (network['committed'], network['posts'], network['gets']) == (True, 1, 0)
+            write_requests = network['posts']
+            assert (cancel_result['state'], cancel_result['write_status']) == ('FAILED', 'UNCERTAIN')
+        assert worker.returncode == 0
+        final = store.get(tenant, run)
+        assert final['cancel_requested'] and final['state'] == cancel_result['state']
+        assert _run_ticket_worker(tenant, base, secret, runtime_dsn, authority_enabled=True).returncode == 0
+        assert store.get(tenant, run) == final
+        original = cancel_result
+        cancel()
+        assert cancel_result == original
+        journal = _event_page(base, key, source, run, 10)['events']
+        terminal_event = 'run_cancelled' if mode == 'before_resume' else 'run_failed'
+        assert [event['event_type'] for event in journal if event['event_type'] in ('run_cancelled', 'run_failed', 'run_completed')] == [terminal_event]
+
+        with httpx.Client(trust_env=False, timeout=3) as client:
+            assert client.get(path+'/progress', headers=auth).json()['data'] == original
+            history = base + f'/api/customer/agent-approvals/sessions/{session_no}/latest-progress'
+            details = client.get(history, headers=auth, params={'includeTimeline': 'true'}).json()['data']
+            assert details.pop('timeline') == {'source_event_id': str(source.source_event_id), 'run_id': str(run)}
+            assert details == original
+        receipt = asyncio.run(tickets.receipt(source, run, expected_snapshot_id=row['snapshot_id'],
+                                              expected_hash=row['arguments_sha256']))
+        count = int(receipt is not None)
+        assert count == write_requests
+        write_status = None
+        if receipt is not None:
+            # The operator's existing receipt-only reconciliation can settle uncertainty without a second write.
+            audit = TicketReconciler(store, tickets, 'qualification:ticket-cancel').reconcile(tenant, run)
+            assert audit['ticket_id'] == receipt.ticket_id
+            assert store.get(tenant, run)['error_code'] == 'SIDE_EFFECT_CONFIRMED'
+            cancel()
+            assert cancel_result == original | {'write_status': 'COMMITTED'}
+            write_status = 'COMMITTED'
+        with connect('customer_db') as db:
+            assert db.execute('SELECT count(*) FROM ticket WHERE tenant_code=%s AND source_session_id=%s',
+                              (tenant, session_id)).fetchone()[0] == count
+            assert db.execute('SELECT count(*) FROM agent_ticket_receipt WHERE tenant_code=%s AND run_id=%s',
+                              (tenant, run)).fetchone()[0] == count
+        observations.append(dict(case=mode, cancelled_result=original, terminal_event=terminal_event,
+                                 write_requests=write_requests, tickets=count, receipts=count,
+                                 reconciled_write_status=write_status))
+    return observations
+
+
 def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *, realtime_secret, live_notices,
                            append_visitor, previous_read, timeline):
     from ai.runtime.approvals import TicketApprovals
@@ -460,9 +548,11 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             latest_progress_restored=mode != 'taken_over_after_approval', expired_source_hidden=has_previous_read,
             restored_while_running=running_progress, event_resume=event_resume,
             timeline_reference_recovered=has_previous_read))
+    cancellations = verify_ticket_cancellation(connect, base, jwt_key, secret, store, runtime_dsn, tenant,
+                                              append_visitor, approved_title, approved_body)
     artifact = ROOT / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v17', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
-        cases=observations), indent=2)+'\n', encoding='utf-8')
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v18', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+        cases=observations, cancellations=cancellations), indent=2)+'\n', encoding='utf-8')
     print('Signed visitor -> Outbox -> proposal -> staff review -> approval Worker: 5 cases passed; '
           'same-session read then create, one visitor-visible notice per receipt including lost ACK, '
           'and zero writes after takeover, expiry or revocation', flush=True)
@@ -473,4 +563,6 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
           'pending runs, anonymous users, regular agents and foreign tenants could not discover reviewed progress', flush=True)
     print('Approval event cursor: first 10 events to approval, 7 later events replayed after reconnect without advancing the cursor twice; '
           'takeover, expired source and future cursor hidden or rejected', flush=True)
+    print('Staff cancellation: queued approval cancelled without a write; post-commit cancellation held one ticket and receipt for '
+          'manual reconciliation, which confirmed the original write without replaying it', flush=True)
     return timelines

@@ -28,7 +28,7 @@ public final class AgentRuntimeProtocol {
                 || path.matches(base + "/ticket-approval-latest-progress")
                 || path.matches(run + "/cancel") || path.matches(run + "/authorize")
                 || path.matches(run + "/review-ticket-approval") || path.matches(run + "/ticket-approval-preview")
-                || path.matches(run + "/ticket-approval-events"))
+                || path.matches(run + "/ticket-approval-events") || path.matches(run + "/ticket-approval-cancel"))
                 || "GET".equals(method) && path.matches(run))) {
             throw new IllegalArgumentException("Unsupported runtime operation");
         }

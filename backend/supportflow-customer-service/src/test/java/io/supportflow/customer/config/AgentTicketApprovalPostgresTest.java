@@ -87,6 +87,16 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
                         "retry_count", 1, "error_code", "FIXTURE_PRIVATE_FAILURE")));
             }
             var node = JSON.readTree(request.body());
+            if (request.rawPath().endsWith("/ticket-approval-cancel")) {
+                assertEquals(JSON.valueToTree(Map.of("source_event_id", event.toString(),
+                        "snapshot_id", snapshot.snapshotId().toString(), "reviewer_ref", "staff:" + UID)), node);
+                if (status.get() != 200) return new RuntimeReceiverStub.Reply(status.get(), "synthetic private upstream failure");
+                if (takeoverDuringPreview.get()) scoped(() -> jdbc.update("UPDATE session SET agent_id=99 WHERE id=?", sessionId));
+                return new RuntimeReceiverStub.Reply(200, JSON.writeValueAsString(Map.of(
+                        "tenant_code", "TENANT_A", "run_id", run.toString(), "source_event_id", event.toString(),
+                        "snapshot_id", snapshot.snapshotId().toString(), "state", "FAILED", "attempt", 2,
+                        "step_count", 7, "write_status", "UNCERTAIN")));
+            }
             if (request.rawPath().endsWith("/ticket-approval-events")) {
                 int after = node.get("after_seq").intValue();
                 assertEquals(JSON.valueToTree(Map.of("source_event_id", event.toString(),
@@ -164,6 +174,28 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
     private MvcResult timeline(LoginUser user, int cursor) throws Exception {
         return LoginUserContext.bind(user == null ? AuthState.anonymous() : AuthState.ok(user), () -> mvc.perform(
                 get(path.replace("/decisions", "/timeline")).param("afterSeq", Integer.toString(cursor))).andReturn());
+    }
+
+    @Test void cancellationRequiresCurrentReviewerAndReturnsOnlyCheckedWriteStatus() throws Exception {
+        String route = path.replace("/decisions", "/cancel");
+        assertEquals(401, call(mvc, null, route, "").getResponse().getStatus());
+        assertEquals(404, call(mvc, new LoginUser(UID, "U_1", "Other tenant", 2, "TENANT_B"), route, "").getResponse().getStatus());
+        when(roles.rolesOf(UID, "TENANT_A")).thenReturn(List.of("AGENT"));
+        assertEquals(403, call(mvc, ADMIN, route, "").getResponse().getStatus());
+        assertEquals(0, server.calls.get());
+        when(roles.rolesOf(UID, "TENANT_A")).thenReturn(List.of("SUPERVISOR"));
+        var response = call(mvc, ADMIN, route, "").getResponse();
+        assertEquals(200, response.getStatus());
+        assertEquals("no-store", response.getHeader("Cache-Control"));
+        assertEquals(JSON.valueToTree(Map.of("state", "FAILED", "attempt", 2, "step_count", 7, "write_status", "UNCERTAIN")),
+                JSON.readTree(response.getContentAsString()).get("data"));
+        status.set(409);
+        assertEquals(409, call(mvc, ADMIN, route, "").getResponse().getStatus());
+        status.set(200);
+        takeoverDuringPreview.set(true);
+        assertEquals(404, call(mvc, ADMIN, route, "").getResponse().getStatus());
+        assertNull(server.failure.get());
+        assertEquals(3, server.calls.get());
     }
 
     @Test void timelineReauthorizesEachPageAndOnlyReturnsTheRedactedEvent() throws Exception {

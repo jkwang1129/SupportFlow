@@ -1714,3 +1714,15 @@ Windows 11、Node 24.14.1、Chromium、Temurin JDK 25、Python 3.11.5 和隔离 
 - 原始联调报告为 `.local/implementation/d24-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v17`，SHA-256 为 `635986bd148af9e89fb37b4ced0bc499b209788b705bd68330f8c2a87c761f52`，日志为 `.local/implementation/d24-runtime.log`。
 
 本批覆盖坐席窗口内的自动补拉和断线恢复。跨实例通知、用户取消与完成竞争，以及实际部署下的首事件和完成延迟留给后续验收。
+
+## D25 坐席取消已批准工单任务（2026-11-24）
+
+Windows 11、Node 24.14.1、Chromium、Temurin JDK 25、Python 3.11.5 和隔离 PostgreSQL 17。设计、复现、权限边界与回退见 [ADR-0068](decisions/0068-staff-ticket-task-cancellation.md)。
+
+- 全模块 Maven `verify` 通过。客服数据库 172 项、AI 知识库 32 项通过。新用例检查签名命令使用当前坐席和原快照，403、404、409 及响应前来源失效的处理符合预期。
+- 前端构建与 26 项 Chromium 回归通过。新增 5 项覆盖确认中止和确认后仅提交一次、Worker 已完成、写入已确认、待人工核查及响应丢失后查询。待核查标记整页刷新后可重新读取。报告为 `.local/implementation/d25-browser.xml`。
+- 普通全量 AI 测试 1,128 项通过、483 项按环境条件跳过。新增真实数据库测试覆盖取消与完成竞争、原快照绑定、重复请求、写入预留和确认后的分支。
+- `python scripts/test-agent-runtime.py --with-java-delivery` 本地限定 `runtime_approval_review or approval_lifecycle or approval_consumption` 的 46 项通过。真实服务联调通过原 5 项工单场景和 2 项坐席取消场景。执行前取消返回 `CANCELLED`，0 次写请求、0 张工单、0 条回执。业务已提交但 Worker 尚未收到确认时，取消返回 `FAILED` 与 `UNCERTAIN`，保留 1 次写请求、1 张工单和 1 条回执。显式只读核销将写入标记更新为 `COMMITTED`。两案重复取消和重跑 Worker 都保留原业务结果，各只有一个终态事件。
+- 原始联调报告为 `.local/implementation/d25-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v18`，SHA-256 为 `d2b8848ce6635fd1d7fa691d2f2afb689f88ea190f34eefaa6ec02d85c08cd41`，日志为 `.local/implementation/d25-runtime.log`。
+
+本批覆盖工单任务的坐席取消。实际部署下的进度延迟、跨实例通知及其他业务写入的用户取消留给后续验收。

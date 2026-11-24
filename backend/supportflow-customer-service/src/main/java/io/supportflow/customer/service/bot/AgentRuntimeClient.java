@@ -31,7 +31,7 @@ import java.util.concurrent.TimeoutException;
 public final class AgentRuntimeClient implements AutoCloseable {
     public record Receipt(UUID eventId, UUID runId) { }
     public record ApprovalReference(UUID eventId, UUID runId, String status, Instant expiresAt) { }
-    public record RunProgress(String state, int attempt, int stepCount) { }
+    public record RunProgress(String state, int attempt, int stepCount, String writeStatus) { }
     public record ApprovalProgressReference(UUID eventId, UUID runId, UUID snapshotId, RunProgress progress) { }
     public static final class DeliveryFailure extends RuntimeException {
         private final boolean retryable;
@@ -171,12 +171,12 @@ public final class AgentRuntimeClient implements AutoCloseable {
         JsonNode json = approvalSessionLookup(tenant, sessionNo, "ticket-approval-latest-progress", "APPROVAL_HISTORY");
         if (json == null) return null;
         try {
-            if (!json.isObject() || json.size() != 8 || !tenant.equals(text(json, "tenant_code"))
+            if (!json.isObject() || json.size() != (json.has("write_status") ? 9 : 8) || !tenant.equals(text(json, "tenant_code"))
                     || !sessionNo.equals(text(json, "session_no"))) throw new IllegalArgumentException();
             String state = text(json, "state");
             if (!REVIEWED_PROGRESS_STATES.contains(state)) throw new IllegalArgumentException();
             return new ApprovalProgressReference(uuid(json, "source_event_id"), uuid(json, "run_id"), uuid(json, "snapshot_id"),
-                    new RunProgress(state, count(json, "attempt", Integer.MAX_VALUE), count(json, "step_count", 100)));
+                    progress(json, state, json.path("write_status").asText(null)));
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_HISTORY_RESULT"); }
     }
 
@@ -218,8 +218,48 @@ public final class AgentRuntimeClient implements AutoCloseable {
                 throw new IllegalArgumentException();
             String state = text(json, "state");
             if (!STATES.contains(state)) throw new IllegalArgumentException();
-            return new RunProgress(state, count(json, "attempt", Integer.MAX_VALUE), count(json, "step_count", 100));
+            String error = json.path("error_code").asText("");
+            return progress(json, state, switch (error) {
+                case "SIDE_EFFECT_UNKNOWN" -> "UNCERTAIN";
+                case "SIDE_EFFECT_CONFIRMED" -> "COMMITTED";
+                default -> null;
+            });
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_PROGRESS"); }
+    }
+
+    public RunProgress cancelApproval(AgentSourceSnapshots.Snapshot source, long reviewer) {
+        if (source == null || reviewer < 1) throw new IllegalArgumentException("Verified cancellation source and reviewer required");
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Cancellation must run outside the business transaction");
+        final byte[] body;
+        try {
+            body = mapper.writeValueAsBytes(Map.of("source_event_id", source.eventId().toString(),
+                    "snapshot_id", source.snapshotId().toString(), "reviewer_ref", "staff:" + reviewer));
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_CANCEL_REFERENCE"); }
+        URI uri = URI.create(endpoint + "/" + source.runId() + "/ticket-approval-cancel");
+        var response = exchange(AgentRuntimeProtocol.request(uri, "POST", source.tenant(), body, secret), "APPROVAL_CANCEL");
+        int code = response.statusCode();
+        if (code != 200) throw new DeliveryFailure(code == 408 || code == 425 || code == 429 || code >= 500, "APPROVAL_CANCEL_HTTP_" + code);
+        if (!hasPlainJsonBody(response)) throw new DeliveryFailure(false, "INVALID_APPROVAL_CANCEL_RESULT");
+        try {
+            JsonNode json = mapper.readTree(response.body());
+            if (!json.isObject() || json.size() != 8 || !source.tenant().equals(text(json, "tenant_code"))
+                    || !source.eventId().equals(uuid(json, "source_event_id")) || !source.runId().equals(uuid(json, "run_id"))
+                    || !source.snapshotId().equals(uuid(json, "snapshot_id")) || !json.has("write_status"))
+                throw new IllegalArgumentException();
+            String state = text(json, "state");
+            String status = json.get("write_status").isNull() ? null : text(json, "write_status");
+            if (!REVIEWED_PROGRESS_STATES.contains(state)
+                    || (("RUNNING".equals(state) || "RETRY_WAIT".equals(state)) && !"COMMITTED".equals(status)))
+                throw new IllegalArgumentException();
+            return progress(json, state, status);
+        } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_CANCEL_RESULT"); }
+    }
+
+    private static RunProgress progress(JsonNode json, String state, String writeStatus) {
+        if (writeStatus != null && !("UNCERTAIN".equals(writeStatus) && "FAILED".equals(state)
+                || "COMMITTED".equals(writeStatus) && !"CANCELLED".equals(state))) throw new IllegalArgumentException();
+        return new RunProgress(state, count(json, "attempt", Integer.MAX_VALUE), count(json, "step_count", 100), writeStatus);
     }
 
     public Map<String, Object> approvalEvents(AgentSourceSnapshots.Snapshot source, int afterSeq) {

@@ -671,10 +671,15 @@ class RuntimeStore:
             row = connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR UPDATE', (tenant,UUID(str(run_id)))).fetchone()
             if not row or row['state'] in TERMINAL:
                 return row
-            if row['result_ref'].get('outcome') == 'waiting-approval':
-                connection.execute("""UPDATE agent_approval SET status='CANCELLED',closed_by='system:run-cancel',closed_at=clock_timestamp()
-                    WHERE tenant_code=%s AND run_id=%s AND status IN ('PENDING','APPROVED')""", (tenant, row['run_id']))
-            connection.execute('UPDATE agent_run SET cancel_requested=true WHERE tenant_code=%s AND run_id=%s', (tenant,row['run_id']))
-            self._unknown(connection,row)
-            unknown = self._unknown_write(connection,row)
-            return self._terminal(connection,row,'FAILED' if unknown else 'CANCELLED', 'SIDE_EFFECT_UNKNOWN' if unknown else 'CANCELLED_BY_USER')
+            return self._cancel_locked(connection, row, 'system:run-cancel')
+
+    def _cancel_locked(self, connection, row, actor):
+        tenant, run_id = row['tenant_code'], row['run_id']
+        if row['result_ref'].get('outcome') == 'waiting-approval':
+            connection.execute("""UPDATE agent_approval SET status='CANCELLED',closed_by=%s,closed_at=clock_timestamp()
+                WHERE tenant_code=%s AND run_id=%s AND status IN ('PENDING','APPROVED')""", (actor, tenant, run_id))
+        connection.execute('UPDATE agent_run SET cancel_requested=true WHERE tenant_code=%s AND run_id=%s', (tenant, run_id))
+        self._unknown(connection, row)
+        unknown = self._unknown_write(connection, row)
+        return self._terminal(connection, row, 'FAILED' if unknown else 'CANCELLED',
+                              'SIDE_EFFECT_UNKNOWN' if unknown else 'CANCELLED_BY_USER')

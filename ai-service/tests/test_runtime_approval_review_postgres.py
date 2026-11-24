@@ -1,12 +1,14 @@
 """Signed review requests change only the exact persisted tenant proposal."""
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import os
+from threading import Barrier
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 import pytest
 
-from ai.runtime.types import Lease
+from ai.runtime.types import Lease, LostLease
 from runtime_api_support import PATH, build_app
 from test_approval_lifecycle_postgres import CONTENT, TITLE, decide, elapsed, wait
 from test_runtime_approval_review import post
@@ -223,3 +225,104 @@ def test_latest_progress_follows_consumed_approval_through_execution_and_retry(s
 
     assert approvals.get(tenant, run) == consumed
     assert [write['step_no'] for write in store.steps(tenant, run) if write['effect'] == 'WRITE'] == [step['step_no']]
+
+
+def cancellation(source, row):
+    return f"{PATH}/{row['run_id']}/ticket-approval-cancel", {
+        'source_event_id': str(source.source_event_id), 'snapshot_id': str(row['snapshot_id']), 'reviewer_ref': 'staff:124',
+    }
+
+
+def test_staff_cancel_is_bound_to_approved_source_and_replays_the_same_terminal_state(store, monkeypatch):
+    app, _, _, source, waiting, approvals, row = setup(store, monkeypatch)
+    tenant, run = source.tenant, row['run_id']
+    route, command = cancellation(source, row)
+    with TestClient(app) as client:
+        assert post(client, route, command).status_code == 409
+        assert store.get(tenant, run) == waiting
+        decide(approvals, source, row)
+        for field in ('source_event_id', 'snapshot_id'):
+            assert post(client, route, command | {field: str(uuid4())}).status_code == 404
+        assert post(client, route, command, tenant='TENANT_B').status_code == 404
+        assert post(client, route, command, caller='ops').status_code == 403
+        assert post(client, route, command | {'reviewer_ref': 'staff:9223372036854775808'}).status_code == 422
+        first = post(client, route, command)
+        assert first.status_code == 200 and first.headers['cache-control'] == 'no-store'
+        assert first.json() == dict(tenant_code=tenant, run_id=str(run), source_event_id=str(source.source_event_id),
+            snapshot_id=str(row['snapshot_id']), state='CANCELLED', attempt=waiting['attempt'],
+            step_count=waiting['step_count'], write_status=None)
+        final = store.get(tenant, run)
+        assert post(client, route, command | {'reviewer_ref': 'staff:125'}).json() == first.json()
+    assert store.get(tenant, run) == final
+    assert store.claim_next(tenant, 'must-not-run') is None
+    assert approvals.get(tenant, run)['closed_by'] == 'staff:124'
+    page = approvals.event_page(tenant, run, source.source_event_id, row['snapshot_id'], 0)
+    assert sum(event['event_type'] == 'run_cancelled' for event in page['events']) == 1
+
+
+@pytest.mark.parametrize(('write_stage', 'state', 'write_status'), [
+    ('reserved', 'FAILED', 'UNCERTAIN'),
+    ('committed', 'RUNNING', 'COMMITTED'),
+    ('finished', 'SUCCEEDED', None),
+])
+def test_staff_cancel_distinguishes_reserved_confirmed_and_finished_writes(store, monkeypatch, write_stage, state, write_status):
+    app, _, _, source, _, approvals, row = setup(store, monkeypatch)
+    route, command = cancellation(source, row)
+    tenant, run = source.tenant, row['run_id']
+    decide(approvals, source, row)
+    lease = Lease.from_run(store.claim_next(tenant, 'approved-writer'))
+    intent = dict(operation='ticket.create', version='ticket-create-v1', resource_ref=source.principal_ref,
+                  input_ref=str(row['snapshot_id']), arguments_sha256=row['arguments_sha256'])
+    store.reserve_step(lease, 'ticket-write', 'TOOL', 'WRITE', intent)
+    receipt = {'business_ref': 'ticket:123'}
+    if write_stage != 'reserved':
+        store.complete_step(lease, 'ticket-write', 'SUCCEEDED', receipt)
+    if write_stage == 'finished':
+        store.finish(lease, receipt)
+    before = store.get(tenant, run)
+    with TestClient(app) as client:
+        result = post(client, route, command)
+        assert result.status_code == 200
+        assert (result.json()['state'], result.json()['write_status']) == (state, write_status)
+        assert post(client, route, command).json() == result.json()
+        if write_stage == 'reserved':
+            latest = post(client, f'{PATH}/ticket-approval-latest-progress', {'session_no': source.session_no}).json()
+            assert latest['write_status'] == 'UNCERTAIN'
+            assert store.get(tenant, run)['error_code'] == 'SIDE_EFFECT_UNKNOWN'
+            with pytest.raises(LostLease):
+                store.finish(lease, receipt)
+        else:
+            assert store.get(tenant, run) == before
+            assert [step['result_ref'] for step in store.steps(tenant, run) if step['effect']=='WRITE'] == [receipt]
+    if write_stage == 'committed':
+        assert store.finish(lease, receipt)['state'] == 'SUCCEEDED'
+
+
+def test_staff_cancel_racing_finish_leaves_one_terminal_event(store, monkeypatch):
+    app, _, _, source, _, approvals, row = setup(store, monkeypatch)
+    tenant, run = source.tenant, row['run_id']
+    decide(approvals, source, row)
+    lease = Lease.from_run(store.claim_next(tenant, 'racing-worker'))
+    route, body = cancellation(source, row)
+    gate = Barrier(2)
+
+    def finish():
+        gate.wait(timeout=5)
+        try:
+            return store.finish(lease, {'outcome': 'finished'})['state']
+        except LostLease:
+            return 'STALE'
+
+    with TestClient(app) as client, ThreadPoolExecutor(2) as pool:
+        worker = pool.submit(finish)
+        gate.wait(timeout=5)
+        response = post(client, route, body)
+        assert response.status_code == 200
+        reply = response.json()
+    final = store.get(tenant, run)
+    assert (worker.result(), reply['state']) in [('SUCCEEDED', 'SUCCEEDED'), ('STALE', 'CANCELLED')]
+    assert final['state'] == reply['state']
+    page = approvals.event_page(tenant, run, source.source_event_id, row['snapshot_id'], 0)
+    assert [event['event_type'] for event in page['events'] if event['event_type'] in ('run_completed','run_cancelled')] == [
+        'run_completed' if final['state']=='SUCCEEDED' else 'run_cancelled',
+    ]

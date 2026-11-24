@@ -8,6 +8,7 @@ from .ticket_creation import arguments_hash
 from .tools import ToolCall, ToolExecutor, ToolIdentity, WriteTool
 from .types import RunInput, RuntimeConflict, fingerprint, identifier
 from .worker import ApprovalPending
+from .store import TERMINAL
 
 _OPERATION = 'ticket.create'
 _VERSION = 'ticket-create-v1'
@@ -15,6 +16,7 @@ _TOOL = 'create_ticket'
 _PURPOSE = 'customer-support-ticket'
 _CHECKPOINT = 'ticket-approval-plan'
 _EVENT_PAGE_SIZE = 16
+_WRITE_STATUS = {'SIDE_EFFECT_UNKNOWN': 'UNCERTAIN', 'SIDE_EFFECT_CONFIRMED': 'COMMITTED'}
 
 
 class TicketApprovals:
@@ -120,8 +122,8 @@ class TicketApprovals:
         """Project only progress and its authorization references for a previously approved Run."""
         identifier(session_no)
         with self.store._scope(tenant) as connection:
-            return connection.execute("""SELECT r.tenant_code,r.session_no,r.source_event_id,r.run_id,
-                                                a.snapshot_id,r.state,r.attempt,r.step_count
+            row = connection.execute("""SELECT r.tenant_code,r.session_no,r.source_event_id,r.run_id,
+                                                a.snapshot_id,r.state,r.attempt,r.step_count,r.error_code
                 FROM agent_run r JOIN agent_approval a ON a.tenant_code=r.tenant_code AND a.run_id=r.run_id
                 WHERE r.tenant_code=%s AND r.session_no=%s AND a.principal_ref=r.principal_ref
                   AND r.runtime_version='runtime-v1' AND a.decided_at IS NOT NULL
@@ -129,6 +131,33 @@ class TicketApprovals:
                     OR (r.state IN ('SUCCEEDED','FAILED','CANCELLED')
                        AND a.status IN ('APPROVED','CONSUMED','REVOKED','EXPIRED','CANCELLED')))
                 ORDER BY r.event_seq DESC LIMIT 1""", (tenant, session_no)).fetchone()
+        if row is not None:
+            status = _WRITE_STATUS.get(row.pop('error_code'))
+            if status is not None:
+                row['write_status'] = status
+        return row
+
+    def cancel_approved(self, tenant, run_id, event_id, snapshot_id, reviewer):
+        """Fence an approved task unless its write has already been confirmed."""
+        identifier(reviewer)
+        with self.store._scope(tenant) as connection:
+            run = connection.execute("""SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s
+                AND source_event_id=%s AND runtime_version='runtime-v1' FOR UPDATE""", (tenant, run_id, event_id)).fetchone()
+            approval = None if run is None else self._approval(connection, tenant, run_id)
+            if (approval is None or approval['snapshot_id'] != snapshot_id or approval['principal_ref'] != run['principal_ref']):
+                return None
+            if approval['decided_at'] is None or approval['status'] == 'DENIED':
+                raise RuntimeConflict('Only a previously approved ticket task can be cancelled')
+            if run['state'] in TERMINAL:
+                write_status = _WRITE_STATUS.get(run['error_code'])
+            elif connection.execute("""SELECT 1 FROM agent_step WHERE tenant_code=%s AND run_id=%s
+                    AND effect='WRITE' AND state='SUCCEEDED' LIMIT 1""", (tenant, run_id)).fetchone():
+                write_status = 'COMMITTED'
+            else:
+                run = self.store._cancel_locked(connection, run, reviewer)
+                write_status = _WRITE_STATUS.get(run['error_code'])
+        result = {key: run[key] for key in ('tenant_code', 'run_id', 'source_event_id', 'state', 'attempt', 'step_count')}
+        return result | dict(snapshot_id=snapshot_id, write_status=write_status)
 
     def event_page(self, tenant, run_id, source_event_id, snapshot_id, after_seq):
         """Read a bounded committed prefix for one verified approval source."""

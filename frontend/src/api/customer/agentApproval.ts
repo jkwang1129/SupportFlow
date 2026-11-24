@@ -28,6 +28,7 @@ export interface ApprovalProgress {
   state: 'PENDING' | 'RUNNING' | 'WAITING_APPROVAL' | 'RETRY_WAIT' | ApprovalTerminalState
   attempt: number
   step_count: number
+  write_status?: 'UNCERTAIN' | 'COMMITTED'
 }
 
 export interface ApprovalEvent {
@@ -82,6 +83,10 @@ export function readApprovalEvents(reference: ApprovalRunReference, afterSeq: nu
   return request<ApprovalEventPage>({
     url: `${proposalPath(reference)}/timeline`, params: { afterSeq }, timeout: 8000, signal, silent: true,
   })
+}
+
+export function cancelApprovalRun(reference: ApprovalRunReference) {
+  return request<ApprovalProgress>({ url: `${proposalPath(reference)}/cancel`, method: 'POST', silent: true })
 }
 
 export function decideApproval(reference: ApprovalReference, proposal: ApprovalProposal, decision: ApprovalDecision) {
