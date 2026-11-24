@@ -15,6 +15,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -26,6 +28,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -45,6 +48,7 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
     private final AtomicBoolean unmatchedActiveReference = new AtomicBoolean();
     private final AtomicBoolean unmatchedProgressReference = new AtomicBoolean();
     private final AtomicBoolean unmatchedLatestSnapshot = new AtomicBoolean();
+    private final AtomicReference<String> latestState = new AtomicReference<>("SUCCEEDED");
     private static final String PROPOSAL_TITLE = "合成提案🙂";
     private static final String PROPOSAL_BODY = "原始内容\n ";
     private UUID event;
@@ -90,7 +94,7 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
                         "tenant_code", "TENANT_A", "session_no", sessionNo,
                         "source_event_id", event.toString(), "run_id", run.toString(),
                         "snapshot_id", (unmatchedLatestSnapshot.get() ? UUID.randomUUID() : snapshot.snapshotId()).toString(),
-                        "state", "SUCCEEDED", "attempt", 2, "step_count", 7)));
+                        "state", latestState.get(), "attempt", 2, "step_count", 7)));
             }
             if (request.rawPath().endsWith("/ticket-approval-active")) {
                 assertEquals(JSON.valueToTree(Map.of("session_no", sessionNo)), node);
@@ -141,22 +145,34 @@ class AgentTicketApprovalPostgresTest extends SessionPostgresFixture {
                 get("/api/customer/agent-approvals/sessions/" + sessionNo + "/latest-progress")).andReturn());
     }
 
-    @Test void latestProgressProjectsOnlyThreeFieldsAndRejectsAnUnmatchedSnapshot() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"SUCCEEDED", "RUNNING", "RETRY_WAIT"})
+    void latestProgressProjectsOnlyThreeFieldsAndRejectsAnUnmatchedSnapshot(String state) throws Exception {
+        latestState.set(state);
         var response = latest().getResponse();
         assertEquals(200, response.getStatus());
         assertEquals("no-store", response.getHeader("Cache-Control"));
-        assertEquals(JSON.valueToTree(Map.of("state", "SUCCEEDED", "attempt", 2, "step_count", 7)),
+        assertEquals(JSON.valueToTree(Map.of("state", state, "attempt", 2, "step_count", 7)),
                 JSON.readTree(response.getContentAsString()).get("data"));
         unmatchedLatestSnapshot.set(true);
         assertEquals(404, latest().getResponse().getStatus());
         assertNull(server.failure.get());
     }
 
+    @Test void latestProgressRejectsAStateReservedForTheApprovalQueue() throws Exception {
+        latestState.set("WAITING_APPROVAL");
+        var response = latest().getResponse();
+        assertEquals(503, response.getStatus());
+        assertFalse(response.getContentAsString().contains("WAITING_APPROVAL"));
+        assertNull(server.failure.get());
+    }
+
     @Test void latestProgressReauthorizesAfterTakeoverDuringTheLookup() throws Exception {
+        latestState.set("RUNNING");
         takeoverDuringPreview.set(true);
         var response = latest().getResponse();
         assertEquals(404, response.getStatus());
-        assertFalse(response.getContentAsString().contains("SUCCEEDED"));
+        assertFalse(response.getContentAsString().contains("RUNNING"));
         assertEquals(1, server.calls.get());
         assertNull(server.failure.get());
     }

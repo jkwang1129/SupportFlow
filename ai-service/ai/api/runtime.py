@@ -252,10 +252,10 @@ def latest_ticket_approval_progress(body: TicketApprovalSession, request: Reques
     if not get_settings().runtime_approval_review_enabled:
         raise HTTPException(503, 'Runtime approval review is disabled')
     try:
-        row = TicketApprovals(store).latest_terminal_progress(request.state.runtime_tenant, body.session_no)
+        row = TicketApprovals(store).latest_reviewed_progress(request.state.runtime_tenant, body.session_no)
     except psycopg.Error:
         raise HTTPException(503, 'Approval persistence unavailable') from None
     if row is None:
-        raise HTTPException(404, 'Finished approval task not found')
+        raise HTTPException(404, 'Reviewed approval task not found')
     response.headers['Cache-Control'] = 'no-store'
     return row

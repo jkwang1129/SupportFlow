@@ -275,3 +275,32 @@ test('an active proposal takes priority over reviewable terminal history', async
   await expect(dialog.getByText('任务执行失败')).toHaveCount(0)
   expect(fixture.latestSessions).toHaveLength(0)
 })
+
+test('after reload the reviewer can follow a consumed approval to completion', async ({ page }) => {
+  const fixture = await workspace(page)
+  await page.goto('/modules/workspace')
+  await selectSession(page)
+  const dialog = await openReview(page)
+  await dialog.getByRole('button', { name: '批准', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: '撤销批准' })).toBeVisible()
+  fixture.active = null
+  fixture.latest = { state: 'RUNNING', attempt: 2, step_count: 5 }
+
+  await page.reload()
+  await selectSession(page)
+  await openReview(page)
+  await expect(dialog.getByText('任务执行中')).toBeVisible()
+  await expect(dialog.getByText(proposal.content)).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '撤销批准' })).toHaveCount(0)
+
+  fixture.latest = { state: 'RETRY_WAIT', attempt: 2, step_count: 6 }
+  await dialog.getByRole('button', { name: '查询执行进度' }).click()
+  await expect(dialog.getByText('任务等待重试')).toBeVisible()
+  fixture.latest = { state: 'SUCCEEDED', attempt: 3, step_count: 7 }
+  await dialog.getByRole('button', { name: '查询执行进度' }).click()
+  await expect(dialog.getByText('任务执行完成')).toBeVisible()
+  await expect(dialog.getByText('7', { exact: true })).toBeVisible()
+  expect(fixture.latestSessions).toEqual(Array(3).fill(firstSession.sessionNo))
+  expect(fixture.progressReads).toBe(0)
+  expect(fixture.decisions).toHaveLength(1)
+})

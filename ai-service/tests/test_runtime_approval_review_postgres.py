@@ -6,6 +6,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 import pytest
 
+from ai.runtime.types import Lease
 from runtime_api_support import PATH, build_app
 from test_approval_lifecycle_postgres import CONTENT, TITLE, decide, elapsed, wait
 from test_runtime_approval_review import post
@@ -181,3 +182,44 @@ def test_latest_terminal_progress_ignores_denied_unreviewed_and_live_runs(store,
         assert post(client, route, {'session_no': 'OTHER_SESSION'}).status_code == 404
     assert store.get(candidate.tenant, selected['run_id']) == state
     assert store.get(candidate.tenant, live['run_id']) == live_before
+
+
+def test_latest_progress_follows_consumed_approval_through_execution_and_retry(store, monkeypatch):
+    app, review, decision, source, _, approvals, row = setup(store, monkeypatch)
+    tenant, run = source.tenant, row['run_id']
+    latest = f'{PATH}/ticket-approval-latest-progress'
+    ref = {'session_no': source.session_no}
+    intent = dict(operation='ticket.create', version='ticket-create-v1', resource_ref=source.principal_ref,
+                  input_ref=str(row['snapshot_id']), arguments_sha256=row['arguments_sha256'])
+
+    def check_progress(client, expected_state):
+        before = store.get(tenant, run)
+        result = post(client, latest, ref)
+        assert result.status_code == 200 and result.headers['cache-control'] == 'no-store'
+        assert result.json() == dict(tenant_code=tenant, session_no=source.session_no,
+            source_event_id=str(source.source_event_id), run_id=str(run), snapshot_id=str(row['snapshot_id']),
+            state=expected_state, attempt=before['attempt'], step_count=before['step_count'])
+        assert store.get(tenant, run) == before
+
+    with TestClient(app) as client:
+        assert post(client, review, decision).status_code == 200
+        lease = Lease.from_run(store.claim_next(tenant, 'first-approved-worker'))
+        assert post(client, latest, ref).status_code == 404
+        step, created = store.reserve_step(lease, 'approved-ticket', 'TOOL', 'WRITE', intent)
+        assert created
+        consumed = approvals.get(tenant, run)
+        assert consumed['status'] == 'CONSUMED' and consumed['consumed_step_no'] == step['step_no']
+        check_progress(client, 'RUNNING')
+        assert post(client, f'{PATH}/ticket-approval-active', ref).status_code == 404
+        assert post(client, latest, ref, tenant='TENANT_B').status_code == 404
+
+        store.complete_step(lease, step['step_key'], 'SUCCEEDED', {'business_ref': 'ticket:123'})
+        store.retry(lease, 'SYNTHETIC_ACK_LOST', delay_seconds=0)
+        check_progress(client, 'RETRY_WAIT')
+        resumed = Lease.from_run(store.claim_next(tenant, 'second-approved-worker'))
+        check_progress(client, 'RUNNING')
+        store.finish(resumed, {'outcome': 'receipt-confirmed'})
+        check_progress(client, 'SUCCEEDED')
+
+    assert approvals.get(tenant, run) == consumed
+    assert [write['step_no'] for write in store.steps(tenant, run) if write['effect'] == 'WRITE'] == [step['step_no']]

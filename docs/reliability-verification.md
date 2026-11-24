@@ -1671,3 +1671,17 @@ Windows 11、Temurin JDK 25、Python 3.11.5、Node 24.14.1、Chromium 和隔离 
 - 原始报告为 `.local/implementation/d21-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v14`，SHA-256 为 `691d54f3266a19662d21af1dba001588dbb11559a495569487e38b7b75afaf16`。完整日志为 `.local/implementation/d21-runtime.log`。
 
 本批覆盖授权窗口内的最近已批准终态，使用按需查询。审批已消费且仍在执行的任务整页恢复、任务事件续传和用户取消留在后续批次。
+
+## D22 整页刷新后恢复执行中的已审批工单任务（2026-11-24）
+
+Windows 11、Temurin JDK 25、Python 3.11.5、Node 24.14.1、Chromium 和隔离 PostgreSQL 17。验收针对合成访客与坐席。复现命令、发布顺序和回退见 [ADR-0065](decisions/0065-consumed-approval-progress.md)。
+
+- 新增数据库回归先在 D21 实现运行，确认审批已消费、写步骤已预留时返回 404。失败日志为 `.local/implementation/d22-runtime-before.log`。
+- 浏览器 16 项通过。新增用例整页重载后重新选中会话，依次读取执行中、等待重试和完成。恢复只显示进度，无提案正文和撤回操作，本次刷新未提交重复审批。报告为 `.local/implementation/d22-browser.xml`。
+- 普通全量 AI 测试 1,128 项通过、475 项按环境条件跳过。新增数据库用例在下方隔离 PostgreSQL 套件中计数。
+- 全模块 Maven `verify` 通过。`python scripts/test-customer-rls.py --with-ai` 通过 167 项客服数据库测试及 32 项 AI 知识库测试。新增覆盖执行中、等待重试、拒绝审批队列专用状态、来源快照不匹配和查询过程中被接管。
+- `python scripts/test-agent-runtime.py --with-java-delivery` 本地限定 `runtime_approval_review or approval_lifecycle or approval_consumption` 的 41 项 PostgreSQL 测试通过。新增数据库用例实际预留写步骤并消费审批，读取 `RUNNING → RETRY_WAIT → RUNNING → SUCCEEDED` 的同一 Run，验证查询前后状态及计数一致、写入步骤仍为 1、跨租户和活动审批查询均读不到已消费审批。
+- 首轮服务联调的运行中查询已通过，后续旧断言因观察代理的存在把正常完成误计为一次回执恢复。改为按确认丢失场景校验预算，并分别断言正常完成和确认丢失的实际回执读取次数为 0 和 1。
+- 完整联调复跑通过 5 个签名访客工单案例。实际 Worker 消费审批并预留写步骤后，工单落库前客服只读接口返回 `RUNNING`、第 2 轮、7 步，当时工单数为 0。最终仍只有 1 次写请求、1 张工单、1 条回执和 1 条通知。查询期间匿名、普通坐席和其他租户管理员仍分别被拒绝。原始报告为 `.local/implementation/d22-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v15`，SHA-256 为 `f22d6f9b75d4e844936c02c02d89b0d16983114b180e027d571078a285b9f994`。完整日志为 `.local/implementation/d22-runtime-final.log`。
+
+本批验收覆盖按需进度恢复。任务事件序号、自动续传和用户取消单独验收。

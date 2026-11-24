@@ -119,7 +119,7 @@ public class AgentTicketApprovalController {
         String tenant = requireReviewer().tenantCode();
         return TenantContext.bind(tenant, () -> {
             requireReviewableSession(tenant, sessionNo);
-            var approved = runtime.latestTerminalApproval(tenant, sessionNo);
+            var approved = runtime.latestReviewedApproval(tenant, sessionNo);
             if (approved == null) return ApiResponse.ok();
             AgentSourceSnapshots.Snapshot source;
             try {

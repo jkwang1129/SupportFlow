@@ -274,7 +274,29 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             approved = store.get(tenant, run)
             disabled = _run_ticket_worker(tenant, base, secret, runtime_dsn)
             assert disabled.returncode == 1 and store.get(tenant, run) == approved
-        transport = ticket_proxy(base, 'lost_ack', None) if mode == 'lost_create_ack' else nullcontext((base, None))
+        running_progress = None
+
+        def observe_before_create():
+            nonlocal running_progress
+            active = store.get(tenant, run)
+            assert active['state'] == 'RUNNING'
+            assert approvals.get(tenant, run)['status'] == 'CONSUMED'
+            assert sum(step['effect'] == 'WRITE' and step['state'] == 'RESERVED' for step in store.steps(tenant, run)) == 1
+            assert approvals.active_reference(tenant, session_no) is None
+            with connect('customer_db') as db:
+                assert db.execute('SELECT COUNT(*) FROM ticket WHERE tenant_code=%s AND source_session_id=%s',
+                                  (tenant, session_id)).fetchone()[0] == 0
+            _assert_latest_progress(base, jwt_key, source, active)
+            running_progress = {name: active[name] for name in ('state', 'attempt', 'step_count')}
+            after = store.get(tenant, run)
+            assert all(after[name] == value for name, value in running_progress.items())
+
+        if has_previous_read:
+            transport = ticket_proxy(base, 'normal', None, before_create=observe_before_create)
+        elif mode == 'lost_create_ack':
+            transport = ticket_proxy(base, 'lost_ack', None)
+        else:
+            transport = nullcontext((base, None))
         socket_message = None
         fallback_history = False
         if mode == 'lost_create_ack':
@@ -292,9 +314,10 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             result = store.get(tenant, run)
             repeated = _run_ticket_worker(tenant, worker_base, secret, runtime_dsn, authority_enabled=True)
             assert repeated.returncode == 0 and store.get(tenant, run) == result
-            if network is not None:
+            if mode == 'lost_create_ack':
                 assert (network['committed'], network['posts'], network['gets']) == (True, 1, 1), network
             if has_previous_read:
+                assert running_progress and (network['committed'], network['posts'], network['gets']) == (True, 1, 0)
                 frame = receive(visitor, 'MESSAGE')
                 assert frame['sessionNo'] == session_no
                 socket_message = frame['data']
@@ -357,9 +380,9 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             if has_previous_read:
                 prior = f'{NOTICE_PATH}/{session_no}/{source.event_seq}/{source.message_id}'
                 live_notices.check_request_boundary(path, tenant, prior)
-            recovery_reads = int(network is not None)
-            assert (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count']) == (
-                7 + recovery_reads, 4 + recovery_reads, 0, 0)
+            recovery_reads = int(mode == 'lost_create_ack')
+            counts = (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count'])
+            assert counts == (7 + recovery_reads, 4 + recovery_reads, 0, 0), (mode, counts)
         else:
             expected_error, expected_status = failures[mode]
             assert (result['state'], result['error_code'], audit['status']) == ('FAILED', expected_error, expected_status)
@@ -389,9 +412,10 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=len(stored_receipts), events=events, visitor_notices=len(visitor_messages),
             live_push=has_previous_read, synced_after_push_failure=fallback_history,
-            latest_progress_restored=mode != 'taken_over_after_approval', expired_source_hidden=has_previous_read))
+            latest_progress_restored=mode != 'taken_over_after_approval', expired_source_hidden=has_previous_read,
+            restored_while_running=running_progress))
     artifact = ROOT / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v14', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v15', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations), indent=2)+'\n', encoding='utf-8')
     print('Signed visitor -> Outbox -> proposal -> staff review -> approval Worker: 5 cases passed; '
           'same-session read then create, one visitor-visible notice per receipt including lost ACK, '
@@ -399,5 +423,6 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
     print('Ticket notices: actual visitor WebSocket received one committed notice; a second session received none; '
           'HTTP 503 preserved one notice recovered through SYNC; unsigned, wrong-role and mismatched references rejected', flush=True)
     print('Latest reviewed progress: 4 terminal states recovered by session, 1 takeover and 1 expired snapshot hidden; '
-          'pending runs, anonymous users, regular agents and foreign tenants could not discover terminal progress', flush=True)
+          '1 consumed approval recovered in RUNNING before ticket creation; '
+          'pending runs, anonymous users, regular agents and foreign tenants could not discover reviewed progress', flush=True)
     return timelines

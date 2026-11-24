@@ -13,7 +13,7 @@ ROOT=Path(__file__).resolve().parents[1]
 
 
 @contextmanager
-def ticket_proxy(base,mode,on_commit):
+def ticket_proxy(base,mode,on_commit,*,before_create=None):
     evidence=dict(sources=0,posts=0,gets=0,committed=False)
     class Handler(BaseHTTPRequestHandler):
         protocol_version='HTTP/1.1'
@@ -25,6 +25,8 @@ def ticket_proxy(base,mode,on_commit):
             ticket=self.path.endswith('/ticket-create')
             if ticket:evidence['posts' if method=='POST' else 'gets']+=1
             else:evidence['sources']+=1
+            if ticket and method=='POST' and before_create is not None:
+                before_create()
             if ticket and method=='POST' and mode=='absent':
                 status=503;raw=b'{"code":503,"message":"synthetic no forward","data":null}'
             else:

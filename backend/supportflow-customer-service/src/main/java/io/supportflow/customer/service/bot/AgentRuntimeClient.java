@@ -30,7 +30,7 @@ public final class AgentRuntimeClient implements AutoCloseable {
     public record Receipt(UUID eventId, UUID runId) { }
     public record ApprovalReference(UUID eventId, UUID runId, String status, Instant expiresAt) { }
     public record RunProgress(String state, int attempt, int stepCount) { }
-    public record TerminalApproval(UUID eventId, UUID runId, UUID snapshotId, RunProgress progress) { }
+    public record ApprovalProgressReference(UUID eventId, UUID runId, UUID snapshotId, RunProgress progress) { }
     public static final class DeliveryFailure extends RuntimeException {
         private final boolean retryable;
         DeliveryFailure(boolean retryable, String code) { super(code); this.retryable = retryable; }
@@ -38,6 +38,7 @@ public final class AgentRuntimeClient implements AutoCloseable {
         public String code() { return getMessage(); }
     }
     private static final Set<String> STATES = Set.of("PENDING", "RUNNING", "WAITING_APPROVAL", "RETRY_WAIT", "SUCCEEDED", "FAILED", "CANCELLED");
+    private static final Set<String> REVIEWED_PROGRESS_STATES = Set.of("RUNNING", "RETRY_WAIT", "SUCCEEDED", "FAILED", "CANCELLED");
     private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private final HttpClient client;
@@ -159,15 +160,15 @@ public final class AgentRuntimeClient implements AutoCloseable {
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_QUEUE_RESULT"); }
     }
 
-    public TerminalApproval latestTerminalApproval(String tenant, String sessionNo) {
+    public ApprovalProgressReference latestReviewedApproval(String tenant, String sessionNo) {
         JsonNode json = approvalSessionLookup(tenant, sessionNo, "ticket-approval-latest-progress", "APPROVAL_HISTORY");
         if (json == null) return null;
         try {
             if (!json.isObject() || json.size() != 8 || !tenant.equals(text(json, "tenant_code"))
                     || !sessionNo.equals(text(json, "session_no"))) throw new IllegalArgumentException();
             String state = text(json, "state");
-            if (!Set.of("SUCCEEDED", "FAILED", "CANCELLED").contains(state)) throw new IllegalArgumentException();
-            return new TerminalApproval(uuid(json, "source_event_id"), uuid(json, "run_id"), uuid(json, "snapshot_id"),
+            if (!REVIEWED_PROGRESS_STATES.contains(state)) throw new IllegalArgumentException();
+            return new ApprovalProgressReference(uuid(json, "source_event_id"), uuid(json, "run_id"), uuid(json, "snapshot_id"),
                     new RunProgress(state, count(json, "attempt", Integer.MAX_VALUE), count(json, "step_count", 100)));
         } catch (Exception invalid) { throw new DeliveryFailure(false, "INVALID_APPROVAL_HISTORY_RESULT"); }
     }
