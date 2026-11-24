@@ -1,4 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
 import os
+from time import monotonic, sleep
+from types import SimpleNamespace
 
 import psycopg
 import pytest
@@ -75,8 +78,6 @@ def test_console_status_uses_the_real_chunk_schema_and_separates_tenants(monkeyp
 
 @pytest.mark.skipif(not os.getenv("SUPPORTFLOW_KB_TEST_DSN"), reason="run scripts/test-customer-rls.py --with-ai")
 def test_knowledge_store_uses_restricted_role_for_search_and_mutations(monkeypatch):
-    from types import SimpleNamespace
-
     store = kb.store
     monkeypatch.setattr(store, "connect", lambda: psycopg.connect(
         os.environ["SUPPORTFLOW_KB_TEST_DSN"], row_factory=dict_row))
@@ -95,3 +96,50 @@ def test_knowledge_store_uses_restricted_role_for_search_and_mutations(monkeypat
     assert store.list_chunks("TENANT_B", 1) == []
     assert store.delete_chunks("TENANT_A", 1) == 1
     assert len(store.list_chunks("TENANT_B", 2)) == 1
+
+
+@pytest.mark.skipif(not os.getenv("SUPPORTFLOW_KB_TEST_DSN"), reason="run scripts/test-customer-rls.py --with-ai")
+@pytest.mark.parametrize("operation", ["replace", "delete"])
+def test_chunk_mutation_waits_for_same_document_writer_with_restricted_role(monkeypatch, operation):
+    store = kb.store
+    monkeypatch.setattr(store, "connect", lambda: psycopg.connect(
+        os.environ["SUPPORTFLOW_KB_TEST_DSN"], row_factory=dict_row, connect_timeout=5,
+        options="-c lock_timeout=8000"))
+    tenant = "TENANT_A"
+    doc = 9130001 if operation == "replace" else 9130002
+    independent_doc = doc + 10
+    chunk = SimpleNamespace(index=1, content="second version", char_count=14, token_count=2)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            with store.tenant_connection(tenant) as blocker:
+                blocker.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                                (f"supportflow:kb-chunks:{tenant}:{doc}",))
+                if operation == "replace":
+                    pending = executor.submit(store.replace_chunks, tenant, doc, [chunk], [[]], "fixture")
+                else:
+                    pending = executor.submit(store.delete_chunks, tenant, doc)
+                deadline = monotonic() + 5
+                while True:
+                    waiting = blocker.execute("""
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM pg_locks held JOIN pg_locks waiter USING (locktype, classid, objid, objsubid)
+                            WHERE held.pid = pg_backend_pid() AND held.locktype = 'advisory'
+                              AND held.granted AND NOT waiter.granted
+                        ) AS waiting
+                    """).fetchone()["waiting"]
+                    if waiting:
+                        break
+                    assert not pending.done() and monotonic() < deadline, "same-document writer did not wait"
+                    sleep(.02)
+                assert store.replace_chunks(tenant, independent_doc, [chunk], [[]], "fixture") == 1
+                blocker.execute("""
+                    INSERT INTO kb_chunk (id, tenant_code, doc_id, chunk_no, content)
+                    VALUES (%s, %s, %s, 1, 'first version')
+                """, (store.next_id(), tenant, doc))
+            assert pending.result(timeout=8) == 1
+        contents = [row["content"] for row in store.list_chunks(tenant, doc)]
+        assert contents == (["second version"] if operation == "replace" else [])
+    finally:
+        store.delete_chunks(tenant, doc)
+        store.delete_chunks(tenant, independent_doc)

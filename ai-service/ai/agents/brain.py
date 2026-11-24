@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any, TypedDict
@@ -109,7 +110,8 @@ async def node_recognize(state: BrainState) -> dict:
     # 有训练版本且分数够高、又比字面规则更确定时就用它；否则保持原来的规则结果。
     # 注意这里的 source 记成 "trained" 而不是 "rule"：向量匹配属于"软证据"，
     # 「命中需转人工的意图就直接转」那条规则只对字面命中生效（见 decide_escalation）。
-    trained = svc.match_intent_by_version(
+    trained = await asyncio.to_thread(
+        svc.match_intent_by_version,
         state["tenant_code"], state.get("session_no") or "", state["question"], intents)
     if trained is not None and float(trained["confidence"]) > rule_confidence:
         rule_intent = trained["intent"]

@@ -328,11 +328,11 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
 
 async def _linear_flow(state: RagState) -> RagState:
     """没装 langgraph 时的等价实现：步骤、分支判断完全一致，只是写成顺序代码。"""
-    state.update(node_retrieve(state))
+    state.update(await asyncio.to_thread(node_retrieve, state))
     state.update(node_grade(state))
     while _route_after_grade(state)=='rewrite':
         state.update(node_rewrite(state))
-        state.update(node_retrieve(state))
+        state.update(await asyncio.to_thread(node_retrieve, state))
         state.update(node_grade(state))
     if _route_after_grade(state)=='answer':
         state.update(await node_answer(state))

@@ -1,24 +1,4 @@
-"""LlamaIndex 版实现：装了 ``llama-index`` 就走这条（本篇的主实现）。
-
-用到的 LlamaIndex 组件与职责：
-
-| 环节 | LlamaIndex 组件 | 说明 |
-| --- | --- | --- |
-| 读文件 | ``SimpleDirectoryReader`` | 交给它按后缀选 Reader（docx / pdf / md 都认） |
-| 切块 | ``SentenceSplitter`` | 语义化分块 + 重叠，和内置实现的思路一致 |
-| 向量化 | ``OpenAIEmbedding`` | 千问的 OpenAI 兼容接口直接复用，省一套客户端 |
-
-**存储这一环故意不走** ``llama_index.vector_stores.postgres.PGVectorStore``：
-它会在库里建自己的表结构（data JSONB + embedding），而本项目的 ``kb_chunk``
-是定制的（切片号、字数、token 数、原文件名…），Java 侧的"切片预览"和检索结果
-都直接读这张表。所以这里用 LlamaIndex 出**节点与向量**，再写进既有表——
-这也是把 LlamaIndex 接进已有系统的常见做法：能用它的解析/切块/检索能力，
-但不必把数据模型交给它托管。
-
-装依赖：``pip install -r requirements-ai.txt``（里面有 llama-index；
-docx/pdf 解析还需要 llama-index-readers-file，embeddings 需要
-llama-index-embeddings-openai，见该文件的注释）。
-"""
+"""LlamaIndex 负责文件读取与切块，向量化和存储走知识库的共用实现。"""
 
 from __future__ import annotations
 
@@ -27,69 +7,26 @@ import os
 import tempfile
 
 from ..config import get_settings
+from ..core.trace import get_trace_id
+from . import embedding as embedding_module
 from . import splitter as splitter_module
 from . import store
 
 logger = logging.getLogger(__name__)
 
-# 这些包没装时，整条链路自动退回内置实现（服务照常可用）
-_REQUIRED = ("llama_index.core", "llama_index.embeddings.openai")
-
-
 def available() -> bool:
-    """llama-index 装了没：装了就用它，没装就走内置实现。
-
-    ``find_spec`` 在"顶层包都不存在"时会抛 ModuleNotFoundError（不是返回 None），
-    所以这里要兜住——服务不能在导入阶段因为少个依赖就起不来。
-    """
+    """Whether the optional parsing and splitting engine can be loaded."""
     import importlib.util
 
-    for name in _REQUIRED:
-        try:
-            if importlib.util.find_spec(name) is None:
-                return False
-        except (ImportError, ModuleNotFoundError, ValueError):
-            return False
-    return True
+    try:
+        return importlib.util.find_spec("llama_index.core") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def describe() -> str:
     """给健康检查/日志用：说清楚当前用的是哪套实现。"""
     return "llama-index" if available() else "builtin"
-
-
-# LlamaIndex 的 OpenAIEmbedding 会用枚举校验模型名，只认 OpenAI 官方这几个
-# （见 OpenAIEmbeddingModelType）。千问的 text-embedding-v3 不在里面，硬塞会直接抛
-# ValueError: 'text-embedding-v3' is not a valid OpenAIEmbeddingModelType。
-OPENAI_OFFICIAL_MODELS = {
-    "text-embedding-ada-002", "text-embedding-3-small", "text-embedding-3-large",
-    "davinci", "curie", "babbage", "ada",
-}
-
-
-def _build_embed_model():
-    """能交给 LlamaIndex 就交给它，交不了就返回 None（调用方改用本项目自己的客户端）。
-
-    判断依据只有一个：**模型名是不是 OpenAI 官方的**。
-    - OpenAI 官方模型 → 用 LlamaIndex 的 ``OpenAIEmbedding``；
-    - 千问 / 自建 OpenAI 兼容服务（模型名不在上述枚举里）→ 返回 None，
-      由 ``embedding.embed_texts`` 走同一个 ``/embeddings`` 协议发请求。
-      它支持任意模型名，还带本地兜底，是这条链路上更合适的选择。
-    """
-    settings = get_settings()
-    if settings.embedding_model not in OPENAI_OFFICIAL_MODELS:
-        return None
-    from llama_index.embeddings.openai import OpenAIEmbedding
-
-    return OpenAIEmbedding(
-        model=settings.embedding_model,
-        api_base=settings.embedding_base_url,
-        # 同样要走 embedding_key()：专用密钥没配时复用千问的 key，
-        # 否则这里会拿着空密钥去请求，401 之后又静默降级成本地向量
-        api_key=settings.embedding_key() or "not-configured",
-        dimensions=1024,
-        embed_batch_size=10,
-    )
 
 
 def _splitter():
@@ -142,28 +79,8 @@ def _read_file(file_name: str, payload: bytes):
         return [Document(text=text, metadata={"file_name": file_name})]
 
 
-def _embed(chunks, tenant_code: str, what: str):
-    """把切片向量化：能走 LlamaIndex 就走它，否则用本项目自己的客户端。"""
-    return _embed_texts([chunk.content for chunk in chunks], tenant_code, what)
-
-
-def _embed_texts(texts: list[str], tenant_code: str, what: str = "查询"):
-    from . import embedding as embedding_module
-
-    settings = get_settings()
-    embed_model = _build_embed_model()
-    if embed_model is None:
-        # 千问这类模型名不在 LlamaIndex 枚举里的，走本项目自己的 OpenAI 兼容客户端
-        logger.info("向量化走内置客户端（模型 %s 不是 OpenAI 官方模型）", settings.embedding_model)
-        return embedding_module.embed_texts(texts, tenant_code=tenant_code)
-    source = f"llama-index:{settings.embedding_model}"
-    try:
-        vectors = embed_model.get_text_embedding_batch(texts)
-        return vectors, source
-    except Exception as exc:  # noqa: BLE001
-        # 没配密钥时接口会 401：退回客户端（它自带本地兜底），保证整条链路不中断
-        logger.warning("向量化失败，改用内置客户端 code=RAG_LLAMA_EMBEDDING_FALLBACK errorType=%s",type(exc).__name__)
-        return embedding_module.embed_texts(texts, tenant_code=tenant_code)
+def _embed_texts(texts: list[str], tenant_code: str):
+    return embedding_module.embed_texts(texts, tenant_code=tenant_code, trace_id=get_trace_id() or "-")
 
 
 def _nodes_to_chunks(nodes) -> list:
@@ -184,7 +101,7 @@ def _nodes_to_chunks(nodes) -> list:
 
 def index_document(tenant_code: str, doc_id: int, file_name: str, payload: bytes,
                    *, chunk_size: int | None = None, chunk_overlap: int | None = None):
-    """LlamaIndex 版索引：SimpleDirectoryReader 读 → SentenceSplitter 切 → OpenAIEmbedding 向量化。"""
+    """LlamaIndex 版索引：SimpleDirectoryReader 读 → SentenceSplitter 切 → 共用客户端向量化。"""
     from .pipeline import IndexResult  # 延迟导入，避免循环
 
     documents = _read_file(file_name, payload)
@@ -198,7 +115,7 @@ def index_document(tenant_code: str, doc_id: int, file_name: str, payload: bytes
     if not chunks:
         raise ValueError("切块结果为空，请检查文档内容")
 
-    vectors, source = _embed(chunks, tenant_code, file_name)
+    vectors, source = _embed_texts([chunk.content for chunk in chunks], tenant_code)
 
     saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source)
     logger.info("LlamaIndex 索引完成 tenant=%s docId=%s 切片=%d 向量来源=%s",
@@ -232,7 +149,7 @@ def index_text(tenant_code: str, doc_id: int, content: str,
     if not chunks:
         raise ValueError("正文为空，没有可索引的内容")
 
-    vectors, source = _embed(chunks, tenant_code, "手工正文")
+    vectors, source = _embed_texts([chunk.content for chunk in chunks], tenant_code)
 
     saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source)
     return IndexResult(
@@ -249,7 +166,7 @@ def index_text(tenant_code: str, doc_id: int, content: str,
 
 
 def search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | None = None,*,published_only: bool=False) -> dict:
-    """检索：LlamaIndex 算查询向量，再交给 pgvector 做余弦检索。"""
+    """检索：使用共用向量化，再交给 pgvector 做余弦检索。"""
     from .document_scope import document_scope,published_policy
     doc_ids=document_scope(doc_ids)
     published_only=published_policy(published_only)

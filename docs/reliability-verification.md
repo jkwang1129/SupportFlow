@@ -1763,3 +1763,13 @@ Windows 11、Python 3.11.5、Temurin JDK 25、本机 HTTP 供应商夹具。变�
 - `mvn -B -f backend/pom.xml verify` 通过。新增 Java 回归 3 项，验证签名视觉请求、OCR 与订单号交接、503 与非法 JSON 回退，并检查跨两处 Java 视觉日志的内容。初次编译发现 OCR 交给客服大脑前仍有一处日志使用旧格式化函数，已保留业务上下文并将该日志改为只记录长度。
 
 本地 Python 测试原始报告和 Maven 日志分别保存在 `.local/implementation/e12-python.xml`、`.local/implementation/e12-java-verify-final.log`。合成数据只用于验证协议与计量归属，真实供应商兼容性、实际账单和 OCR 质量需单独验收。
+
+## E13 旧知识库向量传输与并发写入（2026-11-25）
+
+Windows 11、Python 3.11.5、本机 HTTP 向量供应商、隔离 PostgreSQL 17 与受限知识库角色。边界及回退见 [ADR-0072](decisions/0072-bounded-legacy-embedding.md)。
+
+- 在 `ai-service` 执行 `python -m pytest -q`，1175 项通过，485 项在默认环境下跳过。新增 25 项向量传输及调用回归通过。23 条请求分成 10、10、3，共用一个客户端，乱序结果按输入恢复。第二批返回 429 时共发 2 次请求，整批 23 条统一使用本地向量。覆盖真实 TCP 响应体超时、重定向、请求与响应大小、非法数值和索引，以及两种引擎、文件及正文索引、线性和 LangGraph 检索、训练匹配。
+- `python scripts/test-customer-rls.py --with-ai` 通过 173 项客服数据库测试和 34 项知识库测试。新增替换与删除两个用例，在 PostgreSQL 实际观察到同文档修改等待事务锁，其他文档可写。提交后替换只保留新切片，删除清空目标切片。
+- `python scripts/rag_quality_benchmark.py --output .local/implementation/e13-rag-rewrite.json` 通过冻结合成集的两种检索编排，各 25 题，越权召回和门禁违规均为 0。两组 Recall@5 均为 0.979167，适用样本各 16 题。该基准使用既定检索与生成夹具，传输协议和供应商故障另由上述用例覆盖。
+
+原始 Python 报告为 `.local/implementation/e13-python-final.xml`，知识库报告为 `.local/verification/knowledge-isolation.xml`，隔离联调日志为 `.local/implementation/e13-pg-isolation.log`。在真实供应商上仍需验证批量响应兼容性与检索质量。

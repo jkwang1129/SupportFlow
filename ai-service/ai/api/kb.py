@@ -16,6 +16,7 @@ Java 侧用 RestClient 直接发 body 就行，少一层依赖。
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -88,7 +89,8 @@ async def index_file(
                    "（上传 FormData 不要手写 Content-Type，会丢 boundary）",
         )
     try:
-        result = pipeline.index_document(
+        result = await asyncio.to_thread(
+            pipeline.index_document,
             tenant_code=tenant_code,
             doc_id=doc_id,
             file_name=file_name,
@@ -114,7 +116,8 @@ async def index_text(
     logger.info("收到知识库索引请求（正文） trace=%s tenant=%s docId=%s chars=%d",
                 trace_id, tenant_code, body.doc_id, len(body.content))
     try:
-        result = pipeline.index_text(
+        result = await asyncio.to_thread(
+            pipeline.index_text,
             tenant_code=tenant_code,
             doc_id=body.doc_id,
             content=body.content,
@@ -130,7 +133,8 @@ async def index_text(
 async def search(body: SearchRequest, trace_id: str = Depends(require_trace_id)) -> dict:
     """检索：给"检索测试"用，后续机器人 RAG 也走它。"""
     try:
-        return pipeline.search(
+        return await asyncio.to_thread(
+            pipeline.search,
             tenant_code=body.tenant_code,
             query=body.query,
             top_k=body.top_k,

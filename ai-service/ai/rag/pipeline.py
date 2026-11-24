@@ -181,7 +181,7 @@ def _builtin_index_text(
 
 
 def search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | None = None,*,published_only: bool=False) -> dict:
-    """检索：装了 llama-index 用它算查询向量，否则用内置向量；都命中不到时退回关键词。"""
+    """检索：两种引擎共用向量化，向量命中不足时退回关键词。"""
     doc_ids=document_scope(doc_ids)
     published_only=published_policy(published_only)
     if doc_ids==[]:return {"query":query,"results":[],"mode":"empty-scope","vector_source":"none"}

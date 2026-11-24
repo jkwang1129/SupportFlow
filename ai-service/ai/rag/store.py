@@ -70,6 +70,11 @@ def _derive_kb_dsn(ai_dsn: str) -> str:
     return ai_dsn.replace("/ai_db", "/customer_db")
 
 
+def _lock_chunk_mutation(conn, tenant_code: str, doc_id: int) -> None:
+    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                 (f"supportflow:kb-chunks:{tenant_code}:{doc_id}",))
+
+
 def replace_chunks(
     tenant_code: str,
     doc_id: int,
@@ -85,6 +90,7 @@ def replace_chunks(
     if len(chunks) != len(vectors):
         raise ValueError(f"切片数与向量数不一致：{len(chunks)} vs {len(vectors)}")
     with tenant_connection(tenant_code) as conn, conn.cursor() as cur:
+        _lock_chunk_mutation(conn, tenant_code, doc_id)
         cur.execute("DELETE FROM kb_chunk WHERE tenant_code = %s AND doc_id = %s", (tenant_code, doc_id))
         if not chunks:
             return 0
@@ -115,6 +121,7 @@ def replace_chunks(
 
 def delete_chunks(tenant_code: str, doc_id: int) -> int:
     with tenant_connection(tenant_code) as conn, conn.cursor() as cur:
+        _lock_chunk_mutation(conn, tenant_code, doc_id)
         cur.execute("DELETE FROM kb_chunk WHERE tenant_code = %s AND doc_id = %s", (tenant_code, doc_id))
         return cur.rowcount
 

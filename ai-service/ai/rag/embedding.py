@@ -15,15 +15,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import math
 import re
 import time
 
-import httpx
-
 from ..config import get_settings
+from ..core.chat_transport import ModelCallFailure, _configuration, _model_client, _send_embedding_json
+from ..core.trace import get_trace_id
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ def embed_texts(texts: list[str], *, tenant_code: str = "", trace_id: str = "") 
     if not texts:
         return [], "none"
     settings = get_settings()
+    trace_id = trace_id or get_trace_id()
     # 没单独配向量密钥时复用千问的 key（同一个账号），避免"明明配了密钥却还在用兜底向量"
     if settings.embedding_key() and settings.embedding_provider != "local":
         try:
@@ -49,50 +51,57 @@ def embed_texts(texts: list[str], *, tenant_code: str = "", trace_id: str = "") 
             return vectors, f"{settings.embedding_provider}:{settings.embedding_model}"
         except Exception as exc:  # noqa: BLE001
             # 远程失败不能把整个上传卡死：退回本地向量，并把原因记下来
-            logger.warning(
-                "远程向量化失败，降级为本地向量 trace=%s code=RAG_EMBEDDING_FALLBACK errorType=%s\n"
-                "  → 本次写进去的向量没有语义，检索会退化成关键词匹配，效果明显变差。\n"
-                "  → 修好密钥（SUPPORTFLOW_AI_QWEN_API_KEY 或 SUPPORTFLOW_AI_EMBEDDING_API_KEY）后，"
-                "要把文档**重新索引**一遍——向量是索引那一刻算出来的。",
-                trace_id or "-", type(exc).__name__)
+            cause = exc.code if isinstance(exc, ModelCallFailure) else type(exc).__name__
+            logger.warning("远程向量化降级 trace=%s code=RAG_EMBEDDING_FALLBACK reason=%s",
+                           trace_id or "-", cause)
     return [_local_vector(text) for text in texts], "local-hash"
 
 
 def _embed_remote(texts: list[str], settings, *, tenant_code: str, trace_id: str) -> list[list[float]]:
-    url = settings.embedding_base_url.rstrip("/") + "/embeddings"
-    # 关键：这里必须用 embedding_key()（专用密钥没配时复用千问的 key）。
-    # 早先这里直接取 embedding_api_key，于是出现一个"静默失败"：
-    #   embed_texts 判断"有密钥"（复用了千问的）→ 真发请求时 Authorization 却是空的
-    #   → 401 → 被下面的兜底接住 → 悄悄换成 local-hash 向量。
-    #   现象就是"知识库明明有数据，机器人却答不上来"（检索捞错了块）。
-    api_key = settings.embedding_key()
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    chosen = {"base_url": settings.embedding_base_url, "api_key": settings.embedding_key(),
+              "model": settings.embedding_model}
+    timeout = settings.embedding_timeout
+    _configuration(chosen, timeout)
+    return asyncio.run(_embed_batches(texts, chosen, timeout, tenant_code=tenant_code, trace_id=trace_id))
+
+
+async def _embed_batches(texts, chosen, timeout, *, tenant_code: str, trace_id: str) -> list[list[float]]:
     vectors: list[list[float]] = []
-    with httpx.Client(timeout=settings.embedding_timeout) as client:
+    async with _model_client(timeout) as client:
         for start in range(0, len(texts), BATCH_SIZE):
             batch = texts[start:start + BATCH_SIZE]
-            body = {"model": settings.embedding_model, "input": batch, "dimensions": EMBEDDING_DIM}
+            body = {"model": chosen["model"], "input": batch, "dimensions": EMBEDDING_DIM}
             started = time.perf_counter()
             logger.info("向量化请求 trace=%s tenant=%s model=%s texts=%d",
-                        trace_id or "-", tenant_code or "-", settings.embedding_model, len(batch))
-            response = client.post(url, headers=headers, json=body)
-            response.raise_for_status()
-            payload = response.json()
-            items = sorted(payload.get("data", []), key=lambda item: item.get("index", 0))
-            for item in items:
-                vector = [float(value) for value in item.get("embedding", [])]
-                if len(vector) != EMBEDDING_DIM:
-                    raise ValueError(f"向量维度不符：期望 {EMBEDDING_DIM}，实际 {len(vector)}")
-                vectors.append(vector)
-            logger.info("向量化完成 trace=%s tenant=%s 本批=%d 累计=%d cost=%dms",
+                        trace_id or "-", tenant_code or "-", chosen["model"], len(batch))
+            payload = await _send_embedding_json(chosen, body, timeout, client=client)
+            vectors.extend(_batch_vectors(payload, len(batch)))
+            logger.info("向量化完成 trace=%s tenant=%s batchCount=%d totalCount=%d latencyMs=%d",
                         trace_id or "-", tenant_code or "-", len(batch), len(vectors),
                         int((time.perf_counter() - started) * 1000))
-    if len(vectors) != len(texts):
-        raise ValueError(f"向量条数不符：期望 {len(texts)}，实际 {len(vectors)}")
     return vectors
+
+
+def _batch_vectors(payload: dict, batch_size: int) -> list[list[float]]:
+    items = payload.get("data")
+    if not isinstance(items, list) or len(items) != batch_size:
+        raise ModelCallFailure("EMBEDDING_OUTPUT_INVALID")
+    indexed: dict[int, list[float]] = {}
+    try:
+        for item in items:
+            index = item["index"]
+            vector = item["embedding"]
+            if type(index) is not int or not 0 <= index < batch_size or index in indexed:
+                raise ValueError()
+            if not isinstance(vector, list) or len(vector) != EMBEDDING_DIM:
+                raise ValueError()
+            if any(type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 1e6
+                   for value in vector):
+                raise ValueError()
+            indexed[index] = [float(value) for value in vector]
+    except (KeyError, OverflowError, TypeError, ValueError):
+        raise ModelCallFailure("EMBEDDING_OUTPUT_INVALID") from None
+    return [indexed[index] for index in range(batch_size)]
 
 
 def _tokens(text: str) -> list[str]:

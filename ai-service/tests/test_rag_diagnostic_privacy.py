@@ -89,11 +89,11 @@ def test_remote_embedding_failure_keeps_local_fallback_without_raw_provider_deta
     safe_logs(caplog)
 
 
-def test_llama_embedding_failure_hides_both_exception_and_filename_label(monkeypatch,caplog):
-    monkeypatch.setattr(llama_engine,'get_settings',lambda:SimpleNamespace(embedding_model='fixture'))
-    monkeypatch.setattr(llama_engine,'_build_embed_model',lambda:SimpleNamespace(get_text_embedding_batch=fail))
-    monkeypatch.setattr(embedding,'embed_texts',lambda *a,**k:([[1]],'local-hash'))
-    assert llama_engine._embed_texts([PRIVATE],'TENANT_A',FILE)==([[1]],'local-hash')
+def test_llama_embedding_uses_the_same_safe_fallback(monkeypatch,caplog):
+    monkeypatch.setattr(embedding,'get_settings',lambda:SimpleNamespace(embedding_key=lambda:'synthetic-test-key',embedding_provider='fixture'))
+    monkeypatch.setattr(embedding,'_embed_remote',fail)
+    vectors,source=llama_engine._embed_texts([PRIVATE],'TENANT_A')
+    assert source=='local-hash' and len(vectors[0])==1024
     safe_logs(caplog)
 
 
@@ -150,7 +150,6 @@ def test_index_success_diagnostics_hide_filename_but_keep_result_metadata(monkey
         monkeypatch.setattr(llama_engine,'_read_file',lambda *a:[])
         monkeypatch.setattr(llama_engine,'_splitter',lambda:SimpleNamespace(get_nodes_from_documents=lambda *_:[]))
         monkeypatch.setattr(llama_engine,'_nodes_to_chunks',lambda *_:[chunk])
-        monkeypatch.setattr(llama_engine,'_embed',lambda *a:([[1]],'local-hash'))
         result=llama_engine.index_document('TENANT_A',1,FILE,b'fixture')
     assert result.file_name==FILE and result.chunk_count==1
     safe_logs(caplog)

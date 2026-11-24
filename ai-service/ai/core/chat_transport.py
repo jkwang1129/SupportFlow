@@ -1,5 +1,6 @@
-"""Private bounded transport for Chat, Vision and query Embedding."""
+"""Private bounded transport for Chat, Vision and Embedding."""
 import asyncio
+from contextlib import nullcontext
 import json
 import math
 import re
@@ -74,11 +75,17 @@ async def _send_vision_json(chosen, payload, timeout, *, transport=None):
                                   transport=transport, request_limit=MAX_VISION_REQUEST_BYTES)
 
 
-async def _send_embedding_json(chosen,payload,timeout,*,transport=None):
-    return await _send_model_json(chosen,payload,timeout,endpoint='embeddings',transport=transport)
+async def _send_embedding_json(chosen, payload, timeout, *, transport=None, client=None):
+    return await _send_model_json(chosen, payload, timeout, endpoint='embeddings',
+                                  transport=transport, client=client)
 
 
-async def _send_model_json(chosen,payload,timeout,*,endpoint,transport=None,request_limit=MAX_CHAT_BYTES):
+def _model_client(timeout, *, transport=None):
+    return httpx.AsyncClient(transport=transport, trust_env=False, follow_redirects=False,
+                             timeout=httpx.Timeout(min(30, timeout), connect=min(5, timeout)))
+
+
+async def _send_model_json(chosen,payload,timeout,*,endpoint,transport=None,request_limit=MAX_CHAT_BYTES,client=None):
     if endpoint not in ('chat/completions','embeddings') or type(endpoint) is not str:
         raise ModelCallFailure('MODEL_OPERATION_INVALID',attempted=False)
     base,key,model=_configuration(chosen,timeout)
@@ -90,9 +97,9 @@ async def _send_model_json(chosen,payload,timeout,*,endpoint,transport=None,requ
     try:
         # No hidden retry/fallback. Header and body completion share one deadline.
         async with asyncio.timeout(timeout):
-            async with httpx.AsyncClient(transport=transport,trust_env=False,follow_redirects=False,
-                                         timeout=httpx.Timeout(min(30,timeout),connect=min(5,timeout))) as client:
-                async with client.stream('POST',base.rstrip('/')+'/'+endpoint,
+            connection = _model_client(timeout, transport=transport) if client is None else nullcontext(client)
+            async with connection as session:
+                async with session.stream('POST',base.rstrip('/')+'/'+endpoint,
                         headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','Accept-Encoding':'identity'},content=body) as response:
                     status=response.status_code
                     if status==429:raise ModelCallFailure('MODEL_RATE_LIMITED',retryable=True,status_code=status)

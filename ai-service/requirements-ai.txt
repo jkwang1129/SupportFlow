@@ -6,12 +6,10 @@
 # =====================================================================
 
 # ---------- 知识库真正必需的（第 20 篇）----------
-# 读文件用 SimpleDirectoryReader、切块用 SentenceSplitter、向量化分流走 OpenAIEmbedding
+# 读文件用 SimpleDirectoryReader、切块用 SentenceSplitter
 llama-index>=0.11
 # Reader 实现：docx / pdf / md 等格式的解析器都在这
 llama-index-readers-file>=0.4
-# OpenAI 系模型的向量化（千问这类非官方模型名走项目自己的客户端，见 llama_engine.py）
-llama-index-embeddings-openai>=0.3
 # 中文 PDF 多为 CID 编码字体，内置兜底解析读不出来，只有 pypdf 能读
 pypdf>=5
 
