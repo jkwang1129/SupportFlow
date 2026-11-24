@@ -1726,3 +1726,20 @@ Windows 11、Node 24.14.1、Chromium、Temurin JDK 25、Python 3.11.5 和隔离 
 - 原始联调报告为 `.local/implementation/d25-evidence/runtime-ticket-approval.json`，格式 `ticket-approval-boundary-v18`，SHA-256 为 `d2b8848ce6635fd1d7fa691d2f2afb689f88ea190f34eefaa6ec02d85c08cd41`，日志为 `.local/implementation/d25-runtime.log`。
 
 本批覆盖工单任务的坐席取消。实际部署下的进度延迟、跨实例通知及其他业务写入的用户取消留给后续验收。
+
+## D26 多节点工单通知与进度延迟（2026-11-24）
+
+Windows 11、Temurin JDK 25、Python 3.11.5、隔离 PostgreSQL 17 和两个独立实时服务进程。配置、指标起止点、复现命令和回退见 [ADR-0069](decisions/0069-multi-node-ticket-notices.md)。
+
+- 全模块 Maven `verify` 通过。`python scripts/test-customer-rls.py --with-ai` 通过 173 项客服数据库测试及 32 项 AI 知识库测试。新回归验证两个目标各收到 1 次签名引用、HTTP 503 与正常节点独立，以及重复、过量、带路径或非法端口的配置被拒绝。单目标提交、事务回滚和未绑定事务的测试继续通过。
+- 首轮联调将外租户同号连接建在原查询拒绝用例的租户下，使该租户实际拥有一个可查但无任务的会话。改用独立观察租户，保留原会话不存在的查询断言，两种权限场景分别验收。
+- `python scripts/test-agent-runtime.py --with-java-delivery` 本地限定 `runtime_approval_review or approval_lifecycle or approval_consumption` 的 46 项通过。实际联调通过 5 项工单、2 项取消场景。正常两节点各送达 1 条确认，同租户另一会话与外租户同号会话各收到 0 条。节点 A 返回 503 时，节点 B 在线收到 1 条，节点 A 连接按序号补回同一条。两组各有 1 张工单、1 条回执和 1 条数据库确认消息。接管、过期与撤回均未发送节点通知。
+
+| 本地场景 | 发起访客消息到首读 `run_started` | 启动已批准 Worker 到首读 `run_completed` |
+|---|---:|---:|
+| 正常双节点送达 | 4280.432 ms | 3958.967 ms |
+| 创建确认丢失且节点 A 通知失败 | 3342.567 ms | 3713.178 ms |
+
+联调报告为 `.local/implementation/d26-evidence/runtime-ticket-approval.json`，SHA-256 为 `a2451759165852ba634d5c75bc75f547cdc1969e961b531dff600d3ddb86ce80`。单调时钟原始记录为 `.local/implementation/d26-evidence/runtime-approval-progress-latency.json`，SHA-256 为 `74c36d00f26ae4c5b1d02497068d4eba8e38c7fe72c836f4a5a22149d9142b0f`。联调日志为 `.local/implementation/d26-runtime-final.log`。
+
+耗时是两个合成场景的单次观察，包含 CLI 启动和验收客户端的串行读取。测试拓扑为两个静态配置实时节点。生产部署中的网络条件、实际流量和长时间负载需在目标环境验收。

@@ -165,7 +165,7 @@ class AgentTicketCreationsPostgresTest extends SessionPostgresFixture {
                     Map.of("supportflow.bot.runtime-ticket-notice-push-enabled", "true")));
             context.registerBean(TransactionalEventListenerFactory.class);
             context.registerBean(AgentTicketNoticePublisher.class,
-                    () -> new AgentTicketNoticePublisher(receiver.endpoint().resolve("/").toString(), key));
+                    () -> new AgentTicketNoticePublisher(receiver.endpoint().resolve("/").toString(), key, ""));
             context.refresh();
             var boundary = new AgentTicketCreations(jdbc, tickets, service, context);
             scoped(()->transaction.execute(status->{
@@ -187,6 +187,37 @@ class AgentTicketCreationsPostgresTest extends SessionPostgresFixture {
             assertNull(receiver.failure.get());
             context.publishEvent(new io.supportflow.customer.event.AgentTicketNotice("TENANT_A",sessionNo,2,"123"));
             assertEquals(1,receiver.calls.get());
+        }
+    }
+
+    @Test void configuredNoticeTargetsUseTheSameSignedReferenceEvenWhenOneRejectsIt() throws Exception {
+        String key = "disposable-notice-transport-fixture-key";
+        String path = "/api/realtime/internal/ticket-notices/" + sessionNo + "/2/123";
+        var notice = new io.supportflow.customer.event.AgentTicketNotice("TENANT_A", sessionNo, 2, "123");
+        try (var unavailable = new RuntimeReceiverStub(request -> {
+            assertEquals(path, request.rawPath());
+            assertEquals(0, request.body().length);
+            return new RuntimeReceiverStub.Reply(503, "");
+        }); var healthy = new RuntimeReceiverStub(request -> {
+            assertEquals(path, request.rawPath());
+            assertEquals(0, request.body().length);
+            assertTrue(CustomerInternalCredential.verify(request.headers().get(CustomerInternalCredential.HEADER).getFirst(),
+                    key, CustomerInternalCredential.Caller.CUSTOMER_NOTICE, "POST", path, "", "TENANT_A", Clock.systemUTC()));
+            return new RuntimeReceiverStub.Reply(204, "");
+        })) {
+            String first = unavailable.endpoint().resolve("/").toString();
+            String second = healthy.endpoint().resolve("/").toString();
+            var publisher = new AgentTicketNoticePublisher("http://127.0.0.1:1", key, first + ", " + second);
+            publisher.publish(notice);
+            assertEquals(1, unavailable.calls.get());
+            assertEquals(1, healthy.calls.get());
+            assertNull(unavailable.failure.get());
+            assertNull(healthy.failure.get());
+        }
+        for (String invalid : List.of("http://example.org,http://example.org:80/", "http://example.org/path",
+                "http://example.org,", "http://example.org?a=b", "http://example.org:0",
+                "http://a,http://b,http://c,http://d,http://e")) {
+            assertThrows(IllegalArgumentException.class, () -> new AgentTicketNoticePublisher("http://127.0.0.1:1", key, invalid));
         }
     }
     @Test void exactUnicodeTitleAndMaximumUtf8BodyAreStoredWithoutSilentTruncation(){

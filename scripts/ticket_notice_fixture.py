@@ -62,7 +62,7 @@ class LiveNotices:
 
 
 @contextmanager
-def realtime_notice_service(java, customer_port, child, connect, logs):
+def realtime_notice_service(java, customer_port, child, connect, logs, node):
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
         port = listener.getsockname()[1]
@@ -102,7 +102,7 @@ def realtime_notice_service(java, customer_port, child, connect, logs):
         def log_message(self, *_):
             pass
 
-    with (logs/'realtime-notice-service.log').open('wb') as log, ThreadingHTTPServer(('127.0.0.1', 0), Proxy) as proxy:
+    with (logs/f'realtime-notice-{node}.log').open('wb') as log, ThreadingHTTPServer(('127.0.0.1', 0), Proxy) as proxy:
         process = subprocess.Popen([str(java), '-Xms24m', '-Xmx192m', '-jar', str(jar), f'--server.port={port}',
                                     f'--supportflow.customer.internal-base-url=http://127.0.0.1:{customer_port}'],
                                    cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
@@ -113,7 +113,7 @@ def realtime_notice_service(java, customer_port, child, connect, logs):
             with httpx.Client(trust_env=False, timeout=1) as client:
                 for _ in range(200):
                     if process.poll() is not None:
-                        raise RuntimeError('Disposable realtime service exited')
+                        raise RuntimeError(f'Disposable realtime node {node} exited')
                     try:
                         if client.get(base + '/actuator/health').status_code == 200:
                             break
@@ -121,7 +121,7 @@ def realtime_notice_service(java, customer_port, child, connect, logs):
                         pass
                     time.sleep(.25)
                 else:
-                    raise RuntimeError('Disposable realtime service did not become ready')
+                    raise RuntimeError(f'Disposable realtime node {node} did not become ready')
             yield LiveNotices(base, f'http://127.0.0.1:{proxy.server_port}', key, requests, unavailable)
         finally:
             proxy.shutdown()

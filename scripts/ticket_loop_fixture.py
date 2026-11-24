@@ -212,13 +212,14 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
         trace_ai_dsn, ('public.agent_run', 'public.agent_step', 'public.agent_approval'))))
     timeline_cases = _queue_timeline_cases(connect, store, timeline)
     with (approval_role_server(SHADOW_TENANT) as role_base, (logs/'customer-service.log').open('wb') as log,
-          realtime_notice_service(java, port, child, connect, logs) as live_notices):
+          realtime_notice_service(java, port, child, connect, logs, 'a') as live_notices,
+          realtime_notice_service(java, port, child, connect, logs, 'b') as peer_notices):
         process=subprocess.Popen([str(java),'-Xms32m','-Xmx384m','-jar',str(jar),f'--server.port={port}',
             '--supportflow.bot.runtime-source-enabled=true','--supportflow.bot.runtime-read-tools-enabled=true',
             '--supportflow.bot.runtime-ticket-create-enabled=true',
             f'--supportflow.bot.runtime-ticket-notice-tenant={SHADOW_TENANT}',
             '--supportflow.bot.runtime-ticket-notice-push-enabled=true',
-            f'--supportflow.realtime.base-url={live_notices.proxy}',
+            f'--supportflow.realtime.ticket-notice-base-urls={live_notices.proxy},{peer_notices.proxy}',
             '--supportflow.bot.runtime-approval-review-enabled=true', f'--supportflow.user.internal-base-url={role_base}',
             '--supportflow.bot.enabled=false', '--supportflow.bot.runtime-dispatch-enabled=true',
             f'--supportflow.bot.runtime-dispatch-tenant={SHADOW_TENANT}', '--supportflow.bot.runtime-shadow-admission-enabled=true',
@@ -431,7 +432,7 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
             approval_tracks = verify_ticket_approval(connect, base, child['SUPPORTFLOW_JWT_SECRET'], secret, store,
                                    runtime_env['SUPPORTFLOW_RUNTIME_TEST_DSN'],
                                    realtime_secret=child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'],
-                                   live_notices=live_notices,
+                                   live_notices=live_notices, peer_notices=peer_notices,
                                    append_visitor=lambda session_no, text, seq: _send_shadow_message(
                                        connect, base, child['SUPPORTFLOW_CUSTOMER_REALTIME_SECRET'], store, session_no,
                                        text, expected_seq=seq),

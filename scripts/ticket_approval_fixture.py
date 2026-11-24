@@ -304,7 +304,7 @@ def verify_ticket_cancellation(connect, base, key, secret, store, runtime_dsn, t
     return observations
 
 
-def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *, realtime_secret, live_notices,
+def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *, realtime_secret, live_notices, peer_notices,
                            append_visitor, previous_read, timeline):
     from ai.runtime.approvals import TicketApprovals
     from ai.runtime.source import SourceClient
@@ -318,30 +318,38 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
     read_result = store.get(tenant, read_run)
     assert read_result['state'] == 'SUCCEEDED' and read_result['result_ref']['outcome'] == 'ticket-status-ready'
     observer_session = 'TICKET_NOTICE_OBSERVER'
+    observer_tenant = 'NOTICE_SCOPE_B'
     with connect('customer_db') as db:
         db.execute('''INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
             VALUES(20500999,%s,%s,1,2,0,CURRENT_TIMESTAMP)''', (tenant, observer_session))
+        db.execute('''INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
+            VALUES(20500998,%s,%s,1,2,0,CURRENT_TIMESTAMP)''', (observer_tenant, read_source.session_no))
     failures = {
         'taken_over_after_approval': ('SOURCE_REVOKED', 'APPROVED'),
         'expired_before_resume': ('APPROVAL_EXPIRED', 'EXPIRED'),
         'revoked_before_resume': ('APPROVAL_REVOKED', 'REVOKED'),
     }
     observations = []
+    timing_samples = []
     timelines = {}
     for index, mode in enumerate(('accepted', 'lost_create_ack', *failures)):
         request_text = '/ticket-request\n' + approved_title + '\n' + approved_body
         has_previous_read = mode == 'accepted'
+        successful = mode not in failures
         if has_previous_read:
             session_id, session_no = read_session_id, read_source.session_no
-            source, run = append_visitor(session_no, request_text, read_source.event_seq + 1)
-            assert (source.principal_ref, source.session_no) == (read_source.principal_ref, read_source.session_no)
-            assert source.source_event_id != read_source.source_event_id and run != read_run and source.trace_id != read_source.trace_id
+            expected_seq = read_source.event_seq + 1
         else:
             session_id, session_no = 20500001 + index * 10, 'TICKET_APPROVAL_'+str(index)
             with connect('customer_db') as db:
                 db.execute('''INSERT INTO session(id,tenant_code,session_no,channel_id,status,last_msg_seq,start_time)
                     VALUES(%s,%s,%s,1,2,0,CURRENT_TIMESTAMP)''', (session_id, tenant, session_no))
-            source, run = append_visitor(session_no, request_text, 1)
+            expected_seq = 1
+        submission_started = time.perf_counter_ns()
+        source, run = append_visitor(session_no, request_text, expected_seq)
+        if has_previous_read:
+            assert (source.principal_ref, source.session_no) == (read_source.principal_ref, read_source.session_no)
+            assert source.source_event_id != read_source.source_event_id and run != read_run and source.trace_id != read_source.trace_id
         approvals = TicketApprovals(store)
         proposal = _run_ticket_worker(tenant, base, secret, runtime_dsn, propose=True)
         assert proposal.returncode == 0 and secret not in proposal.stderr
@@ -349,6 +357,13 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         snapshot = asyncio.run(source_client.read(source, run))
         row = approvals.get(tenant, run)
         assert waiting['state'] == 'WAITING_APPROVAL' and row['snapshot_id'] == snapshot.snapshot_id
+        waiting_page = None
+        if successful:
+            waiting_page = _event_page(base, jwt_key, source, run, 0)
+            first_event_observed = time.perf_counter_ns()
+            assert not waiting_page['has_more'] and waiting_page['next_seq'] == 10
+            assert waiting_page['events'][0]['event_type'] == 'run_started'
+            assert waiting_page['events'][-1]['event_type'] == 'approval_required'
         assert (waiting['step_count'], waiting['tool_calls'], waiting['model_calls']) == (4, 2, 0)
         waiting_trace = store.trace_snapshot(tenant, run)
         assert waiting_trace['run']['trace_id'] == source.trace_id
@@ -358,13 +373,8 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         assert asyncio.run(tickets.receipt(source, run)) is None
         _assert_progress(base, jwt_key, source, run, waiting)
         _assert_latest_progress(base, jwt_key, source)
-        waiting_page = None
         event_resume = None
         if has_previous_read:
-            waiting_page = _event_page(base, jwt_key, source, run, 0)
-            assert not waiting_page['has_more'] and waiting_page['next_seq'] == 10
-            assert waiting_page['events'][0]['event_type'] == 'run_started'
-            assert waiting_page['events'][-1]['event_type'] == 'approval_required'
             track = timeline.for_event(tenant, source.source_event_id)
             assert track['binding_status'] == 'matched' and track['python_runtime']['approval']['status'] == 'PENDING'
             assert track['python_runtime']['run']['state'] == 'WAITING_APPROVAL'
@@ -418,19 +428,30 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
         else:
             transport = nullcontext((base, None))
         socket_message = None
+        peer_message = None
         fallback_history = False
         if mode == 'lost_create_ack':
             live_notices.unavailable.add(session_no)
         with transport as (worker_base, network), ExitStack() as sockets:
-            visitor = observer = None
-            if mode not in failures:
+            if successful:
                 token = _fixture_token(jwt_key, tenant, session_id, visitor_session=session_no).removeprefix('Bearer ')
                 visitor = sockets.enter_context(live_notices.visitor(token))
+                peer_visitor = sockets.enter_context(peer_notices.visitor(token))
             if has_previous_read:
                 token = _fixture_token(jwt_key, tenant, 20500999, visitor_session=observer_session).removeprefix('Bearer ')
-                observer = sockets.enter_context(live_notices.visitor(token))
+                observer = sockets.enter_context(peer_notices.visitor(token))
+                foreign_token = _fixture_token(jwt_key, observer_tenant, 20500998, visitor_session=session_no).removeprefix('Bearer ')
+                foreign_observer = sockets.enter_context(peer_notices.visitor(foreign_token))
+            execution_started = time.perf_counter_ns()
             worker = _run_ticket_worker(tenant, worker_base, secret, runtime_dsn, authority_enabled=True)
             assert worker.returncode == 0 and secret not in worker.stderr, (mode, worker.returncode)
+            if successful:
+                completion_page = _event_page(base, jwt_key, source, run, waiting_page['next_seq'])
+                completion_observed = time.perf_counter_ns()
+                assert not completion_page['has_more'] and completion_page['events'][-1]['event_type'] == 'run_completed'
+                timing_samples.append(dict(case=mode,
+                    submission_to_first_event_ms=round((first_event_observed-submission_started)/1_000_000, 3),
+                    execution_to_run_completed_ms=round((completion_observed-execution_started)/1_000_000, 3)))
             result = store.get(tenant, run)
             repeated = _run_ticket_worker(tenant, worker_base, secret, runtime_dsn, authority_enabled=True)
             assert repeated.returncode == 0 and store.get(tenant, run) == result
@@ -441,8 +462,15 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
                 frame = receive(visitor, 'MESSAGE')
                 assert frame['sessionNo'] == session_no
                 socket_message = frame['data']
-                observer.send(json.dumps({'type': 'PING'}))
-                receive(observer, 'PONG', reject_notice=True)
+                for connection in (visitor, observer, foreign_observer):
+                    connection.send(json.dumps({'type': 'PING'}))
+                    receive(connection, 'PONG', reject_notice=True)
+            if successful:
+                peer_frame = receive(peer_visitor, 'MESSAGE')
+                assert peer_frame['sessionNo'] == session_no
+                peer_message = peer_frame['data']
+                peer_visitor.send(json.dumps({'type': 'PING'}))
+                receive(peer_visitor, 'PONG', reject_notice=True)
             if mode == 'lost_create_ack':
                 visitor.send(json.dumps({'type': 'SYNC', 'sessionNo': session_no, 'data': {'afterSeq': source.event_seq}}))
                 frame = receive(visitor, 'SYNCED', reject_notice=True)
@@ -495,11 +523,14 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             assert notice['content'] == f'工单已创建，编号：{receipt.ticket_no}'
             assert notice['clientMsgNo'] == f'agent-ticket-notice:{run}'
             assert all(socket_message[k] == notice[k] for k in ('msgId','content','clientMsgNo'))
+            assert all(peer_message[k] == notice[k] for k in ('msgId','content','clientMsgNo'))
             path = f'{NOTICE_PATH}/{session_no}/{notice["seq"]}/{notice["msgId"]}'
             assert live_notices.requests.get(session_no) == [(path, 1, 503 if fallback_history else 204)]
+            assert peer_notices.requests.get(session_no) == [(path, 1, 204)]
             if has_previous_read:
                 prior = f'{NOTICE_PATH}/{session_no}/{source.event_seq}/{source.message_id}'
                 live_notices.check_request_boundary(path, tenant, prior)
+                peer_notices.check_request_boundary(path, tenant, prior)
             recovery_reads = int(mode == 'lost_create_ack')
             counts = (result['step_count'], result['tool_calls'], result['model_calls'], result['retry_count'])
             assert counts == (7 + recovery_reads, 4 + recovery_reads, 0, 0), (mode, counts)
@@ -509,6 +540,7 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             assert writes == [] and receipt is None and stored_receipts == [] and facts == [] and events == 0
             assert audit['consumed_step_no'] is None
             assert session_no not in live_notices.requests
+            assert session_no not in peer_notices.requests
         if mode not in ('taken_over_after_approval', 'expired_before_resume'):
             _assert_progress(base, jwt_key, source, run, result)
         _assert_latest_progress(base, jwt_key, source, result, unavailable=mode == 'taken_over_after_approval',
@@ -545,19 +577,26 @@ def verify_ticket_approval(connect, base, jwt_key, secret, store, runtime_dsn, *
             steps=result['step_count'], tools=result['tool_calls'], models=result['model_calls'],
             tickets=len(facts), receipts=len(stored_receipts), events=events, visitor_notices=len(visitor_messages),
             live_push=has_previous_read, synced_after_push_failure=fallback_history,
+            node_a_online=int(has_previous_read), node_b_online=int(peer_message is not None),
+            isolated_connections_checked=2 if has_previous_read else 0,
             latest_progress_restored=mode != 'taken_over_after_approval', expired_source_hidden=has_previous_read,
             restored_while_running=running_progress, event_resume=event_resume,
             timeline_reference_recovered=has_previous_read))
     cancellations = verify_ticket_cancellation(connect, base, jwt_key, secret, store, runtime_dsn, tenant,
                                               append_visitor, approved_title, approved_body)
     artifact = ROOT / '.local/verification/runtime-ticket-approval.json'
-    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v18', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
+    artifact.write_text(json.dumps(dict(format='ticket-approval-boundary-v19', mode='VISITOR_REQUEST_REAL_JAVA_AI_PG_CLI',
         cases=observations, cancellations=cancellations), indent=2)+'\n', encoding='utf-8')
+    assert len(timing_samples) == 2
+    (artifact.parent/'runtime-approval-progress-latency.json').write_text(json.dumps(dict(
+        format='ticket-approval-progress-latency-v1', unit='ms', clock='perf_counter_ns',
+        fixture='SYNTHETIC_INPUT_REAL_JAVA_AI_POSTGRES_TWO_REALTIME_NODES',
+        samples=timing_samples), indent=2)+'\n', encoding='utf-8')
     print('Signed visitor -> Outbox -> proposal -> staff review -> approval Worker: 5 cases passed; '
           'same-session read then create, one visitor-visible notice per receipt including lost ACK, '
           'and zero writes after takeover, expiry or revocation', flush=True)
-    print('Ticket notices: actual visitor WebSocket received one committed notice; a second session received none; '
-          'HTTP 503 preserved one notice recovered through SYNC; unsigned, wrong-role and mismatched references rejected', flush=True)
+    print('Ticket notices: two realtime nodes each delivered one committed notice; other session and same-number foreign '
+          'tenant received none; node A HTTP 503 recovered through SYNC while node B still delivered online', flush=True)
     print('Latest reviewed progress: 4 terminal states recovered by session, 1 takeover and 1 expired snapshot hidden; '
           '1 consumed approval recovered in RUNNING before ticket creation; '
           'pending runs, anonymous users, regular agents and foreign tenants could not discover reviewed progress', flush=True)
