@@ -154,6 +154,10 @@ python scripts/upgrade-runtime-security.py
 
 结果写入 `.local/verification/database-restore-drill.json`。出现 503 时先比较两个服务的存活与就绪，检查 `.local/implementation/restore-customer.log` 和 `.local/implementation/restore-ai.log`。联合恢复失败后从源归档重新建立隔离目标。生产切换和恢复目标仍需在授权环境中验证。
 
+## 附件就绪与排障
+
+客服服务的 `/actuator/attachmentreadiness` 检查应用、数据库和配置的对象桶。通用就绪正常而附件就绪返回 503 时，先核对 RustFS 服务、桶和客服服务所用账号的桶访问权限，再用已授权会话重新读取原文件。聊天记录可继续按通用就绪处理。已授权的附件读取遇到存储不可用时返回 HTTP 503 和业务码 `50308`。探测与回退说明见 [ADR-0077](decisions/0077-attachment-readiness.md)。
+
 ## Java 存活与就绪
 
 五个数据库服务（User/Tenant/Customer/Billing/Ops，9091～9095）使用现有 Actuator：`/actuator/health/liveness` 只检查进程存活；`/actuator/health/readiness` 合并应用就绪状态与本服务的 `schema/readiness.properties` 最小结构契约。缺表、缺列、缺少读取权限或数据库连接/查询异常时返回 503；`/api/*` 同时返回通用 503 和 Retry-After，不进入业务处理器。修复后下次请求重新检查，无需重启。

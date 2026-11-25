@@ -1814,3 +1814,13 @@ Windows 11、Python 3.11.5、Temurin 25.0.5、隔离 PostgreSQL 17 和固定镜�
 - 本地两服务启动至就绪用时 9,408.737 ms，恢复列名后到读取和拒绝检查全部通过用时 922.142 ms。恢复耗时使用停写的合成样本。应用验收、仅联合恢复、仅数据库恢复三种模式均通过。脚本测试执行 73 项，其中 10 项需要额外夹具而跳过。参数校验拒绝单独启用 `--with-services`。
 
 三种模式的原始报告分别为 `.local/implementation/e17-evidence/with-services.json`、`attachments.json` 和 `database-only.json`。两个进程日志在 `.local/implementation/restore-customer.log` 和 `.local/implementation/restore-ai.log`。应用读取验证覆盖客服与 AI；全栈流量切换、对象存储故障门禁和生产恢复目标需另行验收。
+
+## E18 附件就绪与 RustFS 故障恢复（2026-11-25）
+
+在 Windows 11、Temurin 25.0.5、Python 3.11.5 和隔离 PostgreSQL 17/RustFS 上运行 `python scripts/test-database-restore.py --with-attachments --with-services`。夹具暂停已经恢复的 RustFS 目标容器，客服服务与 AI 进程继续运行。实现、配置和回退见 [ADR-0077](decisions/0077-attachment-readiness.md)。
+
+- 暂停期间，附件就绪和两个附件读取返回 HTTP 503。读取响应使用业务码 `50308`、`Cache-Control: no-store` 与 `Retry-After: 5`。客服存活、通用就绪、综合健康和 AI 就绪均返回 HTTP 200。已授权坐席成功读取 1 条原聊天记录，匿名附件读取仍被拒绝。
+- 恢复容器后，同一客服进程重新通过 3 次附件读取和 5 次权限拒绝，并复核文件字节、MIME 类型及缓存语义。演练结束重新核验 103 张表的结构契约、六库行数及任务和用量记录、5 个对象及原附件引用。数据库结构故障的既有回归继续通过。
+- 本地单次演练观测到，附件探测在暂停期间耗时 2,021.860 ms，从恢复容器到读取和权限检查全部完成耗时 218.668 ms。两项均使用停写的合成样本。全后端 Maven `verify` 通过，新增 6 项 Java 回归全部通过。脚本测试共 73 项，其中 10 项依赖额外夹具而跳过。仅六库和仅六库加附件两种兼容模式均通过。
+
+原始报告保存在 `.local/implementation/e18-evidence/`，应用验收报告为 `with-services.json`。生产网络、流量切换以及写入结果不确定时的核销仍待验收。

@@ -158,8 +158,8 @@ def main(argv=None):
             from attachment_restore_fixture import (BUCKET, IMAGE, disposable_rustfs, live_references,
                                                     reject_corrupted_archive, restored_knowledge, seed_attachments,
                                                     verify_missing_reference_guard, verify_target_guards)
-            source_bucket, _ = stack.enter_context(disposable_rustfs())
-            target_bucket, storage_env = stack.enter_context(disposable_rustfs())
+            source_bucket, _, _ = stack.enter_context(disposable_rustfs())
+            target_bucket, storage_env, target_rustfs = stack.enter_context(disposable_rustfs())
             object_archive = stack.enter_context(TemporaryFile())
             seed_attachments(source, source_bucket)
             expected_refs = live_references(source)
@@ -243,13 +243,14 @@ def main(argv=None):
             report['combined_backup_ms'] = backup_ms
             report['combined_restore_and_verify_ms'] = restore_and_verify_ms
         if args.with_services:
-            report['services'] = verify_restored_services(target, target_env, passwords, storage_env, records, expected_projection[1])
+            report['services'] = verify_restored_services(target, target_env, passwords, storage_env, records,
+                                                          expected_projection[1], rustfs=target_rustfs)
             assert migrate_databases(target_env, verify=True) == verified
             assert {name: table_counts(target, name) for name in names} == expected_counts
             assert projection(target) == expected_projection
             assert live_references(target) == expected_refs and restored_knowledge(target) == expected_knowledge
             verify_objects(target_bucket, BUCKET, records)
-            report['schema_version'] = 'supportflow-restore-drill-v3'
+            report['schema_version'] = 'supportflow-restore-drill-v4'
             report['services']['post_repair_persistence_verified'] = True
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')

@@ -176,7 +176,7 @@ public class SessionAttachmentService {
         String mimeType = mimeOf(ext);
         try (InputStream in = file.getInputStream()) {
             objectStorage.upload(key, in, file.getSize(), mimeType);
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.error("聊天图片上传对象存储失败 tenant={} session={} error={}", tenantCode, sessionNo, e.getMessage());
             throw new BizException(50001, "图片上传失败：" + e.getMessage());
         }
@@ -230,7 +230,7 @@ public class SessionAttachmentService {
         }
         try (InputStream in = objectStorage.download(meta.getObjectKey())) {
             return new FileContent(meta.getFileName(), meta.getMimeType(), in.readAllBytes());
-        } catch (Exception e) {
+        } catch (IOException e) {
             throw new BizException(50001, "读取图片失败：" + e.getMessage());
         }
     }

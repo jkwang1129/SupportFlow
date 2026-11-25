@@ -15,6 +15,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.Locale;
@@ -82,7 +83,7 @@ public class BotAvatarService {
         String mimeType = mimeOf(ext);
         try (InputStream in = file.getInputStream()) {
             objectStorage.upload(objectKey, in, file.getSize(), mimeType);
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.error("头像上传对象存储失败 tenant={} error={}", tenant, e.getMessage());
             throw new BizException(50001, "头像上传失败，请稍后重试");
         }
@@ -124,7 +125,7 @@ public class BotAvatarService {
             return new FileContent(meta.getFileName(),
                     meta.getMimeType() == null ? "image/png" : meta.getMimeType(),
                     in.readAllBytes());
-        } catch (Exception e) {
+        } catch (IOException e) {
             throw new BizException(50001, "读取头像失败：" + e.getMessage());
         }
     }

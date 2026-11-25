@@ -6,10 +6,12 @@ import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import software.amazon.awssdk.awscore.AwsRequestOverrideConfiguration;
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.ResponseInputStream;
+import software.amazon.awssdk.core.exception.SdkClientException;
+import software.amazon.awssdk.core.exception.SdkException;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
@@ -18,6 +20,7 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
+import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -37,6 +40,8 @@ import java.time.Duration;
 public class RustFsObjectStorage implements ObjectStorage {
 
     private static final Logger log = LoggerFactory.getLogger(RustFsObjectStorage.class);
+    private static final AwsRequestOverrideConfiguration BUCKET_CHECK_TIMEOUT = AwsRequestOverrideConfiguration.builder()
+            .apiCallTimeout(Duration.ofSeconds(2)).apiCallAttemptTimeout(Duration.ofSeconds(1)).build();
 
     private final S3Client s3Client;
     private final String bucket;
@@ -78,7 +83,7 @@ public class RustFsObjectStorage implements ObjectStorage {
     public void init() {
         try {
             // 先探测桶是否存在，避免每次启动都做一次无谓的建桶请求
-            s3Client.headBucket(builder -> builder.bucket(bucket));
+            checkBucket();
             log.info("RustFS 初始化完成: endpoint={}, bucket={}", endpoint, bucket);
         } catch (S3Exception e) {
             if (e.statusCode() == 404) {
@@ -98,10 +103,23 @@ public class RustFsObjectStorage implements ObjectStorage {
         try {
             s3Client.createBucket(builder -> builder.bucket(bucket));
             log.info("RustFS 存储桶已创建: endpoint={}, bucket={}", endpoint, bucket);
-        } catch (S3Exception e) {
+        } catch (SdkException e) {
             log.warn("RustFS 存储桶创建失败，文件上传/下载将不可用: endpoint={}, bucket={}, error={}",
                     endpoint, bucket, e.getMessage());
         }
+    }
+
+    boolean bucketAvailable() {
+        try {
+            checkBucket();
+            return true;
+        } catch (SdkException unavailable) {
+            return false;
+        }
+    }
+
+    private void checkBucket() {
+        s3Client.headBucket(builder -> builder.bucket(bucket).overrideConfiguration(BUCKET_CHECK_TIMEOUT));
     }
 
     @Override
@@ -116,9 +134,7 @@ public class RustFsObjectStorage implements ObjectStorage {
                     RequestBody.fromInputStream(input, size));
             log.info("RustFS 上传成功: bucket={}, key={}, size={}", bucket, key, size);
         } catch (SdkException e) {
-            log.error("RustFS 上传失败: endpoint={}, bucket={}, key={}, error={}",
-                    endpoint, bucket, key, e.getMessage(), e);
-            throw new BizException(50001, "文件上传到对象存储失败，请稍后重试");
+            throw storageFailure("上传", e, "文件上传到对象存储失败，请稍后重试");
         }
     }
 
@@ -132,9 +148,7 @@ public class RustFsObjectStorage implements ObjectStorage {
             log.warn("RustFS 对象不存在: bucket={}, key={}", bucket, key);
             throw new BizException(40401, "文件不存在，请重新上传");
         } catch (SdkException e) {
-            log.error("RustFS 读取失败: endpoint={}, bucket={}, key={}, error={}",
-                    endpoint, bucket, key, e.getMessage(), e);
-            throw new BizException(50001, "文件读取失败，请稍后重试");
+            throw storageFailure("读取", e, "文件读取失败，请稍后重试");
         }
     }
 
@@ -144,10 +158,18 @@ public class RustFsObjectStorage implements ObjectStorage {
             s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
             log.info("RustFS 删除成功: bucket={}, key={}", bucket, key);
         } catch (SdkException e) {
-            log.error("RustFS 删除失败: endpoint={}, bucket={}, key={}, error={}",
-                    endpoint, bucket, key, e.getMessage(), e);
-            throw new BizException(50001, "文件删除失败，请稍后重试");
+            throw storageFailure("删除", e, "文件删除失败，请稍后重试");
         }
+    }
+
+    private BizException storageFailure(String operation, SdkException failure, String fallback) {
+        int status = failure instanceof S3Exception response ? response.statusCode() : 0;
+        log.warn("RustFS {}失败: type={}, status={}", operation, failure.getClass().getSimpleName(), status);
+        if (failure instanceof SdkClientException || failure instanceof NoSuchBucketException
+                || status == 403 || status == 429 || status >= 500) {
+            return new StorageUnavailableException();
+        }
+        return new BizException(50001, fallback);
     }
 
     @Override

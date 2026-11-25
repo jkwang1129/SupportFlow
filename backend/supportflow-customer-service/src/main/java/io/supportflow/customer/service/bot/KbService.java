@@ -25,6 +25,7 @@ import io.supportflow.customer.mapper.KbCategoryMapper;
 import io.supportflow.customer.mapper.KbChunkMapper;
 import io.supportflow.customer.mapper.KbDocumentMapper;
 import io.supportflow.customer.storage.ObjectStorage;
+import io.supportflow.customer.storage.StorageUnavailableException;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,6 +34,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
@@ -404,7 +406,7 @@ public class KbService {
         String objectKey = KB_FILE_PREFIX + "/" + tenant + "/" + fileId + "_" + safeName;
         try (InputStream in = file.getInputStream()) {
             objectStorage.upload(objectKey, in, file.getSize(), mimeType);
-        } catch (Exception e) {
+        } catch (IOException e) {
             throw new BizException(50001, "文件上传到对象存储失败：" + e.getMessage());
         }
         fileMetaMapper.insert(FileMeta.builder()
@@ -468,6 +470,9 @@ public class KbService {
             byte[] payload;
             try (InputStream in = objectStorage.download(meta.getObjectKey())) {
                 payload = readAll(in);
+            } catch (StorageUnavailableException unavailable) {
+                markFailed(tenant, doc, unavailable.getMessage());
+                throw unavailable;
             } catch (Exception e) {
                 markFailed(tenant, doc, "从对象存储读取原文件失败：" + e.getMessage());
                 throw new BizException(50001, "读取原文件失败，请稍后重试");

@@ -15,7 +15,7 @@ from time import monotonic, perf_counter, sleep, time
 import httpx
 from psycopg.conninfo import make_conninfo
 
-from attachment_restore_fixture import AVATAR_ID, AVATAR_KEY, CHAT_IMAGE_ID, CHAT_IMAGE_KEY
+from attachment_restore_fixture import AVATAR_ID, AVATAR_KEY, CHAT_IMAGE_ID, CHAT_IMAGE_KEY, paused_rustfs
 from ticket_approval_fixture import _fixture_token
 
 
@@ -24,6 +24,7 @@ CHAT_PATH = f'/api/customer/sessions/attachments/{CHAT_IMAGE_ID}'
 AVATAR_PATH = f'/api/customer/bot/avatar/{AVATAR_ID}'
 JAVA_READY = '/actuator/health/readiness'
 JAVA_LIVE = '/actuator/health/liveness'
+ATTACHMENTS_READY = '/actuator/attachmentreadiness'
 AI_READY = '/api/ai/health/ready'
 AI_LIVE = '/api/ai/health/live'
 OTHER_SESSION = 'RESTORE_SESSION_OTHER'
@@ -128,7 +129,38 @@ def verify_runs(client, base, secret, rows):
     return {'runtime_reads': len(rows), 'runtime_denials': 2 * len(rows)}
 
 
-def verify_restored_services(connect, target_env, passwords, storage_env, records, rows):
+def verify_storage_outage(http, customer, customer_base, ai_base, jwt_key, records, rustfs):
+    headers = {'Authorization': _fixture_token(jwt_key, 'RESTORE_A', 1)}
+    params = {'sessionNo': 'RESTORE_SESSION_1'}
+    with paused_rustfs(rustfs):
+        started = perf_counter()
+        probe = http.get(customer_base + ATTACHMENTS_READY)
+        probe_ms = round((perf_counter() - started) * 1000, 3)
+        assert probe.status_code == 503 and probe.json() == {'status': 'DOWN'}
+        for path in (JAVA_LIVE, JAVA_READY, '/actuator/health'):
+            assert http.get(customer_base + path).status_code == 200
+        assert http.get(ai_base + AI_READY).status_code == 200
+        history = http.get(customer_base + '/api/customer/sessions/RESTORE_SESSION_1/messages', headers=headers)
+        assert history.status_code == 200 and history.json()['code'] == 0
+        assert [message['content'] for message in history.json()['data']] == ['synthetic restore drill']
+        unauthorized = http.get(customer_base + CHAT_PATH, params=params)
+        assert unauthorized.status_code == 200 and unauthorized.json()['code'] == 40100
+        for path in (CHAT_PATH, AVATAR_PATH):
+            response = http.get(customer_base + path, params=params if path == CHAT_PATH else None, headers=headers)
+            assert response.status_code == 503 and response.headers['retry-after'] == '5'
+            assert response.headers['cache-control'] == 'no-store'
+            error = response.json()
+            assert (error['code'], error['message'], error['data']) == (50308, '附件存储暂不可用', None)
+            assert error.keys() <= {'code', 'message', 'data', 'requestId', 'timestamp'}
+    resumed = perf_counter()
+    wait_ready(http, ((customer, customer_base + ATTACHMENTS_READY),))
+    restored = verify_media(http, customer_base, jwt_key, records)
+    return {'failed_probe_ms': probe_ms, 'probe_during_outage': 503, 'core_probes_ok': 4, 'text_reads_ok': 1,
+            'attachment_reads_unavailable': 2, 'anonymous_denials': 1, 'post_resume_checks': restored,
+            'resume_to_verified_reads_ms': round((perf_counter() - resumed) * 1000, 3)}
+
+
+def verify_restored_services(connect, target_env, passwords, storage_env, records, rows, *, rustfs):
     java_home = os.environ.get('JAVA_HOME')
     java = str(Path(java_home) / 'bin' / ('java.exe' if os.name == 'nt' else 'java')) if java_home else 'java'
     jars = list((ROOT / 'backend/supportflow-customer-service/target').glob('*.jar'))
@@ -141,6 +173,8 @@ def verify_restored_services(connect, target_env, passwords, storage_env, record
                         SUPPORTFLOW_CUSTOMER_DB_PASSWORD=passwords['CUSTOMER'],
                         SUPPORTFLOW_CUSTOMER_PLATFORM_DB_PASSWORD=passwords['CUSTOMER_PLATFORM'],
                         SUPPORTFLOW_JWT_SECRET=jwt_key, SUPPORTFLOW_BOT_ENABLED='false',
+                        SUPPORTFLOW_RUSTFS_CONNECT_TIMEOUT='1000', SUPPORTFLOW_RUSTFS_READ_TIMEOUT='1000',
+                        SUPPORTFLOW_RUSTFS_WRITE_TIMEOUT='1000',
                         SUPPORTFLOW_BILLING_USAGE_REPORT_INITIAL_DELAY_MS='600000')
 
     def dsn(database, account):
@@ -168,6 +202,7 @@ def verify_restored_services(connect, target_env, passwords, storage_env, record
         customer_base, ai_base = f'http://127.0.0.1:{customer_port}', f'http://127.0.0.1:{ai_port}'
         wait_ready(http, ((customer, customer_base+JAVA_READY), (ai, ai_base+AI_READY)))
         startup_ms = round((perf_counter() - started) * 1000, 3)
+        assert http.get(customer_base + ATTACHMENTS_READY).json() == {'status': 'UP'}
         before = verify_media(http, customer_base, jwt_key, by_key) | verify_runs(http, ai_base, ai_key, rows)
 
         with connect('customer_db') as database:
@@ -177,6 +212,7 @@ def verify_restored_services(connect, target_env, passwords, storage_env, record
                 assert http.get(customer_base+JAVA_LIVE).status_code == 200
                 assert http.get(ai_base+AI_LIVE).status_code == 200
                 assert http.get(customer_base+JAVA_READY).status_code == 503
+                assert http.get(customer_base + ATTACHMENTS_READY).status_code == 503
                 assert http.get(ai_base+AI_READY).status_code == 503
                 response = http.get(customer_base+CHAT_PATH, params={'sessionNo': 'RESTORE_SESSION_1'},
                                     headers={'Authorization': _fixture_token(jwt_key, 'RESTORE_A', 1)})
@@ -189,6 +225,8 @@ def verify_restored_services(connect, target_env, passwords, storage_env, record
         wait_ready(http, ((customer, customer_base+JAVA_READY), (ai, ai_base+AI_READY)))
         after = verify_media(http, customer_base, jwt_key, by_key) | verify_runs(http, ai_base, ai_key, rows)
         assert before == after
+        repair_ms = round((perf_counter() - repaired) * 1000, 3)
+        storage = verify_storage_outage(http, customer, customer_base, ai_base, jwt_key, by_key, rustfs)
         return {'first_read_checks': before, 'post_repair_read_checks': after, 'live_during_fault': 2,
                 'unready_during_fault': 2, 'business_reads_blocked_during_fault': 2,
-                'startup_to_ready_ms': startup_ms, 'repair_to_verified_reads_ms': round((perf_counter()-repaired)*1000, 3)}
+                'startup_to_ready_ms': startup_ms, 'repair_to_verified_reads_ms': repair_ms, 'object_storage': storage}

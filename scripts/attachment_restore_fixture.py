@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 from io import BytesIO
 import os
+import re
 import secrets
 import subprocess
 from time import monotonic, sleep
@@ -58,12 +59,23 @@ def disposable_rustfs():
             "SUPPORTFLOW_RUSTFS_ENDPOINT": "127.0.0.1", "SUPPORTFLOW_RUSTFS_PORT": str(port),
             "SUPPORTFLOW_RUSTFS_ACCESS_KEY": env["RUSTFS_ACCESS_KEY"],
             "SUPPORTFLOW_RUSTFS_SECRET_KEY": env["RUSTFS_SECRET_KEY"], "SUPPORTFLOW_RUSTFS_BUCKET": BUCKET,
-        }
+        }, name
     finally:
         if client is not None:
             client.close()
         subprocess.run(["docker", "rm", "--force", "--volumes", name], check=True,
                        stdout=subprocess.DEVNULL, timeout=30)
+
+
+@contextmanager
+def paused_rustfs(name):
+    if not re.fullmatch(r"supportflow-object-restore-[0-9a-f]{12}", name):
+        raise ValueError("Pause requires a disposable restore container")
+    subprocess.run(["docker", "pause", name], check=True, stdout=subprocess.DEVNULL, timeout=20)
+    try:
+        yield
+    finally:
+        subprocess.run(["docker", "unpause", name], check=True, stdout=subprocess.DEVNULL, timeout=20)
 
 
 def seed_attachments(connect, client):
