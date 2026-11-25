@@ -184,25 +184,6 @@ public class KbAiClient {
         }
     }
 
-    /**
-     * 删除某个文档的全部切片（文档删除 / 下线时调用）。
-     */
-    public void deleteChunks(String tenantCode, long docId) {
-        try {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(baseUrl + "/api/ai/v1/kb/documents/" + docId
-                            + "?tenant_code=" + enc(tenantCode)))
-                    .timeout(Duration.ofSeconds(30))
-                    .header(TenantContext.HEADER_TENANT_CODE, tenantCode)
-                    .DELETE()
-                    .build();
-            httpClient.send(AiRequestSigner.sign(request, aiSecret, "customer", tenantCode), HttpResponse.BodyHandlers.discarding());
-        } catch (Exception e) {
-            // 删切片失败不该拦住删文档：切片留着也只是查不到（文档已软删）
-            log.warn("删除知识切片失败 tenant={} docId={} errorType={}", tenantCode, docId, e.getClass().getSimpleName());
-        }
-    }
-
     /** 健康检查结果缓存：总览页每次刷新都探一次活，会白等一个 RTT（AI 服务挂了要等 5 秒） */
     private volatile boolean healthCache = false;
     private volatile long healthCacheAt = 0L;

@@ -76,7 +76,8 @@ abstract class SessionPostgresFixture {
         factory.setConfiguration(configuration);
         factory.setPlugins(new MybatisPlusConfig().mybatisPlusInterceptor());
         factory.setMapperLocations(new ClassPathResource("mapper/SessionMapper.xml"),
-                new ClassPathResource("mapper/SessionMessageMapper.xml"), new ClassPathResource("mapper/SessionEventMapper.xml"));
+                new ClassPathResource("mapper/SessionMessageMapper.xml"), new ClassPathResource("mapper/SessionEventMapper.xml"),
+                new ClassPathResource("mapper/KbDocumentMapper.xml"), new ClassPathResource("mapper/KbChunkMapper.xml"));
         sql = new SqlSessionTemplate(factory.getObject());
         realSessions = sql.getMapper(SessionMapper.class);
         sessions = mock(SessionMapper.class, delegatesTo(realSessions));

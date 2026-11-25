@@ -1884,3 +1884,13 @@ Windows 11、Python 3.11.5、隔离 PostgreSQL 17。AI 016 注册独立维护能
 离线替身也命中 4/4 道建议题，其余 8 题无误触发。RAG 专项 113 项通过，覆盖伪造或否定原文、范围差异、区间、证据失效、默认配置和访客转人工动作。全 AI 测试 1,233 项通过，498 项依赖额外夹具而跳过。RAG 门禁分项为拒答 24/24、引用 10/10、逐句原文 20/20。脚本测试共 76 项，其中 10 项依赖额外夹具而跳过。
 
 原始逐题输出与模型用量见 `.local/implementation/e22-holdout-live.json`、`e22-holdout-offline.json`。本地测试在提交前执行，报告同时记录基准提交和已修改源码的 SHA-256。CI 产物 `rag-policy-review-benchmark.json` 记录对应提交的离线对照。RAG 仅覆盖召回范围与规则支持的字面数值冲突，实际坐席接通和更广业务条件仍待验收。
+
+## E23 知识库写入与检索版本竞争（2026-11-25）
+
+Windows 11、Temurin 25.0.5、Python 3.11.5、隔离 PostgreSQL 17。受限客服账号运行真实 Java 服务和 Mapper。测试用 `pg_blocking_pids` 确认后到的事务已经排队，再释放前一个事务。索引 HTTP 调用使用替身，切片替换由另一笔 PostgreSQL 事务提交。设计与回滚见 [ADR-0082](decisions/0082-kb-document-write-serialization.md)。
+
+- 基于 `8a026bb` 的实现新增回归后出现两处预期失败。并发编辑将退款期限从 5 改为 2 个工作日，旧重新索引仍把 5 个工作日写回切片。另一项测试在发布等待期间提交索引失败状态，旧逻辑仍完成了发布。
+- 加入文档锁后，两项并发回归通过。删除回归随后捕获到多余的 AI 请求。删除改为在单一数据库事务中提交软删除与切片清理，数据库中无剩余切片。其他租户和已软删文档的访问失败，且不会调用索引服务。
+- 最终 177 项 Java 专项（含新增 4 项生命周期回归）和 34 项 AI 知识库用例均通过。索引由替身执行。并发样本用于验证写入顺序与隔离，未测量生产锁等待分布。
+
+原始输出为 `.local/implementation/e23-kb-lifecycle-before.xml`、`e23-kb-lifecycle-lock-only.xml`、`e23-kb-lifecycle-after.xml` 和 `e23-knowledge-isolation.xml`。运行命令为 `python scripts/test-customer-rls.py --with-ai`。本批覆盖并发写入次序。跨服务提交失败后的自动核销以及历史索引版本回滚仍需独立验收。

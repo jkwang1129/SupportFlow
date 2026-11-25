@@ -345,7 +345,7 @@ public class KbService {
     @Transactional
     public DocVO update(LoginUser user, long id, String title, Long categoryId, String content, String summary) {
         String tenant = tenantOf(user);
-        KbDocument doc = requireDoc(tenant, id);
+        KbDocument doc = requireDocForWrite(tenant, id);
         // 只有"真的传了非空正文、且和库里不一样"才算正文改动。
         // 改分类/标题这种元信息时，前端会带一个空正文回来（导入型文档的正文在切片里），
         // 以前会把它当成"正文被清空"去重新索引，于是报"正文为空，没有可索引的内容"。
@@ -454,7 +454,7 @@ public class KbService {
     @Transactional
     public DocVO reindex(LoginUser user, long id) {
         String tenant = tenantOf(user);
-        KbDocument doc = requireDoc(tenant, id);
+        KbDocument doc = requireDocForWrite(tenant, id);
         // 有手工正文（或用户把导入文档的正文改过）时以正文为准，
         // 否则重新索引会把改过的内容用原文件覆盖回去
         if (doc.getContent() != null && !doc.getContent().isBlank()) {
@@ -491,7 +491,7 @@ public class KbService {
         if (status < 1 || status > 4) {
             throw new BizException(40001, "文档状态取值 1-4");
         }
-        KbDocument doc = requireDoc(tenant, id);
+        KbDocument doc = requireDocForWrite(tenant, id);
         if (status == STATUS_PUBLISHED && Integer.valueOf(INDEX_DONE).equals(doc.getIndexStatus()) == false) {
             throw new BizException(40001, "文档还没索引成功，发布后检索不到，请先重新索引");
         }
@@ -511,7 +511,7 @@ public class KbService {
     @Transactional
     public void delete(LoginUser user, long id) {
         String tenant = tenantOf(user);
-        KbDocument doc = requireDoc(tenant, id);
+        KbDocument doc = requireDocForWrite(tenant, id);
         KbDocument update = new KbDocument();
         update.setId(doc.getId());
         update.setDeleted(true);
@@ -519,7 +519,6 @@ public class KbService {
         update.setEditor(String.valueOf(user.userId()));
         documentMapper.updateById(update);
         chunkMapper.deleteByDoc(tenant, id);
-        aiClient.deleteChunks(tenant, id);
         log.info("知识文档已删除 tenant={} docId={} title={}", tenant, id, doc.getTitle());
     }
 
@@ -584,7 +583,20 @@ public class KbService {
     }
 
     private KbDocument requireDoc(String tenant, long id) {
-        KbDocument doc = documentMapper.selectById(id);
+        return checkDocument(tenant, documentMapper.selectById(id));
+    }
+
+    private KbDocument requireDocForWrite(String tenant, long id) {
+        // Read the body and readiness after waiting for the preceding write to commit.
+        KbDocument doc = documentMapper.selectOne(Wrappers.<KbDocument>lambdaQuery()
+                .eq(KbDocument::getTenantCode, tenant)
+                .eq(KbDocument::getId, id)
+                .eq(KbDocument::getDeleted, false)
+                .last("FOR NO KEY UPDATE"));
+        return checkDocument(tenant, doc);
+    }
+
+    private KbDocument checkDocument(String tenant, KbDocument doc) {
         if (doc == null || !tenant.equals(doc.getTenantCode()) || Boolean.TRUE.equals(doc.getDeleted())) {
             throw new BizException(40401, "文档不存在");
         }
