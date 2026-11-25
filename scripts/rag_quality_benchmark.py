@@ -50,16 +50,17 @@ def document_status(document, as_of):
     return 4
 
 
-def seed_documents(connection, dataset, db_ids):
+def seed_documents(connection, dataset, db_ids, *, vectors=None, embedding_source='local-hash'):
     for document in dataset['documents']:
         doc_id = db_ids[document['id']]
         status = document_status(document, dataset['as_of'])
         index_status = 3 if document['index_status'] == 'ready' else 4
         connection.execute('''INSERT INTO kb_document (id,tenant_code,doc_no,title,status,index_status)
             VALUES (%s,%s,%s,%s,%s,%s)''', (doc_id, document['tenant'], document['id'], document['title'], status, index_status))
-        # Each small synthetic document is one fixture chunk. The local keyword path does not read its vector.
-        connection.execute('''INSERT INTO kb_chunk (id,tenant_code,doc_id,chunk_no,content,embedding_model)
-            VALUES (%s,%s,%s,0,%s,'local-hash')''', (doc_id, document['tenant'], doc_id, document['text']))
+        vector = None if vectors is None else store.to_pgvector(vectors[document['id']])
+        # Each small synthetic document is one fixture chunk.
+        connection.execute('''INSERT INTO kb_chunk (id,tenant_code,doc_id,chunk_no,content,embedding,embedding_model)
+            VALUES (%s,%s,%s,0,%s,%s::vector,%s)''', (doc_id, document['tenant'], doc_id, document['text'], vector, embedding_source))
 
 
 def rag_input(case, db_ids):

@@ -76,3 +76,30 @@ class QwenGenerationTest(unittest.TestCase):
                                             'unauthorized_document_ids': [], 'forbidden_output_markers': []}}
         result = aggregate([row, row | {'provider_tokens': self.response['usage']}], live=True)['provider_tokens']
         self.assertEqual({'attempted': 2, 'with_usage': 1, 'unknown': 1, 'observed': self.response['usage']}, result)
+
+
+class QwenEmbeddingTest(unittest.TestCase):
+    def test_embedding_limits_preflight_all_groups_before_external_calls(self):
+        with patch.object(provider, '_send_embedding_json', new=AsyncMock()) as send:
+            with self.assertRaisesRegex(ValueError, 'request count'):
+                asyncio.run(provider.encode_qwen_groups({'docs': ['small'] * 101}, 'fixture'))
+            with self.assertRaisesRegex(ValueError, 'payload'):
+                asyncio.run(provider.encode_qwen_groups({'docs': ['small'], 'queries': ['长' * 4000]}, 'fixture'))
+        send.assert_not_awaited()
+
+    def test_receipts_record_usage_without_retaining_credentials_or_embeddings(self):
+        vector = [1.0] + [0.0] * (provider.EMBEDDING_DIM - 1)
+        response = {'data': [{'index': 0, 'embedding': vector}], 'usage': {'total_tokens': 4}}
+        with patch.object(provider, '_send_embedding_json', new=AsyncMock(return_value=response)) as send:
+            groups, receipts = asyncio.run(provider.encode_qwen_groups({'docs': ['sample']}, 'fixture-private-key'))
+        self.assertEqual({'docs': [vector]}, groups)
+        self.assertEqual(4, receipts[0]['total_tokens'])
+        self.assertEqual(64, len(receipts[0]['vector_sha256']))
+        self.assertNotIn('fixture-private-key', repr(receipts))
+        self.assertEqual(provider.BASE_URL, send.await_args.args[0]['base_url'])
+
+    def test_invalid_embedding_aborts_later_groups(self):
+        with patch.object(provider, '_send_embedding_json', new=AsyncMock(return_value={'data': []})) as send:
+            with self.assertRaisesRegex(provider.ModelCallFailure, 'EMBEDDING_OUTPUT_INVALID'):
+                asyncio.run(provider.encode_qwen_groups({'docs': ['first'], 'queries': ['second']}, 'fixture'))
+        self.assertEqual(1, send.await_count)
