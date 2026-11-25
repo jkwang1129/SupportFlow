@@ -12,6 +12,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
+from uuid import UUID
 
 import psycopg
 from psycopg.rows import dict_row
@@ -81,19 +82,14 @@ def replace_chunks(
     chunks: list,
     vectors: list[list[float]],
     embedding_model: str,
+    *,
+    attempt_id: UUID | None = None,
 ) -> int:
-    """重建一份文档的全部切片：先删旧的，再批量写新的。
-
-    做成"先删后写"是为了重复索引时不出重复数据——重新上传同一份文档，
-    索引结果应当覆盖上一次，而不是叠一份。
-    """
+    """Replace legacy chunks or stage a generation for an authorized document write."""
     if len(chunks) != len(vectors):
         raise ValueError(f"切片数与向量数不一致：{len(chunks)} vs {len(vectors)}")
     with tenant_connection(tenant_code) as conn, conn.cursor() as cur:
         _lock_chunk_mutation(conn, tenant_code, doc_id)
-        cur.execute("DELETE FROM kb_chunk WHERE tenant_code = %s AND doc_id = %s", (tenant_code, doc_id))
-        if not chunks:
-            return 0
         rows = [
             (
                 next_id(),
@@ -108,14 +104,29 @@ def replace_chunks(
             )
             for chunk, vector in zip(chunks, vectors)
         ]
-        cur.executemany(
-            """
-            INSERT INTO kb_chunk
-                (id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector, %s)
-            """,
-            rows,
-        )
+        if attempt_id is None:
+            cur.execute("DELETE FROM kb_chunk WHERE tenant_code = %s AND doc_id = %s", (tenant_code, doc_id))
+            cur.executemany("""
+                INSERT INTO kb_chunk
+                    (id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector, %s)
+                """, rows)
+        else:
+            cur.execute("""
+                DELETE FROM kb_chunk_stage WHERE tenant_code=%s AND doc_id=%s AND attempt_id=%s
+                """, (tenant_code, doc_id, attempt_id))
+            cur.execute("""
+                DELETE FROM kb_chunk_stage WHERE tenant_code=%s AND ctid IN (
+                    SELECT ctid FROM kb_chunk_stage WHERE tenant_code=%s
+                      AND create_time < CURRENT_TIMESTAMP - interval '1 day'
+                    ORDER BY create_time LIMIT 256
+                )
+                """, (tenant_code, tenant_code))
+            cur.executemany("""
+                INSERT INTO kb_chunk_stage
+                    (id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model, attempt_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::vector, %s, %s)
+                """, [(*row, attempt_id) for row in rows])
         return len(rows)
 
 

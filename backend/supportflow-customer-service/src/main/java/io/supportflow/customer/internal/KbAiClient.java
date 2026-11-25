@@ -25,6 +25,7 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * supportflow-ai 知识库客户端：解析 / 切块 / 向量化 / 检索都在 Python 侧做，这里只负责调。
@@ -75,16 +76,17 @@ public class KbAiClient {
      *
      * @return 索引结果（切片数、字符数、向量来源、前几块预览）
      */
-    public IndexResult indexFile(String tenantCode, long docId, String fileName, byte[] payload) {
+    public IndexResult indexFile(String tenantCode, long docId, UUID attemptId, String fileName, byte[] payload) {
         billingUsageCollector.countAiCall(tenantCode);
         if (payload == null || payload.length == 0) {
             // 明确挡住：以前这里会发出一个 0 字节的请求，AI 服务只能回一句"文件是空的"，
             // 光看那句提示根本猜不到是上传环节丢的内容
             throw new BizException(40001, "上传的文件是空的，请重新选择文件");
         }
-        String url = baseUrl + "/api/ai/v1/kb/index"
+        String url = baseUrl + "/api/ai/v1/kb/stage-index"
                 + "?tenant_code=" + enc(tenantCode)
                 + "&doc_id=" + docId
+                + "&attempt_id=" + attemptId
                 + "&file_name=" + enc(fileName);
         log.info("调用知识库索引 tenant={} docId={} bytes={}", tenantCode, docId, payload.length);
         try {
@@ -110,13 +112,14 @@ public class KbAiClient {
     /**
      * 索引一段正文（手工录入 / 编辑后的文档）。
      */
-    public IndexResult indexText(String tenantCode, long docId, String content) {
+    public IndexResult indexText(String tenantCode, long docId, UUID attemptId, String content) {
         billingUsageCollector.countAiCall(tenantCode);
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("docId", docId);
         body.put("content", content);
         try {
-            String response = postJson(baseUrl + "/api/ai/v1/kb/index-text?tenant_code=" + enc(tenantCode),
+            String response = postJson(baseUrl + "/api/ai/v1/kb/stage-index-text?tenant_code=" + enc(tenantCode)
+                            + "&attempt_id=" + attemptId,
                     body, tenantCode, "index-text", 40001);
             return readResult(response);
         } catch (BizException e) {

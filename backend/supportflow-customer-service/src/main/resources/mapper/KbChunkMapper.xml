@@ -19,4 +19,20 @@
            AND doc_id = #{docId}
     </delete>
 
+    <delete id="deleteStagedByDoc">
+        DELETE FROM kb_chunk_stage WHERE tenant_code = #{tenantCode} AND doc_id = #{docId}
+    </delete>
+
+    <insert id="activateAttempt">
+        WITH staged AS (
+            DELETE FROM kb_chunk_stage
+             WHERE tenant_code = #{tenantCode} AND doc_id = #{docId}
+               AND attempt_id = CAST(#{attemptId} AS uuid)
+            RETURNING id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model
+        )
+        INSERT INTO kb_chunk (id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model)
+        SELECT id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model
+          FROM staged
+    </insert>
+
 </mapper>

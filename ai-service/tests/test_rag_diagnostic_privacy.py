@@ -139,7 +139,7 @@ def test_index_api_does_not_log_private_filename(monkeypatch,caplog):
 @pytest.mark.parametrize('engine',['builtin','llama'])
 def test_index_success_diagnostics_hide_filename_but_keep_result_metadata(monkeypatch,caplog,engine):
     chunk=SimpleNamespace(index=0,content='safe policy',char_count=11,token_count=2)
-    monkeypatch.setattr(store,'replace_chunks',lambda *a:1)
+    monkeypatch.setattr(store,'replace_chunks',lambda *a, **kw:1)
     monkeypatch.setattr(embedding,'embed_texts',lambda *a,**k:([[1]],'local-hash'))
     if engine=='builtin':
         monkeypatch.setattr(pipeline,'get_settings',lambda:SimpleNamespace(kb_max_file_mb=1,kb_chunk_size=100,kb_chunk_overlap=0))

@@ -164,7 +164,7 @@ def test_restrictive_policy_still_denies_cross_tenant_after_accidental_broad_per
 @pytest.mark.parametrize('unsafe,restore',[('LOGIN','NOLOGIN'),('BYPASSRLS','NOBYPASSRLS'),('SUPERUSER','NOSUPERUSER'),
     ('CREATEDB','NOCREATEDB'),('CREATEROLE','NOCREATEROLE'),('REPLICATION','NOREPLICATION')])
 def test_migration_rejects_elevated_customer_capability_before_schema_changes(unsafe,restore):
-    migration=load_plan()['customer_db'][-1];assert migration.version=='009'
+    migration = next(item for item in load_plan()['customer_db'] if item.version == '009')
     with admin() as db:
         db.execute('ALTER ROLE supportflow_customer_tenant '+unsafe)
         try:
@@ -174,7 +174,7 @@ def test_migration_rejects_elevated_customer_capability_before_schema_changes(un
 
 @pytest.mark.parametrize('fault',['membership','ownership'])
 def test_migration_rejects_role_membership_or_ownership_before_schema_changes(fault):
-    migration=load_plan()['customer_db'][-1]
+    migration = next(item for item in load_plan()['customer_db'] if item.version == '009')
     with admin() as db:
         if fault=='membership':db.execute('GRANT supportflow_platform_access TO supportflow_customer_tenant')
         else:db.execute('CREATE TABLE receipt_owner_probe(id int); ALTER TABLE receipt_owner_probe OWNER TO supportflow_customer_tenant')

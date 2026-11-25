@@ -172,7 +172,7 @@ def main():
             with psycopg.connect(dsn(database),autocommit=True) as connection:
                 applied=[]
                 if database=='customer_db':
-                    assert plan[-1].version=='009'
+                    assert plan[-1].version=='010'
                     applied=run_plan(connection,plan[:6])["applied"]
                     read=existing_runtime_source(connection)
                     before=read()
@@ -253,7 +253,7 @@ def main():
                     assert connection.execute('SELECT * FROM agent_model_quota').fetchone()==('PAYLOAD_UP',4,88,12,None)
                     print('AI 012 -> 013 retained daily quota; monthly policy defaults to NULL',flush=True)
                     connection.execute("UPDATE agent_model_quota SET monthly_token_limit=1000 WHERE tenant_code='PAYLOAD_UP'")
-                first_plan=plan[:14] if database=='ai_db' else plan
+                first_plan={'ai_db': plan[:14], 'customer_db': plan[:9]}.get(database, plan)
                 result=run_plan(connection,first_plan)
                 assert applied+result["applied"]==[migration.version for migration in first_plan]
                 if database=='customer_db':
@@ -273,6 +273,10 @@ def main():
                         finally:connection.execute(f'ALTER ROLE supportflow_kb_tenant {restore}')
                     print('007 -> 008 preserved existing business/source/draft/chunk data; granted only index_status SELECT; 3 unsafe capability states rejected',flush=True)
                     print('008 -> 009 preserved every existing ticket/source/message/knowledge field; immutable ticket receipt initially empty; old global ticket PK retained',flush=True)
+                    upgrade010=run_plan(connection,plan)
+                    assert upgrade010['applied']==['010'] and read_kb()==before_kb and read_ticket()==before_ticket
+                    assert connection.execute('SELECT count(*) FROM kb_chunk_stage').fetchone()==(0,)
+                    print('009 -> 010 preserved existing knowledge and ticket data; isolated index staging starts empty',flush=True)
                 if database=='ai_db':
                     assert result['applied']==['014'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
                     assert read_approval()==before_approval

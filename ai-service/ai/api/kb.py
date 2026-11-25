@@ -23,6 +23,7 @@ import time
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field,field_validator
 from pydantic.alias_generators import to_camel
+from uuid import UUID
 
 from ..core.trace import require_trace_id
 from ..rag import pipeline, store
@@ -66,6 +67,11 @@ def _fail(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail="知识库处理失败，请稍后重试。")
 
 
+def require_index_attempt(attempt_id: UUID = Query(...)) -> None:
+    """Require a UUID on the staging routes before the indexing handler runs."""
+
+
+@router.post("/stage-index", dependencies=[Depends(require_index_attempt)])
 @router.post("/index")
 async def index_file(
     request: Request,
@@ -74,6 +80,7 @@ async def index_file(
     file_name: str = Query(alias="file_name", min_length=1, max_length=255),
     chunk_size: int | None = Query(default=None, alias="chunk_size"),
     chunk_overlap: int | None = Query(default=None, alias="chunk_overlap"),
+    attempt_id: UUID | None = Query(default=None),
     trace_id: str = Depends(require_trace_id),
 ) -> dict:
     """接收文件原始字节 → 解析 → 切块 → 向量化 → 落库。"""
@@ -97,6 +104,7 @@ async def index_file(
             payload=payload,
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+            attempt_id=attempt_id,
         )
     except Exception as exc:  # noqa: BLE001
         raise _fail(exc) from None
@@ -106,10 +114,12 @@ async def index_file(
     return _result_payload(result)
 
 
+@router.post("/stage-index-text", dependencies=[Depends(require_index_attempt)])
 @router.post("/index-text")
 async def index_text(
     body: IndexTextRequest,
     tenant_code: str = Query(alias="tenant_code", min_length=1),
+    attempt_id: UUID | None = Query(default=None),
     trace_id: str = Depends(require_trace_id),
 ) -> dict:
     """手工录入的正文：不用解析文件，直接切块索引。"""
@@ -123,6 +133,7 @@ async def index_text(
             content=body.content,
             chunk_size=body.chunk_size,
             chunk_overlap=body.chunk_overlap,
+            attempt_id=attempt_id,
         )
     except Exception as exc:  # noqa: BLE001
         raise _fail(exc) from None

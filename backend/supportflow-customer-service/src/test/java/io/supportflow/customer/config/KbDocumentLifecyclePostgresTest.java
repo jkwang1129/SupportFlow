@@ -14,7 +14,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
 import java.time.Duration;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -52,6 +55,7 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
     void removeDocument() {
         if (documentId == 0) return;
         scoped(() -> {
+            jdbc.update("DELETE FROM kb_chunk_stage WHERE doc_id=?", documentId);
             jdbc.update("DELETE FROM kb_chunk WHERE doc_id=?", documentId);
             return jdbc.update("DELETE FROM kb_document WHERE id=?", documentId);
         });
@@ -62,15 +66,14 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
         var updated = new CountDownLatch(1);
         var release = new CountDownLatch(1);
         var reindexPid = new CompletableFuture<Integer>();
-        when(ai.indexText(eq("TENANT_A"), eq(documentId), anyString())).thenAnswer(call -> {
-            String body = call.getArgument(2);
+        when(ai.indexText(eq("TENANT_A"), eq(documentId), any(UUID.class), anyString())).thenAnswer(call -> {
+            String body = call.getArgument(3);
             if (updated.getCount() != 0) {
                 updated.countDown();
                 assertTrue(release.await(5, TimeUnit.SECONDS), "edit did not resume");
             }
-            // The indexer commits to the chunk table on a separate connection.
-            CompletableFuture.runAsync(() -> replaceChunk(body)).get(5, TimeUnit.SECONDS);
-            return new IndexResult(Long.toString(documentId), "", body.length(), 1, 0, "fixture", "fixture", List.of());
+            stageChunk(call.getArgument(2), body);
+            return indexResult(body, 1);
         });
         try (var workers = Executors.newFixedThreadPool(2)) {
             var edit = workers.submit(() -> tx(() -> knowledge.update(EDITOR, documentId, null, null, NEW_POLICY, null)));
@@ -92,7 +95,7 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
                 "SELECT content FROM kb_document WHERE id=?", String.class, documentId)));
         assertEquals(NEW_POLICY, scoped(() -> jdbc.queryForObject(
                 "SELECT content FROM kb_chunk WHERE doc_id=?", String.class, documentId)));
-        verify(ai, times(2)).indexText("TENANT_A", documentId, NEW_POLICY);
+        verify(ai, times(2)).indexText(eq("TENANT_A"), eq(documentId), any(UUID.class), eq(NEW_POLICY));
     }
 
     @Test
@@ -127,6 +130,47 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
     }
 
     @Test
+    void losingIndexResponseKeepsPreviouslyPublishedBodyAndChunksAndRetryUsesItsOwnAttempt() {
+        scoped(() -> jdbc.update("UPDATE kb_document SET status=3 WHERE id=?", documentId));
+        var lostAttempt = new CompletableFuture<UUID>();
+        var retryAttempt = new CompletableFuture<UUID>();
+        when(ai.indexText(eq("TENANT_A"), eq(documentId), any(UUID.class), anyString())).thenAnswer(call -> {
+            UUID attempt = call.getArgument(2);
+            stageChunk(attempt, "先前等待超时的内容");
+            lostAttempt.complete(attempt);
+            throw new BizException(50001, "合成索引响应丢失");
+        }).thenAnswer(call -> {
+            UUID attempt = call.getArgument(2);
+            stageChunk(attempt, NEW_POLICY);
+            retryAttempt.complete(attempt);
+            return indexResult(NEW_POLICY, 1);
+        });
+        assertThrows(BizException.class, () -> tx(() -> knowledge.update(EDITOR, documentId, null, null, "先前等待超时的内容", null)));
+        assertEquals(OLD_POLICY, scoped(() -> jdbc.queryForObject(
+                "SELECT content FROM kb_document WHERE id=? AND status=3 AND index_status=3", String.class, documentId)));
+        assertEquals(OLD_POLICY, activeChunk());
+        assertEquals(3, tx(() -> knowledge.update(EDITOR, documentId, null, null, NEW_POLICY, null)).indexStatus());
+        assertNotEquals(lostAttempt.join(), retryAttempt.join());
+        assertEquals(NEW_POLICY, activeChunk());
+        assertEquals(List.of(lostAttempt.join()), scoped(() -> jdbc.queryForList(
+                "SELECT attempt_id FROM kb_chunk_stage WHERE doc_id=?", UUID.class, documentId)));
+    }
+
+    @Test
+    void aShortStagedBatchRollsBackDocumentAndActiveChunks() {
+        when(ai.indexText(eq("TENANT_A"), eq(documentId), any(UUID.class), eq(NEW_POLICY))).thenAnswer(call -> {
+            stageChunk(call.getArgument(2), NEW_POLICY);
+            return indexResult(NEW_POLICY, 2);
+        });
+        var failure = assertThrows(BizException.class, () -> tx(() -> knowledge.update(EDITOR, documentId, null, null, NEW_POLICY, null)));
+        assertEquals(50001, failure.getCode());
+        assertEquals(OLD_POLICY, activeChunk());
+        assertEquals(OLD_POLICY, scoped(() -> jdbc.queryForObject(
+                "SELECT content FROM kb_document WHERE id=? AND index_status=3", String.class, documentId)));
+        assertEquals(1, scoped(() -> jdbc.queryForObject("SELECT count(*) FROM kb_chunk_stage WHERE doc_id=?", Integer.class, documentId)));
+    }
+
+    @Test
     void foreignAndDeletedDocumentsCannotStartIndexingOrPublication() {
         var foreign = new LoginUser(102, "U102", "editor", 2, "TENANT_B");
         var denied = assertThrows(BizException.class, () -> TenantContext.bind("TENANT_B",
@@ -139,7 +183,8 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
     }
 
     @Test
-    void deletingDocumentCommitsBothChangesWithoutWaitingForAnAiRequest() {
+    void deletingDocumentClearsActiveAndStagedChunksWithoutAnAiRequest() throws SQLException {
+        stageChunk(UUID.randomUUID(), NEW_POLICY);
         tx(() -> {
             knowledge.delete(EDITOR, documentId);
             return null;
@@ -148,11 +193,40 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
                 "SELECT is_deleted FROM kb_document WHERE id=?", Boolean.class, documentId)));
         assertEquals(0, scoped(() -> jdbc.queryForObject(
                 "SELECT count(*) FROM kb_chunk WHERE doc_id=?", Integer.class, documentId)));
+        assertEquals(0, scoped(() -> jdbc.queryForObject(
+                "SELECT count(*) FROM kb_chunk_stage WHERE doc_id=?", Integer.class, documentId)));
         verifyNoInteractions(ai);
     }
 
     private <T> T tx(Supplier<T> action) {
         return scoped(() -> transaction.execute(status -> action.get()));
+    }
+
+    private String activeChunk() {
+        return scoped(() -> jdbc.queryForObject("SELECT content FROM kb_chunk WHERE doc_id=?", String.class, documentId));
+    }
+
+    private IndexResult indexResult(String body, int count) {
+        return new IndexResult(Long.toString(documentId), "", body.length(), count, 0, "fixture", "fixture", List.of());
+    }
+
+    private void stageChunk(UUID attempt, String body) throws SQLException {
+        try (var connection = DriverManager.getConnection(System.getenv("SUPPORTFLOW_RLS_TEST_URL"), "rls_test_kb",
+                System.getenv("SUPPORTFLOW_RLS_TEST_KB_PASSWORD"))) {
+            connection.setAutoCommit(false);
+            try (var scope = connection.createStatement(); var insert = connection.prepareStatement("""
+                    INSERT INTO kb_chunk_stage (id, tenant_code, doc_id, attempt_id, chunk_no, content)
+                    VALUES (?, 'TENANT_A', ?, ?, 0, ?)
+                    """)) {
+                scope.execute("SELECT set_config('app.tenant_code', 'TENANT_A', true)");
+                insert.setInt(1, IDS.incrementAndGet());
+                insert.setLong(2, documentId);
+                insert.setObject(3, attempt);
+                insert.setString(4, body);
+                insert.executeUpdate();
+            }
+            connection.commit();
+        }
     }
 
     private void replaceChunk(String body) {

@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from types import SimpleNamespace
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -11,7 +12,7 @@ import pytest
 from ai.agents import brain as brain_agent
 from ai.core import chat_transport
 from ai.core.trace import get_trace_id
-from ai.rag import embedding, graph, llama_engine, store
+from ai.rag import embedding, graph, llama_engine, pipeline, store
 from ai.services import brain, training
 from test_chat_transport import local_provider
 from test_internal_auth import client, signed
@@ -193,23 +194,38 @@ def test_signed_search_uses_bounded_embedding_and_preserves_scope(engine, status
                              [101], 3, False, "embedding-fixture-trace")]
 
 
-@pytest.mark.parametrize("path", [KB + "/index", KB + "/index-text"])
+@pytest.mark.parametrize("path", [KB + "/index", KB + "/index-text", KB + "/stage-index", KB + "/stage-index-text"])
 def test_signed_index_dispatches_embedding_and_stores_source(path, client, monkeypatch, settings):
     monkeypatch.setattr(llama_engine, "available", lambda: False)
     saved = []
-    monkeypatch.setattr(store, "replace_chunks", lambda *values: saved.append(values) or len(values[2]))
+    monkeypatch.setattr(store, "replace_chunks", lambda *values, attempt_id: saved.append((values, attempt_id)) or len(values[2]))
     params = {"tenant_code": TENANT}
+    attempt = uuid4() if '/stage-index' in path else None
+    if attempt:
+        params['attempt_id'] = str(attempt)
     kwargs = {"json": {"docId": 101, "content": TEXT}}
-    if path.endswith("/index"):
+    if not path.endswith("-text"):
         params.update(doc_id=101, file_name="fixture.txt")
         kwargs = {"content": TEXT.encode()}
     with local_provider("normal", response_body=answer([0])) as (base, attempts):
         settings.embedding_base_url = base
         result = client.post(path, params=params, headers=signed_request("POST", path), **kwargs)
     assert result.status_code == 200 and len(attempts) == len(saved) == 1
-    tenant, doc_id, chunks, vectors, source = saved[0]
+    (tenant, doc_id, chunks, vectors, source), received_attempt = saved[0]
+    assert received_attempt == attempt
     assert (tenant, doc_id, source) == (TENANT, 101, f"fixture:{MODEL}")
     assert len(chunks) == len(vectors) == 1 and len(vectors[0]) == DIM
+
+
+@pytest.mark.parametrize('attempt', [None, 'invalid-attempt'])
+def test_staged_index_rejects_missing_or_invalid_attempt_before_indexing(client, monkeypatch, attempt):
+    path = KB + '/stage-index-text'
+    params = {'tenant_code': TENANT}
+    if attempt is not None:
+        params['attempt_id'] = attempt
+    monkeypatch.setattr(pipeline, 'index_text', lambda **_: pytest.fail('Invalid attempt reached the indexer'))
+    response = client.post(path, params=params, json={'docId': 101, 'content': TEXT}, headers=signed_request('POST', path))
+    assert response.status_code == 422
 
 
 def test_explicit_local_source_applies_in_llama_mode(monkeypatch, settings):

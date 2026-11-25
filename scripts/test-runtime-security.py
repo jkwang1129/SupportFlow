@@ -88,6 +88,8 @@ def scenario(legacy, with_ai_readiness=False):
         sql += '\n' + (INIT / '40-runtime-roles.sql').read_text(encoding='utf-8')
         for _ in range(2):
             result = run(cmd, input=sql, capture_output=True)
+        run(cmd, input=(ROOT/'backend/deploy/migrations/sql/customer_db_010_kb_chunk_stage.sql').read_text(encoding='utf-8'),
+            capture_output=True)
         with connect() as conn:
             check(conn.execute("SELECT bool_and(NOT(rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication)) FROM pg_roles WHERE rolname=ANY(%s)", ([f'supportflow_{r}' for r in ROLES],)).fetchone()[0], 'all eight runtime identities restricted')
             check(conn.execute("SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid WHERE n.nspname='public' AND c.relkind='r' AND a.attname='tenant_code' AND (NOT relrowsecurity OR NOT relforcerowsecurity)").fetchone()[0] == 0, 'FORCE RLS on every tenant table')

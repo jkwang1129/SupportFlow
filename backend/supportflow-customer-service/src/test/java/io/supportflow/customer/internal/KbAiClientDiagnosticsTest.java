@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -50,15 +51,18 @@ class KbAiClientDiagnosticsTest {
 
     @Test
     void indexingSearchAndAnswersPreserveResultsWithoutWritingContentToLogs() throws Exception {
+        UUID attempt = UUID.randomUUID();
         try (var receiver = new RuntimeReceiverStub(request -> {
             String body = new String(request.body(), StandardCharsets.UTF_8);
             return switch (request.rawPath()) {
-                case "/api/ai/v1/kb/index" -> {
+                case "/api/ai/v1/kb/stage-index" -> {
                     assertEquals("PRIVATE_FILE_CONTENT", body);
+                    assertTrue(request.rawQuery().contains("attempt_id=" + attempt));
                     yield new RuntimeReceiverStub.Reply(200, INDEX_RESULT);
                 }
-                case "/api/ai/v1/kb/index-text" -> {
+                case "/api/ai/v1/kb/stage-index-text" -> {
                     assertTrue(body.contains("PRIVATE_INDEX_TEXT"));
+                    assertTrue(request.rawQuery().contains("attempt_id=" + attempt));
                     yield new RuntimeReceiverStub.Reply(200, INDEX_RESULT);
                 }
                 case "/api/ai/v1/kb/search" -> {
@@ -77,10 +81,10 @@ class KbAiClientDiagnosticsTest {
             };
         })) {
             var client = client(receiver);
-            var file = client.indexFile(TENANT, 7, "PRIVATE_FILENAME.txt", "PRIVATE_FILE_CONTENT".getBytes(StandardCharsets.UTF_8));
+            var file = client.indexFile(TENANT, 7, attempt, "PRIVATE_FILENAME.txt", "PRIVATE_FILE_CONTENT".getBytes(StandardCharsets.UTF_8));
             assertEquals("PRIVATE_FILENAME.txt", file.fileName());
             assertEquals("PRIVATE_INDEX_PREVIEW", file.preview().getFirst().get("content"));
-            assertEquals(1, client.indexText(TENANT, 7, "PRIVATE_INDEX_TEXT").chunkCount());
+            assertEquals(1, client.indexText(TENANT, 7, attempt, "PRIVATE_INDEX_TEXT").chunkCount());
             assertEquals("PRIVATE_SEARCH_RESULT", client.search(TENANT, "PRIVATE_SEARCH_QUERY", 5).getFirst().get("content"));
             assertEquals("PRIVATE_ANSWER", client.ask(TENANT, "PRIVATE_QUESTION", 5).get("answer"));
             assertEquals(4, receiver.calls.get());
@@ -100,7 +104,7 @@ class KbAiClientDiagnosticsTest {
                 {"detail":"PRIVATE_UPSTREAM_ERROR"}
                 """))) {
             var client = client(receiver);
-            BizException indexFailure = assertThrows(BizException.class, () -> client.indexText(TENANT, 7, "PRIVATE_TEXT"));
+            BizException indexFailure = assertThrows(BizException.class, () -> client.indexText(TENANT, 7, UUID.randomUUID(), "PRIVATE_TEXT"));
             assertEquals(40001, indexFailure.getCode());
             assertEquals("知识服务返回 HTTP 503", indexFailure.getMessage());
             BizException searchFailure = assertThrows(BizException.class, () -> client.search(TENANT, "PRIVATE_QUERY", 5));

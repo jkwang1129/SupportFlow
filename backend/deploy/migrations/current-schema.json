@@ -7532,6 +7532,126 @@
             }
           }
         },
+        "kb_chunk_stage": {
+          "columns": {
+            "attempt_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "uuid"
+            },
+            "char_count": {
+              "default": "0",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "chunk_no": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            },
+            "content": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "text"
+            },
+            "create_time": {
+              "default": "CURRENT_TIMESTAMP",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "timestamp without time zone"
+            },
+            "doc_id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "embedding": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "vector(1024)"
+            },
+            "embedding_model": {
+              "default": "NULL::character varying",
+              "generated": "",
+              "identity": "",
+              "not_null": false,
+              "type": "character varying(64)"
+            },
+            "id": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "bigint"
+            },
+            "tenant_code": {
+              "default": null,
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
+            "token_count": {
+              "default": "0",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "integer"
+            }
+          },
+          "constraints": {
+            "kb_chunk_stage_pkey": "PRIMARY KEY (tenant_code, doc_id, attempt_id, chunk_no)"
+          },
+          "indexes": {
+            "idx_kb_chunk_stage_expiry": {
+              "definition": "CREATE INDEX idx_kb_chunk_stage_expiry ON public.kb_chunk_stage USING btree (tenant_code, create_time)",
+              "valid": true
+            },
+            "kb_chunk_stage_pkey": {
+              "definition": "CREATE UNIQUE INDEX kb_chunk_stage_pkey ON public.kb_chunk_stage USING btree (tenant_code, doc_id, attempt_id, chunk_no)",
+              "valid": true
+            }
+          },
+          "rls": {
+            "enabled": true,
+            "forced": true,
+            "policies": {
+              "kb_chunk_stage_tenant": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": true,
+                "roles": [
+                  "supportflow_customer_tenant",
+                  "supportflow_kb_tenant"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              },
+              "kb_chunk_stage_tenant_guard": {
+                "check": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))",
+                "command": "*",
+                "permissive": false,
+                "roles": [
+                  "supportflow_customer_tenant",
+                  "supportflow_kb_tenant"
+                ],
+                "using": "(((tenant_code)::text = NULLIF(current_setting('app.tenant_code'::text, true), ''::text)) AND (upper((tenant_code)::text) <> 'PLATFORM'::text))"
+              }
+            }
+          }
+        },
         "kb_document": {
           "columns": {
             "author": {
@@ -14441,6 +14561,10 @@
       {
         "checksum": "8065a35c6da6a358673798927474c8cf430b091ff4335b26a058fb786cac51bb",
         "version": "009"
+      },
+      {
+        "checksum": "7bc1674e16242bc66faa29a0752ba6778952b4728df1e7139ed4c892b5289c24",
+        "version": "010"
       }
     ],
     "ops_db": [

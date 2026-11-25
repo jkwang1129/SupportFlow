@@ -1894,3 +1894,13 @@ Windows 11、Temurin 25.0.5、Python 3.11.5、隔离 PostgreSQL 17。受限客�
 - 最终 177 项 Java 专项（含新增 4 项生命周期回归）和 34 项 AI 知识库用例均通过。索引由替身执行。并发样本用于验证写入顺序与隔离，未测量生产锁等待分布。
 
 原始输出为 `.local/implementation/e23-kb-lifecycle-before.xml`、`e23-kb-lifecycle-lock-only.xml`、`e23-kb-lifecycle-after.xml` 和 `e23-knowledge-isolation.xml`。运行命令为 `python scripts/test-customer-rls.py --with-ai`。本批覆盖并发写入次序。跨服务提交失败后的自动核销以及历史索引版本回滚仍需独立验收。
+
+## E24 知识索引暂存与原子切换（2026-11-25）
+
+在 Windows 11、Temurin 25.0.5、Python 3.11.5 和隔离 PostgreSQL 17 上运行 `python scripts/test-customer-rls.py --with-ai`。以 `397fac6` 复现 AI 模拟提交切片后丢失响应，旧版保留了原正文，却把 5 个工作日的生效切片替换成 2 个工作日。阶段性原始报告为 `.local/implementation/e24-before.xml`。
+
+新版 Java 与知识库测试角色使用两条真实数据库连接。响应丢失保留原正文和生效切片，独立 UUID 重试只切换自己的切片，切片数缺少时正文、旧切片和暂存消费均回滚。删除已暂存文档后两张表对应行均为 0。Python 实际库测试验证暂存切片不进入向量和关键词检索、同 UUID 重试保持一份结果，以及按租户清理。签名 HTTP 测试覆盖文件和手工正文两条暂存入口、缺失或格式无效的 UUID。
+
+179 项 Java 专项和 35 项 AI 知识库专项通过，6 项文档生命周期测试全部执行。AI 常规套件 1,237 项通过、499 项因缺少专项夹具跳过。6 库 104 张表通过空服务器初始化及结构核验，009 至 010 的升级保留既有知识和工单数据。17 项迁移测试通过，16 项 SQL 漂移和 3 项元数据漂移被拒绝。专项原始输出见 `.local/implementation/e24-after.xml`、`e24-ai-knowledge-isolation.xml` 和 `e24-migration.log`。
+
+部署顺序、复现和回滚见 [ADR-0083](decisions/0083-kb-index-staging.md)。故障样本使用固定向量与替身响应。闲置租户的失败尝试定时清理、历史正式版本回滚和生产混合版本切换仍待验收。

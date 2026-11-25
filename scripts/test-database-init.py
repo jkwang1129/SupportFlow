@@ -55,7 +55,7 @@ def main():
         report = json.loads(init.stdout)
         assert set(report["initialized"]) == DATABASES
         verified_tables = sum(row["schema_verified"]["tables"] for row in report["verification"])
-        assert verified_tables == 103
+        assert verified_tables == 104
         assert report["runtime_roles"] == "NOT_PROVISIONED_BY_INIT"
         with connect("postgres") as connection:
             assert connection.execute("SELECT id FROM public.init_scope_sentinel").fetchall() == [(73,)]

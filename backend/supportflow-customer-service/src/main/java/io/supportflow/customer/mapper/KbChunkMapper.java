@@ -8,7 +8,7 @@ import org.apache.ibatis.annotations.Param;
 import java.util.List;
 
 /**
- * kb_chunk 知识切片 Mapper（Java 侧只读：写入由 supportflow-ai 完成）。
+ * 知识切片读取与发布。切片由 AI 生成，Java 在文档事务内切换生效版本。
  */
 @Mapper
 public interface KbChunkMapper extends BaseMapper<KbChunk> {
@@ -24,6 +24,11 @@ public interface KbChunkMapper extends BaseMapper<KbChunk> {
             @Param("limit") int limit
     );
 
-    /** 删除某个文档的全部切片（文档删除 / 下线时调用）。 */
+    /** 删除某个文档的全部生效切片。 */
     int deleteByDoc(@Param("tenantCode") String tenantCode, @Param("docId") Long docId);
+
+    int deleteStagedByDoc(@Param("tenantCode") String tenantCode, @Param("docId") long docId);
+
+    int activateAttempt(@Param("tenantCode") String tenantCode, @Param("docId") long docId,
+                        @Param("attemptId") String attemptId);
 }

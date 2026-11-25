@@ -14,6 +14,7 @@ from .db import connect
 logger = logging.getLogger(__name__)
 AI_SOURCE = "backend/deploy/db-init/ai_db.sql"
 KB_SOURCE = "backend/deploy/db-init/customer_db.sql"
+KB_STAGE_SOURCE = "backend/deploy/migrations/sql/customer_db_010_kb_chunk_stage.sql"
 REQUIRED_TABLES = dict.fromkeys(("bot_intent", "bot_model", "bot_setting", "bot_dialogue",
                                 "bot_version", "training_job", "ai_usage_record", "bot_intent_sample"), AI_SOURCE)
 REQUIRED_COLUMNS = {f"{table}.{column}": AI_SOURCE for table in REQUIRED_TABLES for column in ("id", "tenant_code")}
@@ -27,6 +28,7 @@ KB_COLUMNS = {
     "kb_chunk": ("id", "tenant_code", "doc_id", "chunk_no", "content", "char_count", "token_count", "embedding", "embedding_model"),
     "kb_document": ("id", "tenant_code", "title", "status", "index_status", "is_deleted"),
 }
+KB_COLUMNS["kb_chunk_stage"] = (*KB_COLUMNS["kb_chunk"], "create_time", "attempt_id")
 RUNTIME_SOURCE = 'backend/deploy/migrations/sql/ai_db_002_agent_runtime.sql'
 PAYLOAD_SOURCE = 'backend/deploy/migrations/sql/ai_db_003_agent_payload.sql'
 RECONCILIATION_SOURCE = 'backend/deploy/migrations/sql/ai_db_004_reply_reconciliation.sql'
@@ -101,7 +103,7 @@ def _missing() -> dict[str, str]:
     if get_settings().runtime_api_enabled:
         missing.update(runtime_missing(columns))
     kb = _columns(_kb_connect)
-    missing.update({f"customer_db.{table}.{column}": KB_SOURCE
+    missing.update({f"customer_db.{table}.{column}": KB_STAGE_SOURCE if table == "kb_chunk_stage" else KB_SOURCE
                     for table, names in KB_COLUMNS.items() for column in names if f"{table}.{column}" not in kb})
     return missing
 

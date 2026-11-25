@@ -18,10 +18,11 @@ _TENANT = "X-Tenant-Code"
 _CREDENTIAL = re.compile(r"(gateway|customer|ops|tenant):([0-9]{1,12}):([a-f0-9]{64})")
 _TENANT_CODE = re.compile(r"[A-Za-z0-9_-]{1,32}")
 _TENANT_KEYS = ("tenant_code", "tenantCode")
-_RAW_UPLOADS = {"/ai/v1/kb/index", "/ai/v1/speech/asr"}
+_RAW_UPLOADS = {"/ai/v1/kb/index", "/ai/v1/kb/stage-index", "/ai/v1/speech/asr"}
 
 _CUSTOMER_OPERATIONS = {
     ("POST", "/ai/v1/kb/index"), ("POST", "/ai/v1/kb/index-text"),
+    ("POST", "/ai/v1/kb/stage-index"), ("POST", "/ai/v1/kb/stage-index-text"),
     ("POST", "/ai/v1/kb/search"), ("POST", "/ai/v1/agent/brain"),
     ("POST", "/ai/v1/rag/ask"), ("POST", "/ai/v1/qa/evaluate"),
     ("POST", "/ai/v1/agent/vision"), ("POST", "/ai/v1/speech/asr"),

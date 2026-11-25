@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
+from uuid import UUID
 
 from ..config import get_settings
 from ..core.trace import get_trace_id
@@ -100,7 +101,8 @@ def _nodes_to_chunks(nodes) -> list:
 
 
 def index_document(tenant_code: str, doc_id: int, file_name: str, payload: bytes,
-                   *, chunk_size: int | None = None, chunk_overlap: int | None = None):
+                   *, chunk_size: int | None = None, chunk_overlap: int | None = None,
+                   attempt_id: UUID | None = None):
     """LlamaIndex 版索引：SimpleDirectoryReader 读 → SentenceSplitter 切 → 共用客户端向量化。"""
     from .pipeline import IndexResult  # 延迟导入，避免循环
 
@@ -117,7 +119,7 @@ def index_document(tenant_code: str, doc_id: int, file_name: str, payload: bytes
 
     vectors, source = _embed_texts([chunk.content for chunk in chunks], tenant_code)
 
-    saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source)
+    saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source, attempt_id=attempt_id)
     logger.info("LlamaIndex 索引完成 tenant=%s docId=%s 切片=%d 向量来源=%s",
                 tenant_code, doc_id, saved, source)
     return IndexResult(
@@ -134,7 +136,8 @@ def index_document(tenant_code: str, doc_id: int, file_name: str, payload: bytes
 
 
 def index_text(tenant_code: str, doc_id: int, content: str,
-               *, chunk_size: int | None = None, chunk_overlap: int | None = None):
+               *, chunk_size: int | None = None, chunk_overlap: int | None = None,
+               attempt_id: UUID | None = None):
     """手工正文：包成 Document 后走同一套切块 + 向量化。"""
     from llama_index.core import Document
     from .pipeline import IndexResult
@@ -151,7 +154,7 @@ def index_text(tenant_code: str, doc_id: int, content: str,
 
     vectors, source = _embed_texts([chunk.content for chunk in chunks], tenant_code)
 
-    saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source)
+    saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source, attempt_id=attempt_id)
     return IndexResult(
         doc_id=doc_id,
         file_name="",

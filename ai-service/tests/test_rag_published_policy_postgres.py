@@ -4,6 +4,7 @@ from itertools import count
 import json
 import os
 from types import SimpleNamespace
+from uuid import uuid4
 
 import psycopg
 from psycopg.rows import dict_row
@@ -57,6 +58,34 @@ def test_next_query_reflects_offline_index_failure_and_republication_without_cac
         with psycopg.connect(os.environ['SUPPORTFLOW_KB_ADMIN_TEST_DSN']) as db:
             db.execute('UPDATE kb_document SET status=%s,index_status=%s WHERE id=%s',(status,index_status,docs['ready']))
         for query in searches(tenant):assert {row['doc_id'] for row in query([docs['ready']],True)}==expected
+
+
+def test_staged_index_retries_are_isolated_from_active_search_and_other_tenants(corpus, monkeypatch):
+    tenant, docs = corpus
+    attempt, older_attempt = uuid4(), uuid4()
+    doc = docs['ready']
+    monkeypatch.setattr(llama_engine, 'available', lambda: False)
+    monkeypatch.setattr(pipeline.embedding_module, 'embed_texts', lambda *a, **k: ([VECTOR], 'fixture'))
+    foreign = tenant.replace('KP', 'KQ')
+    with psycopg.connect(os.environ['SUPPORTFLOW_KB_ADMIN_TEST_DSN']) as db:
+        for owner in (tenant, foreign):
+            db.execute("""INSERT INTO kb_chunk_stage (id,tenant_code,doc_id,chunk_no,content,attempt_id,create_time)
+                VALUES (%s,%s,%s,0,'expired staged data',%s,CURRENT_TIMESTAMP - INTERVAL '2 days')""",
+                       (doc, owner, doc, older_attempt))
+    for text in ('退款到账的新规则 A', '退款到账的新规则 B'):
+        result = pipeline.index_text(tenant, doc, text, attempt_id=attempt)
+        assert result.chunk_count == 1
+        for query in searches(tenant):
+            assert [row['content'] for row in query([doc], True)] == ['退款到账 published policy']
+    with store.tenant_connection(tenant) as db:
+        assert db.execute('SELECT attempt_id,content FROM kb_chunk_stage').fetchall() == [
+            {'attempt_id': attempt, 'content': '退款到账的新规则 B'}]
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            db.execute("""INSERT INTO kb_chunk_stage (id,tenant_code,doc_id,chunk_no,content,attempt_id)
+                VALUES (%s,%s,%s,0,'wrong tenant',%s)""", (doc, foreign, doc, uuid4()))
+    with store.tenant_connection(foreign) as db:
+        assert db.execute('SELECT attempt_id,content FROM kb_chunk_stage').fetchall() == [
+            {'attempt_id': older_attempt, 'content': 'expired staged data'}]
 
 
 @pytest.mark.parametrize('engine',['builtin','llama'])

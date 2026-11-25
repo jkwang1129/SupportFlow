@@ -42,6 +42,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -519,6 +520,7 @@ public class KbService {
         update.setEditor(String.valueOf(user.userId()));
         documentMapper.updateById(update);
         chunkMapper.deleteByDoc(tenant, id);
+        chunkMapper.deleteStagedByDoc(tenant, id);
         log.info("知识文档已删除 tenant={} docId={} title={}", tenant, id, doc.getTitle());
     }
 
@@ -526,10 +528,11 @@ public class KbService {
 
     /** 索引一份文件并回填状态。失败要把原因落到 index_message，用户才知道为什么检索不到。 */
     private void indexFile(String tenant, KbDocument doc, String fileName, byte[] payload) {
+        UUID attemptId = UUID.randomUUID();
         markRunning(tenant, doc);
         try {
-            IndexResult result = aiClient.indexFile(tenant, doc.getId(), fileName, payload);
-            applyIndexResult(tenant, doc, result);
+            IndexResult result = aiClient.indexFile(tenant, doc.getId(), attemptId, fileName, payload);
+            applyIndexResult(tenant, doc, attemptId, result);
         } catch (BizException e) {
             markFailed(tenant, doc, e.getMessage());
             throw e;
@@ -540,10 +543,11 @@ public class KbService {
         if (content == null || content.isBlank()) {
             throw new BizException(40001, "正文为空，没有可索引的内容");
         }
+        UUID attemptId = UUID.randomUUID();
         markRunning(tenant, doc);
         try {
-            IndexResult result = aiClient.indexText(tenant, doc.getId(), content);
-            applyIndexResult(tenant, doc, result);
+            IndexResult result = aiClient.indexText(tenant, doc.getId(), attemptId, content);
+            applyIndexResult(tenant, doc, attemptId, result);
         } catch (BizException e) {
             markFailed(tenant, doc, e.getMessage());
             throw e;
@@ -559,7 +563,15 @@ public class KbService {
         documentMapper.updateById(update);
     }
 
-    private void applyIndexResult(String tenant, KbDocument doc, IndexResult result) {
+    private void applyIndexResult(String tenant, KbDocument doc, UUID attemptId, IndexResult result) {
+        if (!String.valueOf(doc.getId()).equals(result.docId()) || result.chunkCount() < 1) {
+            throw new BizException(50001, "知识索引结果无法核验，请重试");
+        }
+        chunkMapper.deleteByDoc(tenant, doc.getId());
+        int activated = chunkMapper.activateAttempt(tenant, doc.getId(), attemptId.toString());
+        if (activated != result.chunkCount()) {
+            throw new BizException(50001, "知识索引切片数量无法核验，请重试");
+        }
         KbDocument update = new KbDocument();
         update.setId(doc.getId());
         update.setIndexStatus(INDEX_DONE);

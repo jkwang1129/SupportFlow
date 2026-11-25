@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from uuid import UUID
 
 from ..config import get_settings
 from ..core.trace import get_trace_id
@@ -66,13 +67,14 @@ def index_document(
     *,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    attempt_id: UUID | None = None,
 ) -> IndexResult:
     """把一份文件变成可检索的切片：装了 llama-index 走它，否则走内置实现。"""
     if llama_engine.available():
         return llama_engine.index_document(tenant_code, doc_id, file_name, payload,
-                                           chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+                                           chunk_size=chunk_size, chunk_overlap=chunk_overlap, attempt_id=attempt_id)
     return _builtin_index_document(tenant_code, doc_id, file_name, payload,
-                                   chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+                                   chunk_size=chunk_size, chunk_overlap=chunk_overlap, attempt_id=attempt_id)
 
 
 def _builtin_index_document(
@@ -83,6 +85,7 @@ def _builtin_index_document(
     *,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    attempt_id: UUID | None = None,
 ) -> IndexResult:
     """内置实现（不依赖任何三方库）：标准库解析 + 递归切块 + 本地/远程向量。"""
     settings = get_settings()
@@ -108,7 +111,7 @@ def _builtin_index_document(
         tenant_code=tenant_code,
         trace_id=trace_id,
     )
-    saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source)
+    saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source, attempt_id=attempt_id)
 
     logger.info(
         "知识库索引完成 trace=%s tenant=%s docId=%s 字符=%d 切片=%d 向量来源=%s",
@@ -133,13 +136,14 @@ def index_text(
     *,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    attempt_id: UUID | None = None,
 ) -> IndexResult:
     """手工录入 / 编辑正文的文档：同样是"装了 LlamaIndex 就优先用它"。"""
     if llama_engine.available():
         return llama_engine.index_text(tenant_code, doc_id, content,
-                                       chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+                                       chunk_size=chunk_size, chunk_overlap=chunk_overlap, attempt_id=attempt_id)
     return _builtin_index_text(tenant_code, doc_id, content,
-                               chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+                               chunk_size=chunk_size, chunk_overlap=chunk_overlap, attempt_id=attempt_id)
 
 
 def _builtin_index_text(
@@ -149,6 +153,7 @@ def _builtin_index_text(
     *,
     chunk_size: int | None = None,
     chunk_overlap: int | None = None,
+    attempt_id: UUID | None = None,
 ) -> IndexResult:
     """内置实现：手工正文直接切块索引。"""
     settings = get_settings()
@@ -165,7 +170,7 @@ def _builtin_index_text(
         tenant_code=tenant_code,
         trace_id=get_trace_id() or "-",
     )
-    saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source)
+    saved = store.replace_chunks(tenant_code, doc_id, chunks, vectors, source, attempt_id=attempt_id)
     logger.info("知识库索引完成（手工正文） tenant=%s docId=%s 字符=%d 切片=%d 向量来源=%s",
                 tenant_code, doc_id, len(text), saved, source)
     return IndexResult(
