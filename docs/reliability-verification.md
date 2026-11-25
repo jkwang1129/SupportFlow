@@ -1804,3 +1804,13 @@ Windows 11、Python 3.11.5、隔离 PostgreSQL 17 和固定镜像摘要的 RustF
 - 本地联合备份阶段为 2,205.926 ms，目标恢复与核验阶段为 9,653.410 ms。范围为停写、人工合成数据和已经启动的空目标，用来记录本次演练耗时。生产环境的可恢复时间点和恢复时间仍待测量。
 
 联合和仅数据库恢复的原始报告分别为 `.local/implementation/e16-evidence/combined-restore.json` 和 `.local/implementation/e16-evidence/database-only.json`。联合演练运行日志为 `.local/implementation/e16-combined-restore-final.log`。
+
+## E17 恢复后的客服与 AI 读取（2026-11-25）
+
+Windows 11、Python 3.11.5、Temurin 25.0.5、隔离 PostgreSQL 17 和固定镜像摘要的 RustFS。用 `python scripts/test-database-restore.py --with-attachments --with-services` 从合成备份恢复，启动真实客服 JAR 和 AI HTTP 服务。配置、运行和回退见 [ADR-0076](decisions/0076-restored-service-acceptance.md)。
+
+- 每轮核验 3 次附件读取、5 次附件拒绝、2 次 Runtime 读取和 4 次 Runtime 拒绝。分别覆盖访客与坐席读同一聊天图片、公开头像、跨租户和错误会话、头像入口误读，以及签名任务查询。核验返回字节的 SHA-256、MIME 类型、缓存指令、任务来源和运行计数。
+- 临时移除两服务依赖的 `kb_chunk.content` 时，两个存活探测为 200，两个就绪探测与两个已授权业务读取均为 503。还原列名后，相同进程重新通过全部读取及拒绝检查。再次核对 103 张表的结构契约、六库逐表行数、任务/用量投影和对象内容。
+- 本地两服务启动至就绪用时 9,408.737 ms，恢复列名后到读取和拒绝检查全部通过用时 922.142 ms。恢复耗时使用停写的合成样本。应用验收、仅联合恢复、仅数据库恢复三种模式均通过。脚本测试执行 73 项，其中 10 项需要额外夹具而跳过。参数校验拒绝单独启用 `--with-services`。
+
+三种模式的原始报告分别为 `.local/implementation/e17-evidence/with-services.json`、`attachments.json` 和 `database-only.json`。两个进程日志在 `.local/implementation/restore-customer.log` 和 `.local/implementation/restore-ai.log`。应用读取验证覆盖客服与 AI；全栈流量切换、对象存储故障门禁和生产恢复目标需另行验收。

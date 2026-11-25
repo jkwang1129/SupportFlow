@@ -41,7 +41,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M09 Streaming/交互 | 工单链路覆盖进度恢复、取消和跨节点通知 | 聊天 seq/ACK、工单通知与补拉、断线恢复、取消与完成竞争、已提交写入核查、双节点联调和首读耗时记录 | 节点地址按部署配置管理。目标环境下的网络条件及长期负载仍待验证。依赖 B、M07。E |
 | M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
 | M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、计费日聚合与月预算告警/降级/暂停；旧客服预算读取失败时降级或保留已知暂停；Runtime 有跨 Worker 租约、Run 预算、租户积压上限、模型并发额度和按日、月的 Token 与金额预留及结算 | 真实账单对账与生产并发容量待验收。旧客服按已落账用量判断，单独验收并发消费上界。计费去重 A4，运行预算随 M01。B/E |
-| M12 Production Operations | 部分实现，停写条件下的六库和附件联合恢复已有演练 | Compose、CI、新旧库验收、受限凭据、两套 PostgreSQL 17 与 RustFS 的恢复、附件引用和知识向量核验 | 生产部署、连续写入期间的跨库和对象一致性、WAL、远端保留及生产 RPO/RTO 和 SLO 演练待验收。A5/E |
+| M12 Production Operations | 部分实现，六库和附件已联合恢复并通过应用读取 | Compose、CI、新旧库验收、停写备份、受限客服和 AI 在恢复目标上读取，实际验证结构故障门禁和同进程恢复 | 生产部署、存储就绪、连续写入期间的跨库和对象一致性、WAL、远端保留及生产 RPO/RTO 和 SLO 演练待验收。A5/E |
 
 ## 分阶段计划与退出条件
 
@@ -211,6 +211,8 @@ E14 工单只读 Worker 增加显式 Prompt 版本发布。新任务按租户 Wo
 E15 统一旧客服 Chat 的租户供应商选择。租户选择不可用时使用业务已有的本地处理，只有确认未设置模型的租户才使用平台默认。见 [ADR-0074](decisions/0074-legacy-chat-provider-routing.md) 和 [本地验收](reliability-verification.md#e15-旧客服-chat-供应商路由2026-11-25)。
 
 E16 将 RustFS 对象和附件元数据核验并入六库恢复演练，测量停写合成样本的备份和恢复耗时。见 [ADR-0075](decisions/0075-attachment-and-database-restore.md) 和 [本地验收](reliability-verification.md#e16-六库与附件联合恢复2026-11-25)。
+
+E17 在联合恢复目标上启动客服与 AI，读取附件和持久任务，并在同一组进程上验证共享结构故障与修复。见 [ADR-0076](decisions/0076-restored-service-acceptance.md) 和 [本地验收](reliability-verification.md#e17-恢复后的客服与-ai-读取2026-11-25)。
 
 D8 固定 RAG 质量对照语料和 25 题标注，覆盖拒答、转人工、事实与原文引用、租户和发布状态。内容摘要与负面校验纳入 CI。对照运行和质量结果在后续批次交付。数据及口径见 [ADR-0051](decisions/0051-fixed-rag-quality-dataset.md)。
 

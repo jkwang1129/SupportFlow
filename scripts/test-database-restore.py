@@ -140,7 +140,10 @@ def assert_restricted_restored_reads(environment, passwords, *, check_attachment
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--with-attachments', action='store_true', help='also restore the RustFS attachment bucket')
+    parser.add_argument('--with-services', action='store_true', help='exercise Java and AI reads against the restored target')
     args = parser.parse_args(argv)
+    if args.with_services and not args.with_attachments:
+        parser.error('--with-services requires --with-attachments')
     path = ROOT/'.local/verification/database-restore-drill.json'
     path.unlink(missing_ok=True)
     with ExitStack() as stack:
@@ -155,13 +158,16 @@ def main(argv=None):
             from attachment_restore_fixture import (BUCKET, IMAGE, disposable_rustfs, live_references,
                                                     reject_corrupted_archive, restored_knowledge, seed_attachments,
                                                     verify_missing_reference_guard, verify_target_guards)
-            source_bucket = stack.enter_context(disposable_rustfs())
-            target_bucket = stack.enter_context(disposable_rustfs())
+            source_bucket, _ = stack.enter_context(disposable_rustfs())
+            target_bucket, storage_env = stack.enter_context(disposable_rustfs())
             object_archive = stack.enter_context(TemporaryFile())
             seed_attachments(source, source_bucket)
             expected_refs = live_references(source)
             expected_knowledge = restored_knowledge(source)
             assert len(expected_refs) == 4 and len(expected_knowledge) == 1 and expected_knowledge[0][-1] == 0
+        if args.with_services:
+            from restored_service_fixture import seed_secondary_session, verify_restored_services
+            seed_secondary_session(source)
         expected_projection = projection(source)
         expected_counts = {name: table_counts(source, name) for name in names}
         backup_started = perf_counter()
@@ -236,6 +242,15 @@ def main(argv=None):
             }
             report['combined_backup_ms'] = backup_ms
             report['combined_restore_and_verify_ms'] = restore_and_verify_ms
+        if args.with_services:
+            report['services'] = verify_restored_services(target, target_env, passwords, storage_env, records, expected_projection[1])
+            assert migrate_databases(target_env, verify=True) == verified
+            assert {name: table_counts(target, name) for name in names} == expected_counts
+            assert projection(target) == expected_projection
+            assert live_references(target) == expected_refs and restored_knowledge(target) == expected_knowledge
+            verify_objects(target_bucket, BUCKET, records)
+            report['schema_version'] = 'supportflow-restore-drill-v3'
+            report['services']['post_repair_persistence_verified'] = True
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
     print(json.dumps(report), flush=True)

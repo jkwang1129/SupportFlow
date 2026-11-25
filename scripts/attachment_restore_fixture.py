@@ -19,6 +19,10 @@ from attachment_backup import InvalidAttachmentArchive, restore_objects, verify_
 BUCKET = "supportflow"
 IMAGE = "rustfs/rustfs@sha256:ee717072290bec9b11abfc0365f8310b00df1cd9b3639943edae47bdef05044a"
 VECTOR = "[" + ",".join(["1"] + ["0"] * 1023) + "]"
+CHAT_IMAGE_ID = 7060001
+AVATAR_ID = 7060002
+CHAT_IMAGE_KEY = "chat/RESTORE_A/RESTORE_SESSION_1/截图.png"
+AVATAR_KEY = "bot/avatar/RESTORE_A/bot.png"
 
 
 @contextmanager
@@ -50,7 +54,11 @@ def disposable_rustfs():
                 if monotonic() >= deadline:
                     raise RuntimeError("Disposable RustFS did not initialize") from None
                 sleep(.25)
-        yield client
+        yield client, {
+            "SUPPORTFLOW_RUSTFS_ENDPOINT": "127.0.0.1", "SUPPORTFLOW_RUSTFS_PORT": str(port),
+            "SUPPORTFLOW_RUSTFS_ACCESS_KEY": env["RUSTFS_ACCESS_KEY"],
+            "SUPPORTFLOW_RUSTFS_SECRET_KEY": env["RUSTFS_SECRET_KEY"], "SUPPORTFLOW_RUSTFS_BUCKET": BUCKET,
+        }
     finally:
         if client is not None:
             client.close()
@@ -60,13 +68,13 @@ def disposable_rustfs():
 
 def seed_attachments(connect, client):
     files = [
-        ("RESTORE_A", "chat/RESTORE_A/RESTORE_SESSION_1/截图.png", 5, "image/png", b"chat-image" * 8000),
-        ("RESTORE_A", "bot/avatar/RESTORE_A/bot.png", 1, "image/png", b"synthetic-avatar"),
+        ("RESTORE_A", CHAT_IMAGE_KEY, 5, "image/png", b"chat-image" * 8000),
+        ("RESTORE_A", AVATAR_KEY, 1, "image/png", b"synthetic-avatar"),
         ("RESTORE_B", "kb/document/RESTORE_B/refund.txt", 2, "text/plain", b"synthetic refund reference"),
         ("RESTORE_B", "enterprise/license/RESTORE_B/license.pdf", 2, "application/pdf", b"%PDF-synthetic"),
     ]
     with connect("customer_db") as database:
-        for file_id, (tenant, key, kind, mime, payload) in enumerate(files, start=7060001):
+        for file_id, (tenant, key, kind, mime, payload) in enumerate(files, start=CHAT_IMAGE_ID):
             client.put_object(Bucket=BUCKET, Key=key, Body=payload, ContentType=mime)
             database.execute("""
                 INSERT INTO file_meta(id,tenant_code,file_no,file_name,object_key,file_size,mime_type,biz_type)

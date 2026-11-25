@@ -142,7 +142,17 @@ python scripts/upgrade-runtime-security.py
 
 `python scripts/upgrade-runtime-security.py` 现通过版本化 Runner 安装已登记的客服/计费增量，再独立配置运行角色并验证。结构历史与 checksum 位于各库 supportflow_schema_history；运行账号只能读取本库历史。仅检查：`python scripts/db-migrate.py verify`。该命令不会执行 DDL，并核对 current-schema.json 中的实际结构/索引/RLS。已应用脚本变更、历史缺口或并发迁移会拒绝继续，不能删除历史绕过。
 
-清单、事务/多库失败语义和未覆盖项见 [迁移说明](../backend/deploy/migrations/README.md)。本地新建、升级和结构验收可按当前清单复现。运行 `python scripts/test-database-restore.py` 可在两个独立 PostgreSQL 17 测试集群演练六库备份和恢复，使用合成数据与临时服务凭据。生产恢复环境与限制见 [六库恢复决策](decisions/0039-disposable-postgres-restore.md)。
+清单、事务/多库失败语义和未覆盖项见 [迁移说明](../backend/deploy/migrations/README.md)。本地新建、升级和结构验收可按当前清单复现。
+
+## 备份和恢复演练
+
+三个模式都只使用新建的隔离容器、合成数据和临时账号。
+
+- `python scripts/test-database-restore.py` 演练两个 PostgreSQL 17 集群之间的六库恢复。[六库恢复设计](decisions/0039-disposable-postgres-restore.md)
+- 加 `--with-attachments` 同时创建独立的 RustFS 源桶与目标桶，核对对象、数据库引用和知识库索引。[联合恢复设计](decisions/0075-attachment-and-database-restore.md)
+- 在联合模式再加 `--with-services`。先以 JDK 25 运行 `mvn -B -f backend/pom.xml -pl supportflow-customer-service -am -DskipTests package`，并安装 `scripts/security/requirements.txt`、`ai-service/requirements-test.txt`。这会启动真实客服和 AI 服务，在目标上检查就绪、文件与任务读取，以及结构故障修复后恢复读取。CI 使用同一模式。[应用验收与回退](decisions/0076-restored-service-acceptance.md)
+
+结果写入 `.local/verification/database-restore-drill.json`。出现 503 时先比较两个服务的存活与就绪，检查 `.local/implementation/restore-customer.log` 和 `.local/implementation/restore-ai.log`。联合恢复失败后从源归档重新建立隔离目标。生产切换和恢复目标仍需在授权环境中验证。
 
 ## Java 存活与就绪
 
