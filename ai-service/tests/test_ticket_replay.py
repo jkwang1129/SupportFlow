@@ -6,7 +6,8 @@ import psycopg
 import pytest
 
 from ai.runtime.ticket_loop import LOOP_VERSION, planner_policy
-from ai.runtime.ticket_replay import SUITE_VERSION, TAPE_VERSION, compare_suite, main, replay_tape
+from ai.runtime.ticket_prompts import CANARY_PROMPT, STABLE_PROMPT, ticket_prompt
+from ai.runtime.ticket_replay import SUITE_VERSION, TAPE_VERSION, VERSIONED_TAPE, compare_suite, main, replay_tape
 from ai.runtime.types import fingerprint
 
 
@@ -51,6 +52,37 @@ def normal(canonical=False):
 
 def suite(tape):
     return {'schema_version': SUITE_VERSION, 'cases': {'fixture': tape}}
+
+
+@pytest.mark.parametrize('version, digest', [
+    (STABLE_PROMPT, '153fb1f7eb7e7c918a936c1a8454519be39a28572c57e8b540e15e0217104115'),
+    (CANARY_PROMPT, '723ddbdcce5959cd79afcd166d8d70b536ebf9619ac7053abbdb14a2ebfc72f6'),
+])
+def test_published_prompt_content_is_frozen_and_replay_retains_version(version, digest):
+    rendered = planner_policy(CATALOG, version)
+    assert fingerprint(rendered) == digest
+    messages = [{'role': 'system', 'content': rendered},
+                {'role': 'user', 'content': pack({'kind': 'untrusted_user_input', 'text': QUESTION})}]
+    tape = start([{'kind': 'model', 'input_sha256': fingerprint(messages), 'reply': '{"action":"clarify"}'}],
+                 outcome(name='clarification-ready'))
+    tape.update(schema_version=VERSIONED_TAPE, prompt_version=version, policy_sha256=digest)
+    result = replay_tape(tape)
+    assert result['passed'] and result['prompt_version'] == version
+    assert result['observed']['model_calls'] == 1 and result['observed']['ticket_reads'] == 0
+    assert ticket_prompt(CANARY_PROMPT).rollback_to == STABLE_PROMPT
+
+
+@pytest.mark.parametrize('version, issue', [('missing', 'PROMPT_OR_CATALOG_INVALID'), (CANARY_PROMPT, 'POLICY_CHANGED')])
+def test_replay_never_substitutes_a_different_prompt_for_the_recorded_policy(version, issue):
+    tape = normal() | {'schema_version': VERSIONED_TAPE, 'prompt_version': version}
+    result = compare_suite(suite(tape))
+    assert not result['passed'] and result['cases']['fixture']['issue'] == issue
+
+
+@pytest.mark.parametrize('catalog', [[], [CATALOG[0] | {'effect': 'WRITE'}], [CATALOG[0] | {'note': '密' * 6000}]])
+def test_prompt_catalog_only_accepts_bounded_read_capability(catalog):
+    with pytest.raises(ValueError):
+        ticket_prompt(CANARY_PROMPT).render(catalog)
 
 
 @pytest.mark.parametrize('canonical', [False, True])

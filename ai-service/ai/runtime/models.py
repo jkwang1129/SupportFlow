@@ -4,7 +4,7 @@ No automatic provider selection, Workflow wrapper, retry or second usage ledger.
 Successful provider usage is part of the same atomic model-output checkpoint.
 """
 import asyncio
-from dataclasses import dataclass,field
+from dataclasses import dataclass,field,replace
 import json
 
 from ..core.chat_transport import ModelCallFailure,_configuration
@@ -63,6 +63,11 @@ class RuntimeChatClient:
     def __init__(self,profile: ChatProfile,*,transport=None):
         if not isinstance(profile,ChatProfile):raise ValueError('Explicit host model profile required')
         self.profile,self._transport=profile,transport
+
+    def with_prompt_version(self, version: str):
+        if version == self.profile.prompt_version:
+            return self
+        return RuntimeChatClient(replace(self.profile, prompt_version=version), transport=self._transport)
 
     @staticmethod
     def _messages(messages):

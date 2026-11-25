@@ -9,12 +9,14 @@ from pydantic import ValidationError
 
 from .customer_tools import TicketArguments
 from .ticket_loop import LOOP_VERSION, STATUS_NAMES, TICKET_READ, planner_policy, run_read_plan
+from .ticket_prompts import STABLE_PROMPT
 from .tickets import ticket_timestamp
 from .trace_replay import _json_document
 from .types import fingerprint, identifier
 from .worker import PermanentFailure
 
 TAPE_VERSION = 'ticket-read-tape-v1'
+VERSIONED_TAPE = 'ticket-read-tape-v2'
 SUITE_VERSION = 'ticket-read-replay-suite-v1'
 _SHA = re.compile(r'[0-9a-f]{64}')
 _EXPECTED = {'outcome', 'error_code', 'ticket_status', 'model_calls', 'ticket_reads'}
@@ -93,7 +95,9 @@ class RecordedCalls:
 def replay_tape(tape):
     fields = {'schema_version', 'loop_version', 'policy_sha256', 'catalog', 'source_text', 'max_turns',
               'canonical_history', 'events', 'expected'}
-    _require(isinstance(tape, dict) and tape.keys() == fields and tape['schema_version'] == TAPE_VERSION, 'INVALID_TAPE')
+    _require(isinstance(tape, dict) and tape.get('schema_version') in (TAPE_VERSION, VERSIONED_TAPE), 'INVALID_TAPE')
+    versioned = tape['schema_version'] == VERSIONED_TAPE
+    _require(tape.keys() == (fields | {'prompt_version'} if versioned else fields), 'INVALID_TAPE')
     _require(identifier(tape['loop_version']) == LOOP_VERSION, 'LOOP_VERSION_CHANGED')
     text, turns, catalog, events, expected = (tape[key] for key in ('source_text', 'max_turns', 'catalog', 'events', 'expected'))
     _require(isinstance(text, str) and text.strip() and len(text.encode('utf-8')) <= 8192 and '\0' not in text,
@@ -104,7 +108,11 @@ def replay_tape(tape):
              and catalog[0].get('effect') == 'READ' and catalog[0].get('scope') == 'ticket:read', 'INVALID_REPLAY_CATALOG')
     _require(isinstance(events, list) and 1 <= len(events) <= 2 * turns and isinstance(expected, dict)
              and expected.keys() == _EXPECTED, 'INVALID_TAPE_EVENTS_OR_EXPECTATION')
-    policy = planner_policy(catalog)
+    prompt_version = tape['prompt_version'] if versioned else STABLE_PROMPT
+    try:
+        policy = planner_policy(catalog, prompt_version)
+    except ValueError:
+        raise TapeMismatch('PROMPT_OR_CATALOG_INVALID') from None
     _require(_digest(tape['policy_sha256']) and tape['policy_sha256'] == fingerprint(policy), 'POLICY_CHANGED')
 
     calls = RecordedCalls(events)
@@ -120,8 +128,11 @@ def replay_tape(tape):
     result = {'outcome': outcome, 'error_code': error, 'ticket_status': status,
               'model_calls': calls.model_calls, 'ticket_reads': calls.ticket_reads}
     differences = sorted(key for key in expected if type(expected[key]) is not type(result[key]) or expected[key] != result[key])
-    return {'passed': not differences, 'loop_version': LOOP_VERSION, 'policy_sha256': fingerprint(policy),
-            'observed': result, 'differences': differences}
+    output = {'passed': not differences, 'loop_version': LOOP_VERSION, 'policy_sha256': fingerprint(policy),
+              'observed': result, 'differences': differences}
+    if versioned:
+        output['prompt_version'] = prompt_version
+    return output
 
 
 def compare_suite(suite):

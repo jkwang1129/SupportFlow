@@ -1,12 +1,17 @@
 """Actual Run/Step/checkpoint/budgets; model and business HTTP are protocol Stubs."""
+from dataclasses import replace
 import json
 import os
 
+import httpx
 import psycopg
 import pytest
 
 from ai.runtime.approvals import TicketApprovals
+from ai.runtime.models import RuntimeChatClient
 from ai.runtime.payloads import encode
+from ai.runtime.ticket_loop import LOOP_VERSION, TicketReadLoop
+from ai.runtime.ticket_prompts import CANARY_PROMPT, STABLE_PROMPT
 from ai.runtime.types import Limits
 from ai.runtime.worker import RuntimeWorker
 from test_runtime_store_postgres import store,request,admin
@@ -177,6 +182,54 @@ def test_switching_planner_history_policy_cannot_resume_under_the_old_binding(st
     result=worker.run_once('TENANT_A')
     assert result['state']=='FAILED' and result['error_code']=='EXECUTION_ERROR'
     assert len(models)==1 and result['model_calls']==1 and artifacts()==[]
+
+
+@pytest.mark.parametrize('first, deployed', [(STABLE_PROMPT, CANARY_PROMPT), (CANARY_PROMPT, STABLE_PROMPT)])
+def test_prompt_version_pinned_across_publish_and_rollback_after_lost_checkpoint_ack(store, first, deployed):
+    row, loop, _, models, _ = prepare(store, prompt_version=first, model_provider='qwen')
+    tenant, run_id = row['tenant_code'], row['run_id']
+
+    class LostModelAck:
+        lost = False
+
+        def __getattr__(self, name):
+            return getattr(store, name)
+
+        def complete_payload_step(self, *args):
+            value = store.complete_payload_step(*args)
+            if args[2] == 'model-output-v1' and not self.lost:
+                self.lost = True
+                raise psycopg.OperationalError('synthetic lost model checkpoint acknowledgement')
+            return value
+
+    assert runner(LostModelAck(), loop).run_once(tenant)['state'] == 'RETRY_WAIT'
+    assert len(models) == 1
+    changed = TicketReadLoop(loop.source_access, loop.tools, loop.model.with_prompt_version(deployed))
+    resumed = RuntimeWorker(store, {'runtime-v1': changed}, 'replacement-ticket-worker').run_once(tenant)
+    assert resumed['state'] == 'SUCCEEDED' and resumed['model_calls'] == len(models) == 2
+    assert models[0]['messages'][0] == models[1]['messages'][0]
+    binding = store.trace_delivery_snapshot(tenant, run_id)['trace']['steps']
+    assert [item['version'] for item in binding if item.get('operation') == 'ticket.agent'] == [
+        LOOP_VERSION if first == STABLE_PROMPT else first]
+    assert [item['version'] for item in binding if item.get('operation') == 'model.chat'] == [first, first]
+    assert store.trace_delivery_snapshot('TENANT_B', run_id) is None
+
+
+def test_rollback_with_incompatible_provider_cannot_send_pinned_canary_prompt(store):
+    row, loop, _, models, _ = prepare(store, prompt_version=CANARY_PROMPT, model_provider='qwen',
+                                     model_faults={1: 503})
+    tenant = row['tenant_code']
+    assert runner(store, loop).run_once(tenant)['state'] == 'RETRY_WAIT'
+    with admin() as db:
+        db.execute("UPDATE agent_run SET ready_at=clock_timestamp() WHERE run_id=%s", (row['run_id'],))
+    profile = replace(loop.model.profile, provider='deepseek', prompt_version=STABLE_PROMPT)
+    probe = RuntimeChatClient(profile, transport=httpx.MockTransport(
+        lambda _: pytest.fail('incompatible pinned prompt reached model')))
+    changed = TicketReadLoop(loop.source_access, loop.tools, probe)
+    resumed = runner(store, changed).run_once(tenant)
+    assert (resumed['state'], resumed['error_code'], resumed['model_calls']) == (
+        'FAILED', 'TICKET_PROMPT_PROVIDER_UNSUPPORTED', 1)
+    assert len(models) == 1
 
 
 def test_cancellation_after_provider_response_does_not_publish_a_late_plan_or_report(store):

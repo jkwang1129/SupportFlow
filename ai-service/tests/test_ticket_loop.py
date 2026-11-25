@@ -11,6 +11,7 @@ from ai.runtime.models import RuntimeChatClient
 from ai.runtime.source import SourceClient
 from ai.runtime.tickets import TicketClient,ticket_digest
 from ai.runtime.ticket_loop import TicketReadLoop,decision
+from ai.runtime.ticket_prompts import STABLE_PROMPT
 from ai.runtime.tools import ToolExecutor,ToolRegistry
 from ai.runtime.worker import PermanentFailure
 from test_runtime_models import profile,answer
@@ -25,7 +26,8 @@ REPORT={'action':'report','evidence':'tool-0'}
 
 
 def fixture(actions,*,max_turns=4,after_model=None,wrong_source=False,source_input=INPUT,run_id=RUN,model_faults=None,
-            canonical_history=False,source_text=None,ticket_message=None):
+            canonical_history=False,source_text=None,ticket_message=None,prompt_version=STABLE_PROMPT,
+            model_provider='fixture'):
     source=source_envelope();state={'status':2,'owner':True};http=[];models=[];reports=[]
     payload=json.loads(source['data']['payload_json'])
     if source_text is not None:
@@ -57,9 +59,11 @@ def fixture(actions,*,max_turns=4,after_model=None,wrong_source=False,source_inp
         action=actions[len(served)];served.append(1);data=answer()
         data['choices'][0]['message']['content']=action if isinstance(action,str) else json.dumps(action)
         return response(data)
-    model=RuntimeChatClient(profile(tenant=source_input.tenant),transport=httpx.MockTransport(provider))
+    model=RuntimeChatClient(profile(tenant=source_input.tenant,prompt_version=prompt_version,provider=model_provider),
+                            transport=httpx.MockTransport(provider))
     loop=TicketReadLoop(access,tools,model,max_turns=max_turns,canonical_history=canonical_history)
     ctx=source_context();original=ctx.payload_step
+    ctx.prior_step_intent = lambda key: None
     def payload(key,kind,effect,intent,schema,execute):
         value=original(key,kind,effect,intent,schema,execute)
         if kind=='INTERNAL' and value.get('schema_version')=='ticket-report-v1':reports.append(copy.deepcopy(value))

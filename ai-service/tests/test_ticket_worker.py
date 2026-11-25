@@ -5,6 +5,7 @@ import pytest
 
 from ai.config import Settings
 from ai.runtime import ticket_worker
+from ai.runtime.ticket_prompts import CANARY_PROMPT, STABLE_PROMPT
 from ai.runtime.worker import RuntimeWorker
 
 
@@ -28,6 +29,7 @@ def test_operator_config_is_bound_to_one_tenant_and_read_capabilities():
     assert not loop.canonical_history
     assert loop.approvals is None
     assert loop.model.profile.model == 'fixture-chat'
+    assert loop.model.profile.prompt_version == STABLE_PROMPT
     assert 'synthetic-test-qwen-key' not in repr(loop.model.profile)
     assert {v['name'] for v in loop.source_access.registry.catalog()} == {'get_current_message'}
     assert {v['name'] for v in loop.tools.registry.catalog()} == {'get_ticket_status'}
@@ -78,6 +80,30 @@ def test_scoped_worker_never_discovers_or_processes_other_tenants(monkeypatch):
     assert worker.run_once('TENANT_B') is None
     monkeypatch.setattr(worker, 'run_once', lambda tenant: events.append(tenant))
     assert worker.tick() is None and events == ['TENANT_A']
+
+
+def test_explicit_canary_profile_changes_prompt_and_billing_identity():
+    stable = ticket_worker.build_worker(settings(), 'TENANT_A', 'qwen', owner='stable-worker')
+    canary = ticket_worker.build_worker(settings(), 'TENANT_A', 'qwen', owner='canary-worker',
+                                        prompt_version=CANARY_PROMPT)
+    first, second = (worker.handlers['runtime-v1'].model.profile for worker in (stable, canary))
+    assert first.prompt_version == STABLE_PROMPT and second.prompt_version == CANARY_PROMPT
+    assert first.tenant == second.tenant == 'TENANT_A'
+    assert first.definition_hash() != second.definition_hash()
+
+
+@pytest.mark.parametrize('provider, version', [('qwen', 'unknown'), ('deepseek', CANARY_PROMPT)])
+def test_unreleased_or_incompatible_prompt_cannot_start_worker(provider, version):
+    conf = settings(deepseek_api_key='synthetic-deepseek-credential',
+                    deepseek_base_url='http://127.0.0.1:14001/v1', deepseek_model='fixture-deepseek')
+    with pytest.raises(ValueError, match='ticket prompt|Ticket prompt'):
+        ticket_worker.build_worker(conf, 'TENANT_A', provider, owner='fixture-worker', prompt_version=version)
+
+
+def test_approval_worker_rejects_prompt_flag_before_bootstrap():
+    with pytest.raises(SystemExit) as stopped:
+        ticket_worker.main(['--tenant', 'TENANT_A', '--approved-tickets-only', '--prompt-version', CANARY_PROMPT])
+    assert stopped.value.code == 2
 
 
 def test_cli_once_requires_runtime_schema_and_restricted_role(monkeypatch):

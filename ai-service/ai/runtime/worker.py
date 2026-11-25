@@ -66,6 +66,26 @@ class ExecutionContext:
             raise ValueError('Payload schema does not match execution kind')
         return self._step(key,kind,effect,intent_ref,execute,payload_schema=schema)
 
+    def prior_step_intent(self, key):
+        """Read a previously reserved logical step's immutable intent under the current lease."""
+        self.check_active()
+        _, previous = self._step_history(key)
+        if not previous:
+            return None
+        first = previous[0]
+        intent = reference(first['intent_ref'])
+        digest = fingerprint({'kind': first['kind'], 'effect': first['effect'], 'intent': intent})
+        if any(step['intent_hash'] != digest or step['intent_ref'] != intent
+               or step['kind'] != first['kind'] or step['effect'] != first['effect'] for step in previous):
+            raise RuntimeConflict('Logical step intent history is inconsistent')
+        return intent
+
+    def _step_history(self, key):
+        prefix = 's' + fingerprint(identifier(key))[:40] + ':'
+        previous = [step for step in self.store.steps(self.lease.tenant, self.lease.run_id)
+                    if step['step_key'].startswith(prefix)]
+        return prefix, previous
+
     def _value(self,result,step_no,schema):
         if schema is None:return result
         try:
@@ -82,13 +102,10 @@ class ExecutionContext:
         return payload.value
 
     def _step(self,key,kind,effect,intent_ref,execute,payload_schema=None):
-        identifier(key)
         intent_ref = reference(intent_ref)
         self.check_active()
-        prefix = 's' + fingerprint(key)[:40] + ':'
+        prefix, previous = self._step_history(key)
         digest = fingerprint({'kind': kind, 'effect': effect, 'intent': intent_ref})
-        previous = [step for step in self.store.steps(self.lease.tenant, self.lease.run_id)
-                    if step['step_key'].startswith(prefix)]
         if any(step['intent_hash'] != digest for step in previous):
             raise RuntimeConflict('Logical step intent changed across attempts')
         for step in reversed(previous):

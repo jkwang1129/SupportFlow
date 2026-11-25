@@ -1773,3 +1773,13 @@ Windows 11、Python 3.11.5、本机 HTTP 向量供应商、隔离 PostgreSQL 17 
 - `python scripts/rag_quality_benchmark.py --output .local/implementation/e13-rag-rewrite.json` 通过冻结合成集的两种检索编排，各 25 题，越权召回和门禁违规均为 0。两组 Recall@5 均为 0.979167，适用样本各 16 题。该基准使用既定检索与生成夹具，传输协议和供应商故障另由上述用例覆盖。
 
 原始 Python 报告为 `.local/implementation/e13-python-final.xml`，知识库报告为 `.local/verification/knowledge-isolation.xml`，隔离联调日志为 `.local/implementation/e13-pg-isolation.log`。在真实供应商上仍需验证批量响应兼容性与检索质量。
+
+## E14 工单 Prompt 版本发布与回退（2026-11-25）
+
+Windows 11、Python 3.11.5、Temurin JDK 25、隔离 PostgreSQL 17、真实客服 JAR 与合成模型 HTTP。实现覆盖工单 Prompt 目录、Worker 参数、Runtime 版本恢复、模型检查点和离线回放。发布和回退见 [ADR-0073](decisions/0073-ticket-planner-prompt-release.md)。
+
+- 默认 Python 套件 1186 项通过，488 项在默认环境下跳过。新增的 11 项快速回归覆盖旧版固定摘要、显式试用、未知版本与供应商不兼容拒绝、工具目录边界和带版本回放。
+- `python scripts/test-agent-runtime.py --with-java-delivery` 中 479 项 Runtime 数据库测试全部通过。新增 3 项数据库回归。发布和回退两个方向分别丢失一次已提交的 MODEL 检查点确认，由设定另一版本的 Worker 恢复。每个任务合计 2 次模型请求、2 个 MODEL 预留，恢复前后保留原版本。供应商变为不兼容配置时，观察到 0 次额外模型请求。
+- 实际签名访客消息、Java 投递、受限 Runtime、Worker CLI 和 MCP 联调共通过 10 个工单只读场景。显式试用的 Worker 真实发出 2 次模板一致的 v2 请求，两次 MODEL 事件都显示 `ticket-plan-v2`，运行成功。模型使用的实际渲染摘要为 `3006c484161bb62174d08b8f2e4d285331aeb9ceead7b59f83560174ae6322ed`。4 条既有服务录制继续通过离线回放。
+
+原始 Python 测试报告和 Runtime 联调日志分别保存为 `.local/implementation/e14-python.xml`、`.local/implementation/e14-runtime.log`，真实库与工单报告保存于 `.local/implementation/e14-evidence/`。数据验证发布、恢复及权限边界。真实模型质量和按流量比例分配仍待单独验收。

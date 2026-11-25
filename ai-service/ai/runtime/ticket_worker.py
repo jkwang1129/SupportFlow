@@ -17,6 +17,7 @@ from .mcp_ticket import McpTicketClient
 from .source import SourceClient
 from .store import RuntimeStore
 from .ticket_loop import TicketReadLoop
+from .ticket_prompts import STABLE_PROMPT, TICKET_PROMPTS
 from .ticket_creation import TicketCreationClient
 from .ticket_write_tool import ticket_create_tool
 from .tickets import TicketClient
@@ -28,7 +29,7 @@ PROVIDERS = ('qwen', 'deepseek')
 logger = logging.getLogger(__name__)
 
 
-def build_worker(settings, tenant, provider, *, owner):
+def build_worker(settings, tenant, provider, *, owner, prompt_version=STABLE_PROMPT):
     tenant_code(tenant)
     if not settings.runtime_api_enabled:
         raise ValueError('Runtime receiver must be explicitly enabled')
@@ -37,7 +38,7 @@ def build_worker(settings, tenant, provider, *, owner):
     config = provider_conf(provider, getattr(settings, provider + '_api_key'),
                            getattr(settings, provider + '_base_url'), getattr(settings, provider + '_model'))
     profile = ChatProfile(tenant=tenant, profile_ref='ticket-read-' + provider + '-v1',
-                          prompt_version='ticket-plan-v1', **config)
+                          prompt_version=prompt_version, **config)
     base = settings.customer_runtime_url
     secret = settings.customer_secret.get_secret_value()
     mcp_secret = settings.runtime_ticket_mcp_secret.get_secret_value()
@@ -76,13 +77,18 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--provider', choices=PROVIDERS)
     mode.add_argument('--approved-tickets-only', action='store_true', help='Execute existing approved ticket proposals')
+    parser.add_argument('--prompt-version', choices=tuple(TICKET_PROMPTS),
+                        help='Prompt for newly bound read tasks; defaults to the stable version')
     parser.add_argument('--once', action='store_true', help='Run at most one due task and exit')
     args = parser.parse_args(argv)
+    if args.approved_tickets_only and args.prompt_version is not None:
+        parser.error('--prompt-version requires --provider')
     try:
         settings = get_settings()
         owner = 'ticket-worker:' + uuid4().hex
         worker = (build_approval_worker(settings, args.tenant, owner=owner) if args.approved_tickets_only
-                  else build_worker(settings, args.tenant, args.provider, owner=owner))
+                  else build_worker(settings, args.tenant, args.provider, owner=owner,
+                                    prompt_version=args.prompt_version or STABLE_PROMPT))
         if runtime_missing():
             logger.error('Ticket worker schema or role is unavailable')
             return 1

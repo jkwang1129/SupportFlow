@@ -75,6 +75,10 @@ def planner_server(scenarios,connect,*,mcp_secret=None,mcp_call=None):
                         else:db.execute('UPDATE ticket SET customer_id=%s WHERE id=%s',(case['customer_id']+1,case['ticket_id']))
                 content = json.dumps(action, ensure_ascii=False)
                 if case['mode']=='configured_worker':
+                    policy = body['messages'][0]['content']
+                    assert 'no single unambiguous ticket number' in policy
+                    policy_digest = fingerprint(policy)
+                    assert case.setdefault('configured_prompt_sha256', policy_digest) == policy_digest
                     if turn==0:
                         content = ' '*4736 + json.dumps(action, ensure_ascii=False, indent=2) + '\n'*8
                         case['raw_assistant_bytes'] = len(content.encode())
@@ -323,7 +327,8 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                             SUPPORTFLOW_AI_RUNTIME_TICKET_MCP_SECRET=mcp_key,
                             SUPPORTFLOW_AI_QWEN_API_KEY=model_key, SUPPORTFLOW_AI_QWEN_BASE_URL=model_base,
                             SUPPORTFLOW_AI_QWEN_MODEL='fixture-chat')
-                        command = [sys.executable, '-m', 'ai.runtime.ticket_worker', '--tenant', tenant, '--provider', 'qwen', '--once']
+                        command = [sys.executable, '-m', 'ai.runtime.ticket_worker', '--tenant', tenant,
+                                   '--provider', 'qwen', '--prompt-version', 'ticket-plan-v2', '--once']
                         options = dict(capture_output=True, text=True, encoding='utf-8',
                                        timeout=35, creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
                         with TemporaryDirectory(prefix='supportflow-worker-fixture-') as directory:
@@ -371,6 +376,10 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         assert track['customer_delivery']['elapsed_to_receipt_ms'] >= 0
                         timeline_cases['visitor_finished' if mode == 'configured_worker' else mode] = track
                     if mode == 'configured_worker':
+                        assert [step['version'] for step in track['python_runtime']['steps']
+                                if step['operation'] == 'model.chat'] == ['ticket-plan-v2', 'ticket-plan-v2']
+                        assert [step['version'] for step in track['python_runtime']['steps']
+                                if step['operation'] == 'ticket.agent'] == ['ticket-plan-v2']
                         call_env = {name: os.environ[name] for name in ('PATH','SystemRoot','WINDIR','TEMP','TMP') if name in os.environ}
                         call_env.update({AI_DSN: trace_ai_dsn, CUSTOMER_DSN: trace_customer_dsn, 'PYTHONUTF8': '1'})
                         command = [sys.executable, '-m', 'ai.runtime.trace_timeline', '--trace-id', source.trace_id, '--tenant']
@@ -409,6 +418,8 @@ def verify_ticket_loop(connect,environment,passwords,secret,ai_base,runtime_env)
                         reports=len(reports),report_status=reports[0]['status'] if reports else None,actual_ticket_status=fact,source_messages=messages,result_receipts=receipts,tickets=tickets,
                         worker_process_restart=mode=='process_restart',configured_worker_process=mode=='configured_worker',
                         trace_id=trace['run']['trace_id'],
+                        configured_prompt_version='ticket-plan-v2' if mode=='configured_worker' else None,
+                        configured_prompt_sha256=scenario.get('configured_prompt_sha256'),
                         raw_assistant_bytes=scenario.get('raw_assistant_bytes'), canonical_assistant_bytes=scenario.get('canonical_assistant_bytes'),
                         mcp_calls=mcp_runs.count(run),
                         fixture_lease_seconds=3 if mode=='process_restart' else 30))
