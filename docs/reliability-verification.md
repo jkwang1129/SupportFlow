@@ -1912,3 +1912,13 @@ Windows 11、Python 3.11.5、Temurin 25.0.5、隔离 PostgreSQL 17。Customer 01
 实际 CLI 预览选中 2 条、删除 0 条，显式执行删除 2 条，再执行删除 0 条。逐行比对保留本租户 1 条未过期切片、另一租户 1 条过期切片和生效表 1 条切片。独立维护套件 6 项通过，覆盖执行权限、跨租户、限批、锁跳过、两条数据库连接并发清理、只读和事务回滚、会话时区变化。Java 过期暂存测试验证即使文档与切片数量相符，也拒绝切换并回滚正文。
 
 Java 专项 180 项和 AI 知识库专项 35 项通过。六库 104 张表初始化和结构契约通过。升级覆盖在 `Asia/Shanghai` 会话时区生成的旧暂存时间，比较转换后的同一时间点，保留原暂存行、知识和工单数据。17 项迁移回归通过。CLI 实测和专项报告保存于 `.local/implementation/e25-kb-stage-retention.json`、`e25-kb-stage-retention.xml` 和 `e25-java-kb.xml`。真实生产日程、备份副本期限和历史正式索引版本仍需验收。
+
+## E26 上一版知识索引回滚（2026-11-25）
+
+Windows 11、Temurin 25.0.5、Python 3.11.5、隔离 PostgreSQL 17。Customer 011 的替换操作留下 1 条生效切片和 0 条历史切片。Customer 012 在同一更新事务保存上一份就绪索引。接口、部署顺序和回退见 [ADR-0085](decisions/0085-kb-previous-index-rollback.md)。
+
+Java 专项 183 项通过，含 10 项知识文档生命周期测试。新回归逐字段核对正文与保存的 1,024 维向量，验证文件型空正文恢复、下线状态维持、再次索引后的版本冲突、跨租户拒绝、重复请求拒绝和切换失败后的快照保留。AI 知识库专项 35 项全部通过。恢复使用原向量，测试核对回滚没有再次调用索引器。
+
+106 张表的六库初始化与结构契约通过。011 至 012 升级前已有生效、暂存及旧 `kb_version` 数据，升级保留原值，两张回滚表初始为空。17 项迁移回归通过。实际服务在默认新库中上传并发布文件，编辑后按 UUID 恢复原 3 条切片，跨租户和重复请求均拒绝，且检索继续命中恢复的知识。CI 在三个初始化环境复跑，并演练快照表就绪故障和恢复。
+
+本地复现命令为 `python scripts/test-customer-rls.py --with-ai`、`python scripts/test-versioned-migrations.py` 以及构建后运行 `python scripts/test-security-flow.py`。原始报告见 `.local/implementation/e26-java-kb.xml`、`e26-migration.log` 和 `e26-services.log`。历史保留覆盖一个先前版本，生产归档期限和多版本回滚待验收。

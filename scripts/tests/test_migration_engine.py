@@ -22,7 +22,7 @@ class MigrationParserTest(unittest.TestCase):
 
     def test_manifest_has_explicit_ordered_database_plans(self):
         plans=load_plan()
-        self.assertEqual(["001","002","003","004","005","006","007","008","009","010","011"],[m.version for m in plans["customer_db"]])
+        self.assertEqual(["001","002","003","004","005","006","007","008","009","010","011","012"],[m.version for m in plans["customer_db"]])
         self.assertEqual(["001"],[m.version for m in plans["billing_db"]])
         for database in ("ai_db", "user_db", "tenant_db", "ops_db"):
             self.assertEqual(["001","002","003","004","005","006","007","008","009","010","011","012","013","014","015","016"] if database=='ai_db' else ["001"], [m.version for m in plans[database]])

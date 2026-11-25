@@ -36,4 +36,39 @@
           FROM staged
     </insert>
 
+    <insert id="savePrevious">
+        WITH source AS MATERIALIZED (
+            SELECT id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model, create_time
+              FROM kb_chunk WHERE tenant_code = #{tenantCode} AND doc_id = #{docId}
+        ), saved AS (
+            INSERT INTO kb_index_previous (tenant_code, doc_id, version_id, content_snapshot, chunk_count)
+            SELECT tenant_code, doc_id, CAST(#{versionId} AS uuid), #{content, jdbcType=VARCHAR}, count(*)
+              FROM source GROUP BY tenant_code, doc_id
+            RETURNING tenant_code, doc_id
+        )
+        INSERT INTO kb_index_previous_chunk (id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model, create_time)
+        SELECT c.id, c.tenant_code, c.doc_id, c.chunk_no, c.content, c.char_count, c.token_count, c.embedding, c.embedding_model, c.create_time
+          FROM source c JOIN saved USING (tenant_code, doc_id)
+    </insert>
+
+    <select id="findPrevious" resultType="io.supportflow.customer.mapper.KbChunkMapper$PreviousIndex">
+        SELECT version_id::text AS version_id, content_snapshot, chunk_count
+          FROM kb_index_previous WHERE tenant_code = #{tenantCode} AND doc_id = #{docId}
+    </select>
+
+    <select id="findRollbackOption" resultType="io.supportflow.customer.dto.bot.KbIndexRollbackOption">
+        SELECT version_id::text AS version_id, chunk_count
+          FROM kb_index_previous WHERE tenant_code = #{tenantCode} AND doc_id = #{docId}
+    </select>
+
+    <insert id="restorePrevious">
+        INSERT INTO kb_chunk (id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model, create_time)
+        SELECT id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model, create_time
+          FROM kb_index_previous_chunk WHERE tenant_code = #{tenantCode} AND doc_id = #{docId}
+    </insert>
+
+    <delete id="deletePrevious">
+        DELETE FROM kb_index_previous WHERE tenant_code = #{tenantCode} AND doc_id = #{docId}
+    </delete>
+
 </mapper>

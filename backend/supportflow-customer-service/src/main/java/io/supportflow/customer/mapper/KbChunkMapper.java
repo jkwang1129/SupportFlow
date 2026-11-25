@@ -1,6 +1,7 @@
 package io.supportflow.customer.mapper;
 
 import io.supportflow.customer.entity.KbChunk;
+import io.supportflow.customer.dto.bot.KbIndexRollbackOption;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -31,4 +32,17 @@ public interface KbChunkMapper extends BaseMapper<KbChunk> {
 
     int activateAttempt(@Param("tenantCode") String tenantCode, @Param("docId") long docId,
                         @Param("attemptId") String attemptId);
+
+    int savePrevious(@Param("tenantCode") String tenantCode, @Param("docId") long docId,
+                     @Param("versionId") String versionId, @Param("content") String content);
+
+    PreviousIndex findPrevious(@Param("tenantCode") String tenantCode, @Param("docId") long docId);
+
+    KbIndexRollbackOption findRollbackOption(@Param("tenantCode") String tenantCode, @Param("docId") long docId);
+
+    int restorePrevious(@Param("tenantCode") String tenantCode, @Param("docId") long docId);
+
+    int deletePrevious(@Param("tenantCode") String tenantCode, @Param("docId") long docId);
+
+    record PreviousIndex(String versionId, String contentSnapshot, int chunkCount) {}
 }

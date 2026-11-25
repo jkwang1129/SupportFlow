@@ -11,6 +11,7 @@ import io.supportflow.customer.dto.bot.CitationVO;
 import io.supportflow.customer.dto.bot.DocVO;
 import io.supportflow.customer.dto.bot.IndexResult;
 import io.supportflow.customer.dto.bot.KbDetailVO;
+import io.supportflow.customer.dto.bot.KbIndexRollbackOption;
 import io.supportflow.customer.dto.bot.KbHitVO;
 import io.supportflow.customer.dto.bot.KbOverviewVO;
 import io.supportflow.customer.dto.bot.KbSearchVO;
@@ -371,7 +372,6 @@ public class KbService {
         doc.setCategoryId(categoryId);
         doc.setSummary(update.getSummary());
         if (contentChanged) {
-            doc.setContent(newContent);
             indexText(tenant, doc, newContent);
         }
         return toVO(requireDoc(tenant, id));
@@ -508,6 +508,38 @@ public class KbService {
         return toVO(requireDoc(tenant, id));
     }
 
+    public KbIndexRollbackOption rollbackOption(LoginUser user, long id) {
+        String tenant = tenantOf(user);
+        requireDoc(tenant, id);
+        return chunkMapper.findRollbackOption(tenant, id);
+    }
+
+    @Transactional
+    public DocVO rollbackIndex(LoginUser user, long id, UUID versionId) {
+        String tenant = tenantOf(user);
+        requireDocForWrite(tenant, id);
+        var previous = chunkMapper.findPrevious(tenant, id);
+        if (previous == null || !previous.versionId().equals(versionId.toString())) {
+            throw new BizException(40901, "索引回滚版本已变化，请重新检查");
+        }
+        chunkMapper.deleteByDoc(tenant, id);
+        int restored = chunkMapper.restorePrevious(tenant, id);
+        if (restored != previous.chunkCount()) {
+            throw new BizException(50001, "上一版索引切片数量无法核验");
+        }
+        documentMapper.update(null, Wrappers.<KbDocument>lambdaUpdate()
+                .eq(KbDocument::getTenantCode, tenant).eq(KbDocument::getId, id)
+                .set(KbDocument::getContent, previous.contentSnapshot())
+                .set(KbDocument::getIndexStatus, INDEX_DONE)
+                .set(KbDocument::getChunkCount, restored)
+                .set(KbDocument::getIndexMessage, "已恢复上一版索引，共 " + restored + " 个切片")
+                .set(KbDocument::getUpdateTime, LocalDateTime.now())
+                .set(KbDocument::getEditor, String.valueOf(user.userId())));
+        chunkMapper.deletePrevious(tenant, id);
+        log.info("知识索引回滚 tenant={} docId={} version={} actor={}", tenant, id, versionId, user.userId());
+        return toVO(requireDoc(tenant, id));
+    }
+
     /** 删除文档：软删台账 + 清掉切片（切片留着会污染检索结果）。 */
     @Transactional
     public void delete(LoginUser user, long id) {
@@ -521,6 +553,7 @@ public class KbService {
         documentMapper.updateById(update);
         chunkMapper.deleteByDoc(tenant, id);
         chunkMapper.deleteStagedByDoc(tenant, id);
+        chunkMapper.deletePrevious(tenant, id);
         log.info("知识文档已删除 tenant={} docId={} title={}", tenant, id, doc.getTitle());
     }
 
@@ -566,6 +599,10 @@ public class KbService {
     private void applyIndexResult(String tenant, KbDocument doc, UUID attemptId, IndexResult result) {
         if (!String.valueOf(doc.getId()).equals(result.docId()) || result.chunkCount() < 1) {
             throw new BizException(50001, "知识索引结果无法核验，请重试");
+        }
+        chunkMapper.deletePrevious(tenant, doc.getId());
+        if (Integer.valueOf(INDEX_DONE).equals(doc.getIndexStatus())) {
+            chunkMapper.savePrevious(tenant, doc.getId(), UUID.randomUUID().toString(), doc.getContent());
         }
         chunkMapper.deleteByDoc(tenant, doc.getId());
         int activated = chunkMapper.activateAttempt(tenant, doc.getId(), attemptId.toString());

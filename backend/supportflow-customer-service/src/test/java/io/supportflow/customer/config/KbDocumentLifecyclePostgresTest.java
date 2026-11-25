@@ -55,6 +55,7 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
     void removeDocument() {
         if (documentId == 0) return;
         scoped(() -> {
+            jdbc.update("DELETE FROM kb_index_previous WHERE doc_id=?", documentId);
             jdbc.update("DELETE FROM kb_chunk_stage WHERE doc_id=?", documentId);
             jdbc.update("DELETE FROM kb_chunk WHERE doc_id=?", documentId);
             return jdbc.update("DELETE FROM kb_document WHERE id=?", documentId);
@@ -185,6 +186,66 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
     }
 
     @Test
+    void rollbackRestoresExactBodyAndVectorWithoutCallingTheIndexerAgain() {
+        String vector = "[1" + ",0".repeat(1023) + "]";
+        scoped(() -> jdbc.update("UPDATE kb_chunk SET embedding=?::vector, embedding_model='previous-model' WHERE doc_id=?",
+                vector, documentId));
+        indexEdit(NEW_POLICY);
+        var option = scoped(() -> knowledge.rollbackOption(EDITOR, documentId));
+        assertEquals(1, option.chunkCount());
+        assertEquals(NEW_POLICY, activeChunk());
+        tx(() -> knowledge.changeStatus(EDITOR, documentId, 4));
+        var restored = tx(() -> knowledge.rollbackIndex(EDITOR, documentId, UUID.fromString(option.versionId())));
+        assertEquals(4, restored.status());
+        assertEquals(OLD_POLICY, activeChunk());
+        assertEquals(OLD_POLICY, scoped(() -> jdbc.queryForObject("SELECT content FROM kb_document WHERE id=?", String.class, documentId)));
+        assertEquals(vector, scoped(() -> jdbc.queryForObject("SELECT embedding::text FROM kb_chunk WHERE doc_id=?", String.class, documentId)));
+        assertEquals("previous-model", scoped(() -> jdbc.queryForObject("SELECT embedding_model FROM kb_chunk WHERE doc_id=?", String.class, documentId)));
+        assertNull(scoped(() -> knowledge.rollbackOption(EDITOR, documentId)));
+        var repeat = assertThrows(BizException.class, () -> tx(() -> knowledge.rollbackIndex(EDITOR, documentId, UUID.fromString(option.versionId()))));
+        assertEquals(40901, repeat.getCode());
+        assertEquals(OLD_POLICY, activeChunk());
+        verify(ai, times(1)).indexText(eq("TENANT_A"), eq(documentId), any(UUID.class), eq(NEW_POLICY));
+        verifyNoMoreInteractions(ai);
+    }
+
+    @Test
+    void aLaterEditReplacesTheRollbackTargetAndOtherTenantsCannotUseIt() {
+        indexEdit(NEW_POLICY);
+        var oldOption = scoped(() -> knowledge.rollbackOption(EDITOR, documentId));
+        String latest = "退款在3个工作日内到账。";
+        indexEdit(latest);
+        var current = scoped(() -> knowledge.rollbackOption(EDITOR, documentId));
+        assertNotEquals(oldOption.versionId(), current.versionId());
+        var stale = assertThrows(BizException.class, () -> tx(() -> knowledge.rollbackIndex(EDITOR, documentId, UUID.fromString(oldOption.versionId()))));
+        assertEquals(40901, stale.getCode());
+        var foreign = new LoginUser(102, "U102", "editor", 2, "TENANT_B");
+        var denied = assertThrows(BizException.class, () -> TenantContext.bind("TENANT_B", () -> transaction.execute(
+                status -> knowledge.rollbackIndex(foreign, documentId, UUID.fromString(current.versionId())))));
+        assertEquals(40401, denied.getCode());
+        assertEquals(latest, activeChunk());
+        tx(() -> knowledge.rollbackIndex(EDITOR, documentId, UUID.fromString(current.versionId())));
+        assertEquals(NEW_POLICY, activeChunk());
+    }
+
+    @Test
+    void failedActivationPreservesThePreviousRollbackAndRollbackCanRestoreNullFileBody() {
+        scoped(() -> jdbc.update("UPDATE kb_document SET content=NULL WHERE id=?", documentId));
+        indexEdit(NEW_POLICY);
+        var candidate = scoped(() -> knowledge.rollbackOption(EDITOR, documentId));
+        String failing = "失败的切片批次。";
+        when(ai.indexText(eq("TENANT_A"), eq(documentId), any(UUID.class), eq(failing))).thenAnswer(call -> {
+            stageChunk(call.getArgument(2), failing);
+            return indexResult(failing, 2);
+        });
+        assertThrows(BizException.class, () -> tx(() -> knowledge.update(EDITOR, documentId, null, null, failing, null)));
+        assertEquals(candidate, scoped(() -> knowledge.rollbackOption(EDITOR, documentId)));
+        tx(() -> knowledge.rollbackIndex(EDITOR, documentId, UUID.fromString(candidate.versionId())));
+        assertTrue(scoped(() -> jdbc.queryForObject("SELECT content IS NULL FROM kb_document WHERE id=?", Boolean.class, documentId)));
+        assertEquals(OLD_POLICY, activeChunk());
+    }
+
+    @Test
     void foreignAndDeletedDocumentsCannotStartIndexingOrPublication() {
         var foreign = new LoginUser(102, "U102", "editor", 2, "TENANT_B");
         var denied = assertThrows(BizException.class, () -> TenantContext.bind("TENANT_B",
@@ -198,6 +259,8 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
 
     @Test
     void deletingDocumentClearsActiveAndStagedChunksWithoutAnAiRequest() throws SQLException {
+        indexEdit(NEW_POLICY);
+        clearInvocations(ai);
         stageChunk(UUID.randomUUID(), NEW_POLICY);
         tx(() -> {
             knowledge.delete(EDITOR, documentId);
@@ -209,7 +272,17 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
                 "SELECT count(*) FROM kb_chunk WHERE doc_id=?", Integer.class, documentId)));
         assertEquals(0, scoped(() -> jdbc.queryForObject(
                 "SELECT count(*) FROM kb_chunk_stage WHERE doc_id=?", Integer.class, documentId)));
+        assertEquals(0, scoped(() -> jdbc.queryForObject(
+                "SELECT count(*) FROM kb_index_previous_chunk WHERE doc_id=?", Integer.class, documentId)));
         verifyNoInteractions(ai);
+    }
+
+    private void indexEdit(String content) {
+        when(ai.indexText(eq("TENANT_A"), eq(documentId), any(UUID.class), eq(content))).thenAnswer(call -> {
+            stageChunk(call.getArgument(2), content);
+            return indexResult(content, 1);
+        });
+        tx(() -> knowledge.update(EDITOR, documentId, null, null, content, null));
     }
 
     private <T> T tx(Supplier<T> action) {

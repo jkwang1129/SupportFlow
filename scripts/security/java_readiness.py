@@ -18,6 +18,7 @@ def verify_java_readiness(project):
         (9091, "user_db", "sys_user_role", "id", "supportflow_user"),
         (9092, "tenant_db", "tenant_usage_daily", "tenant_code", "supportflow_tenant"),
         (9093, "customer_db", "session_message", "client_msg_no", "supportflow_customer_tenant"),
+        (9093, "customer_db", "kb_index_previous_chunk", "embedding", "supportflow_customer_tenant"),
         (9094, "billing_db", "billing_usage_daily", "stat_date", "supportflow_billing"),
         (9095, "ops_db", "audit_log", "tenant_code", "supportflow_ops"),
     ]
@@ -62,4 +63,4 @@ def verify_java_readiness(project):
             finally:
                 sql(database, f'GRANT SELECT ON public."{table}" TO {role}')
             check(200)
-            print(f"Java readiness {database}: missing column/table and SELECT revocation blocked; restored; liveness stayed UP", flush=True)
+            print(f"Java readiness {database}.{table}: missing column/table and SELECT revocation blocked; restored; liveness stayed UP", flush=True)

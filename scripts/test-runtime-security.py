@@ -88,7 +88,8 @@ def scenario(legacy, with_ai_readiness=False):
         sql += '\n' + (INIT / '40-runtime-roles.sql').read_text(encoding='utf-8')
         for _ in range(2):
             result = run(cmd, input=sql, capture_output=True)
-        for migration in ('customer_db_010_kb_chunk_stage.sql', 'customer_db_011_kb_stage_retention.sql'):
+        for migration in ('customer_db_010_kb_chunk_stage.sql', 'customer_db_011_kb_stage_retention.sql',
+                          'customer_db_012_kb_previous_index.sql'):
             run(cmd, input=(ROOT/'backend/deploy/migrations/sql'/migration).read_text(encoding='utf-8'), capture_output=True)
         with connect() as conn:
             check(conn.execute("SELECT bool_and(NOT(rolsuper OR rolbypassrls OR rolcreatedb OR rolcreaterole OR rolreplication)) FROM pg_roles WHERE rolname=ANY(%s)", ([f'supportflow_{r}' for r in ROLES],)).fetchone()[0], 'all eight runtime identities restricted')
@@ -112,6 +113,8 @@ def scenario(legacy, with_ai_readiness=False):
             check(conn.execute("SELECT has_column_privilege(current_user,'kb_document','index_status','SELECT')").fetchone()[0], 'KB reads publication readiness only')
             denied(conn, 'SELECT * FROM file_meta')
             denied(conn, 'SELECT content FROM kb_document')
+            denied(conn, 'SELECT content_snapshot FROM kb_index_previous')
+            denied(conn, 'SELECT content FROM kb_index_previous_chunk')
             denied(conn, 'CREATE TABLE forbidden(id int)')
         with connect('supportflow_customer_platform') as conn:
             check(len(conn.execute('SELECT id FROM file_meta').fetchall()) == (2 if legacy else 0), 'platform can read licenses only')

@@ -172,7 +172,7 @@ def main():
             with psycopg.connect(dsn(database),autocommit=True) as connection:
                 applied=[]
                 if database=='customer_db':
-                    assert plan[-1].version=='011'
+                    assert plan[-1].version=='012'
                     applied=run_plan(connection,plan[:6])["applied"]
                     read=existing_runtime_source(connection)
                     before=read()
@@ -287,18 +287,28 @@ def main():
                     connection.execute('CREATE ROLE supportflow_kb_stage_maintenance LOGIN')
                     try:
                         with connection.transaction():
-                            connection.execute(plan[-1].content)
+                            connection.execute(plan[10].content)
                     except psycopg.errors.RaiseException as failure:
                         assert 'non-administrative' in str(failure)
                     else:
                         raise AssertionError('Unsafe knowledge staging maintenance capability accepted')
                     connection.execute('ALTER ROLE supportflow_kb_stage_maintenance NOLOGIN')
-                    upgrade011=run_plan(connection,plan)
+                    upgrade011=run_plan(connection,plan[:11])
                     assert upgrade011['applied']==['011'] and read_kb()==before_kb and read_ticket()==before_ticket
                     assert connection.execute(snapshot_stage).fetchall()==before_stage
                     assert connection.execute("SELECT public.supportflow_expired_kb_stage_batch('UPGRADE_A', 100, false)").fetchone()==(1,)
                     connection.execute('RESET TIME ZONE')
                     print('010 -> 011 preserved active and staged knowledge; rejected elevated maintenance capability and previewed existing expired row',flush=True)
+                    connection.execute("""INSERT INTO kb_version (id,tenant_code,doc_id,version_no,content_snapshot)
+                        VALUES (774103,'UPGRADE_A',774100,1,'existing historical metadata')""")
+                    previous_history = connection.execute('SELECT * FROM kb_version WHERE id=774103').fetchone()
+                    upgrade012=run_plan(connection,plan)
+                    assert upgrade012['applied']==['012'] and read_kb()==before_kb and read_ticket()==before_ticket
+                    assert connection.execute(snapshot_stage).fetchall()==before_stage
+                    assert connection.execute('SELECT * FROM kb_version WHERE id=774103').fetchone()==previous_history
+                    assert connection.execute('SELECT count(*) FROM kb_index_previous').fetchone()==(0,)
+                    assert connection.execute('SELECT count(*) FROM kb_index_previous_chunk').fetchone()==(0,)
+                    print('011 -> 012 preserved active, staged and legacy version rows; new index rollback tables start empty',flush=True)
                 if database=='ai_db':
                     assert result['applied']==['014'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
                     assert read_approval()==before_approval

@@ -78,6 +78,22 @@ assert sum(item["chunks"] for item in status_a["chunkVectorModels"]) == doc["chu
 assert status_b["chunkVectorModels"] == [] and "fallbackDocIds" not in status_a
 test.note("Java customer to Python KB", f"{doc['chunkCount']} indexed chunks; search and console diagnostics separated A/B")
 
+document_path = f"/customer/kb/documents/{doc['id']}"
+original_chunks = test.api("GET", document_path + "/chunks", a)
+test.api("PUT", document_path, a, data={"content": "信用卡退款到账期限为三个工作日。"})
+candidate = test.api("GET", document_path + "/index/previous", a)
+assert set(candidate) == {"versionId", "chunkCount"} and candidate["chunkCount"] == len(original_chunks)
+rollback_path = document_path + "/index/rollback"
+rollback_body = {"versionId": candidate["versionId"]}
+assert test.api("POST", rollback_path, b, data=rollback_body, want_failure=True) == 40401
+restored = test.api("POST", rollback_path, a, data=rollback_body)
+assert restored["status"] == 3 and restored["chunkCount"] == len(original_chunks)
+assert test.api("GET", document_path + "/chunks", a) == original_chunks
+assert test.api("GET", document_path, a)["contentSource"] == "chunks"
+assert test.api("POST", rollback_path, a, data=rollback_body, want_failure=True) == 40901
+assert test.api("POST", "/customer/kb/search", a, data={"query": question, "topK": 5})["results"]
+test.note("KB one-version rollback", f"{len(original_chunks)} original chunks restored; foreign and repeated requests denied")
+
 channel = test.api("POST", "/customer/channels", a, data={"name": "Local test channel", "channelType": 1})
 if channel["status"] != 1:
     channel = test.api("POST", f"/customer/channels/{channel['id']}/status", a, data={"enabled": True})

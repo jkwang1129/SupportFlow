@@ -11,6 +11,7 @@ import io.supportflow.customer.dto.bot.ChunkVO;
 import io.supportflow.customer.dto.bot.DocVO;
 import io.supportflow.customer.dto.bot.DocumentBody;
 import io.supportflow.customer.dto.bot.KbDetailVO;
+import io.supportflow.customer.dto.bot.KbIndexRollbackOption;
 import io.supportflow.customer.dto.bot.KbOverviewVO;
 import io.supportflow.customer.dto.bot.KbSearchVO;
 import io.supportflow.customer.dto.bot.SearchBody;
@@ -35,6 +36,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * 企业知识库：文档台账、上传索引、切片预览、检索测试。
@@ -137,6 +139,18 @@ public class KbController {
     ) {
         return ApiResponse.ok(kbService.reindex(LoginUserContext.require(), id));
     }
+
+    @GetMapping("/documents/{id}/index/previous")
+    public ApiResponse<KbIndexRollbackOption> rollbackOption(@PathVariable long id) {
+        return ApiResponse.ok(kbService.rollbackOption(LoginUserContext.require(), id));
+    }
+
+    @PostMapping("/documents/{id}/index/rollback")
+    public ApiResponse<DocVO> rollbackIndex(@PathVariable long id, @Valid @RequestBody IndexRollbackBody body) {
+        return ApiResponse.ok(kbService.rollbackIndex(LoginUserContext.require(), id, body.versionId()));
+    }
+
+    public record IndexRollbackBody(@NotNull UUID versionId) {}
 
     /**
      * 发布 / 下线

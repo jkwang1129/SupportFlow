@@ -12,6 +12,7 @@
     {"database":"customer_db","version":"009","name":"immutable ticket creation receipts","source":"backend/deploy/migrations/sql/customer_db_009_ticket_create_receipt.sql"},
     {"database":"customer_db","version":"010","name":"isolated knowledge index staging","source":"backend/deploy/migrations/sql/customer_db_010_kb_chunk_stage.sql"},
     {"database":"customer_db","version":"011","name":"bounded expired knowledge staging retention","source":"backend/deploy/migrations/sql/customer_db_011_kb_stage_retention.sql"},
+    {"database":"customer_db","version":"012","name":"single previous knowledge index rollback","source":"backend/deploy/migrations/sql/customer_db_012_kb_previous_index.sql"},
     {"database":"billing_db","version":"001","name":"usage batch deduplication ledger","source":"backend/deploy/db-init/30-usage-batches.sql"},
     {"database":"ai_db","version":"001","name":"adopt canonical AI baseline","kind":"baseline","source":"backend/deploy/migrations/baselines/ai_db.json"},
     {"database":"ai_db","version":"002","name":"durable runtime execution primitives","source":"backend/deploy/migrations/sql/ai_db_002_agent_runtime.sql"},
