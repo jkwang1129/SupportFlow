@@ -108,7 +108,7 @@ def apply_review(cases, indexed, review, source_sha256):
             'correct': decision == expected['outcome'] and all(facts) and not item['material_error'],
             'facts': fraction(sum(facts), len(facts)), 'citations': fraction(len(supported), len(indexes)),
             'reason': item['reason'], 'unsupported_valid_citations': sorted(structurally_valid - set(supported)),
-            'decision_disagrees': decision != (observation['decision'] or 'error'),
+            'decision_disagrees': decision != ('handoff' if observation.get('handoff_recommended') else observation['decision'] or 'error'),
         })
     require(seen == indexed.keys(), 'review must cover every paired observation')
     profiles = sorted({profile for _, profile in indexed})

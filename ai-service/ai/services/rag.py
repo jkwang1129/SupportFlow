@@ -128,12 +128,16 @@ async def compose_answer(question: str, hits: list[dict[str, Any]],
 
 
 async def compose_answer_details(question: str, hits: list[dict[str, Any]], tenant_code: str = "", *,
-                                 extractive_only: bool = False, require_grounded_reply: bool = False) -> ComposedAnswer:
+                                 extractive_only: bool = False, require_grounded_reply: bool = False,
+                                 policy_review: bool = False) -> ComposedAnswer:
     """生成回答及来源，标记正文来自模型或检索原文。"""
     citations = _citations_of(hits)
     if not hits:
         return ComposedAnswer("知识库里没有查到与这个问题相关的资料。可以先到「企业知识库」上传对应文档，"
                               "或者转人工客服处理。", [], generated=False)
+    policy_review = policy_review and require_grounded_reply
+    if policy_review and grounded_reply.conflicting_policy_numbers(question, citations):
+        return ComposedAnswer('当前资料对同一规则的数值表述不一致，请联系人工客服核验。', [], False, 'policy_conflict')
 
     chosen, desc = await asyncio.to_thread(resolve_provider, tenant_code)
     if chosen is None:
@@ -150,6 +154,8 @@ async def compose_answer_details(question: str, hits: list[dict[str, Any]], tena
     prompt = SYSTEM_PROMPT + (EXTRACTIVE_INSTRUCTIONS if extractive_only else "")
     if require_grounded_reply:
         prompt = grounded_reply.PROMPT + (grounded_reply.EXTRACTIVE_PROMPT if extractive_only else "")
+        if policy_review:
+            prompt += grounded_reply.POLICY_REVIEW_PROMPT
         model_input = grounded_reply.build_input(question, citations)
     else:
         model_input = build_prompt(question, hits)
@@ -168,11 +174,13 @@ async def compose_answer_details(question: str, hits: list[dict[str, Any]], tena
     answer = message_content(data)
     if require_grounded_reply:
         try:
-            text = grounded_reply.parse_grounded_reply(answer, citations)
+            text = grounded_reply.parse_grounded_reply(answer, citations, allow_policy_review=policy_review)
         except ValueError:
             return ComposedAnswer('回答证据未通过校验，请尝试补充问题或联系人工客服。', [], True, 'invalid_grounded_reply')
         if text is None:
             return ComposedAnswer('当前资料不足，无法可靠回答。请补充问题细节，或联系人工客服。', [], True, 'model_insufficient_evidence')
+        if text is grounded_reply.PolicyReview.REQUIRED:
+            return ComposedAnswer('根据当前资料，此情况需要人工核验。请联系人工客服处理。', [], True, text.value)
         return ComposedAnswer(text, citations, generated=True)
     if not answer:
         raise RuntimeError("大模型返回了空回答")

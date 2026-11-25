@@ -106,6 +106,7 @@ class Settings(BaseSettings):
     rag_keyword_min_score: float = 0.12
     rag_require_extractive_support: bool = False
     rag_require_grounded_reply: bool = False
+    rag_require_policy_review: bool = False
     brain_context_max_bytes: int = Field(default=0, ge=0, le=32768)
 
     # 训练版本做意图匹配时的相似度门槛：低于它就不采信（交回字面规则匹配）。

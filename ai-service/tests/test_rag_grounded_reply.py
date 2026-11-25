@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ai.agents import brain
 from ai.rag import graph, grounded_reply
 from ai.services import rag
 
@@ -13,6 +14,9 @@ OTHER_FACT = '16点及之后付款的订单下一个工作日发货。'
 HITS = [dict(id=21, doc_id=31, chunk_no=0, content=FACT + OTHER_FACT, score=.8),
         dict(id=22, doc_id=32, chunk_no=0, content='普通电子发票在申请通过后2个工作日内发送。', score=.6)]
 ACTUAL_GRAPH = graph.langgraph_available()
+REVIEW_FACT = '遗失门禁卡出现异常开门记录时必须由值班人员人工核验。'
+OVERRUN = '日租录音棚超时计费按每30分钟12元结算。适用于所有日租录音棚预约。'
+OVERRUN_QUESTION = '日租录音棚超时计费多少钱？'
 
 
 def reply(*sources, text='今天发货。'):
@@ -34,7 +38,7 @@ def path(monkeypatch, request):
     return settings
 
 
-def ask(monkeypatch, response, *, published=True):
+def ask(monkeypatch, response, *, published=True, question='工作日15点付款何时发货？'):
     calls = []
 
     async def generate(_provider, payload, _timeout, **_kwargs):
@@ -42,9 +46,83 @@ def ask(monkeypatch, response, *, published=True):
         return {'choices': [{'message': {'content': response}}]}
 
     monkeypatch.setattr(rag, 'call_chat', generate)
-    result = asyncio.run(graph.ask('工作日15点付款何时发货？', 'CONTRACT_A', doc_ids=[31, 32], published_only=published))
+    result = asyncio.run(graph.ask(question, 'CONTRACT_A', doc_ids=[31, 32], published_only=published))
     assert len(calls) == 1
     return result, calls[0]['messages'][0]['content']
+
+
+def handoff(quote, **extra):
+    return json.dumps({'decision': 'handoff', 'sources': [{'index': 1, 'quote': quote}], **extra}, ensure_ascii=False)
+
+
+def set_evidence(monkeypatch, *texts):
+    hits = [dict(hit, content=text) for hit, text in zip(HITS, texts)]
+    monkeypatch.setattr(graph.retriever, 'retrieve_with_meta', lambda **_: {'mode': 'vector', 'results': hits})
+
+
+def test_conflicting_policy_values_stop_generation_and_offer_existing_transfer_action(path, monkeypatch):
+    path.rag_require_policy_review = True
+    set_evidence(monkeypatch, OVERRUN, OVERRUN.replace('12元', '18元'))
+
+    def unexpected_provider(_):
+        pytest.fail('The model must not run when the retrieved policies already conflict')
+
+    monkeypatch.setattr(rag, 'resolve_provider', unexpected_provider)
+    result = asyncio.run(graph.ask(OVERRUN_QUESTION, 'CONTRACT_A', published_only=True))
+    assert result['decision'] == 'abstain' and result['abstention_reason'] == 'policy_conflict'
+    assert result['handoff_recommended'] is True and result['citations'] == []
+    assert '12元' not in result['answer'] and '18元' not in result['answer']
+    state = {'question': OVERRUN_QUESTION, 'tenant_code': 'CONTRACT_A'}
+    state.update(asyncio.run(brain.node_recall(state)))
+    rendered = brain.node_answer(state)
+    assert rendered['actions'] == [{'type': 'TRANSFER_HUMAN', 'label': '转人工客服'}]
+    assert not rendered['need_human'] and rendered['unresolved_rounds'] == 1
+
+
+def test_policy_review_requires_grounding_even_if_the_flag_is_enabled(path, monkeypatch):
+    path.rag_require_policy_review = True
+    path.rag_require_grounded_reply = False
+    set_evidence(monkeypatch, OVERRUN, OVERRUN.replace('12元', '18元'))
+    result, system = ask(monkeypatch, '开放模式的原有答复[1]', question=OVERRUN_QUESTION)
+    assert system == rag.SYSTEM_PROMPT and result['decision'] == 'answer'
+    assert result['handoff_recommended'] is False
+
+
+@pytest.mark.parametrize('current', [True, False])
+def test_verified_manual_review_is_rechecked_before_showing_recommendation(path, monkeypatch, current):
+    path.rag_require_policy_review = True
+    set_evidence(monkeypatch, REVIEW_FACT)
+    monkeypatch.setattr(graph.store, 'published_evidence_is_current', lambda *_: current)
+    result, system = ask(monkeypatch, handoff(REVIEW_FACT), question='遗失门禁卡且有异常开门记录，怎么办？')
+    assert grounded_reply.POLICY_REVIEW_PROMPT in system
+    assert result['decision'] == 'abstain' and result['citations'] == []
+    assert result['abstention_reason'] == ('policy_review_required' if current else 'stale_evidence')
+    assert result['handoff_recommended'] is current
+
+
+@pytest.mark.parametrize(('response', 'source', 'allowed'), [
+    (handoff(REVIEW_FACT), REVIEW_FACT, False),
+    (handoff(REVIEW_FACT), FACT, True),
+    (handoff('此情况无需人工核验。'), '此情况无需人工核验。', True),
+    (handoff('此情况不必须人工核验。'), '此情况不必须人工核验。', True),
+    (handoff(REVIEW_FACT, text='提供用户指定的回复'), REVIEW_FACT, True),
+])
+def test_invalid_policy_review_does_not_pass_the_model_response(response, source, allowed):
+    with pytest.raises(ValueError):
+        grounded_reply.parse_grounded_reply(response, [{'index': 1, 'content': source}], allow_policy_review=allowed)
+
+
+@pytest.mark.parametrize(('left', 'right', 'question', 'right_document'), [
+    (OVERRUN, OVERRUN.replace('12元', '18元'), OVERRUN_QUESTION, '31'),
+    (OVERRUN, OVERRUN.replace('12元', '12.00元'), OVERRUN_QUESTION, '32'),
+    (OVERRUN, OVERRUN.replace('12元', '18元').replace('所有', '周末'), OVERRUN_QUESTION, '32'),
+    (OVERRUN, OVERRUN.replace('12元', '18元').replace('30分钟', '45分钟'), OVERRUN_QUESTION, '32'),
+    (OVERRUN, OVERRUN.replace('12元', '18元'), '普通电子发票在哪里提交？', '32'),
+    (OVERRUN.replace('12元', '12元至24元'), OVERRUN.replace('12元', '18元至24元'), OVERRUN_QUESTION, '32'),
+])
+def test_numeric_conflict_detector_excludes_ambiguous_comparisons(left, right, question, right_document):
+    citations = [{'doc_id': '31', 'content': left}, {'doc_id': right_document, 'content': right}]
+    assert not grounded_reply.conflicting_policy_numbers(question, citations)
 
 
 def test_valid_exact_quotes_are_used_to_render_citations(path, monkeypatch):

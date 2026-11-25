@@ -12,7 +12,8 @@ import sys
 FIXTURE = Path(__file__).resolve().parents[1] / 'fixtures/evaluation/rag-quality-v1.json'
 HOLDOUT_FIXTURE = FIXTURE.with_name('rag-quality-holdout-v1.json')
 SUITES = {'baseline': FIXTURE, 'holdout': HOLDOUT_FIXTURE}
-COMPARISONS = {'rewrite': ('single_pass', 'agentic'), 'grounding': ('agentic', 'grounded')}
+COMPARISONS = {'rewrite': ('single_pass', 'agentic'), 'grounding': ('agentic', 'grounded'),
+               'policy-review': ('grounded', 'policy_review')}
 IDENTIFIER = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*')
 TENANT = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,15}')
 OUTCOMES = {'answer', 'abstain', 'handoff'}

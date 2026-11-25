@@ -69,6 +69,7 @@ class BrainState(TypedDict, total=False):
     # 回答
     citations: list[dict]
     enough: bool
+    policy_review_recommended: bool
     reply: str
     # 固定问答（寒暄/自我介绍）的直接回答：有它就跳过检索与转人工判定
     fixed_reply: str
@@ -224,6 +225,7 @@ async def node_recall(state: BrainState) -> dict:
         "citations": citations,
         "enough": enough,
         "reply": result.get("answer") or "",
+        "policy_review_recommended": result.get("handoff_recommended") is True,
         "steps": _step(state, "recall",
                        f"知识库编排（{result.get('engine')}）检索，拿到 {len(citations)} 条依据，"
                        + ("够回答" if enough else "不够回答"),
@@ -303,7 +305,7 @@ def node_answer(state: BrainState) -> dict:
     # 现在按未解决计数，并且它一旦建议找人工，就当场转人工（别让客户照着我们自己说的话再重复一遍）。
     has_material = enough and bool(state.get("citations"))
     admitted = _admits_no_basis(reply)
-    suggests_human = has_material and _suggests_human(reply)
+    suggests_human = state.get("policy_review_recommended", False) or (has_material and _suggests_human(reply))
     unresolved = (0 if (enough and not admitted)
                   else int(state.get("unresolved_rounds") or 0) + 1)
     if admitted or suggests_human:

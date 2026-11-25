@@ -35,7 +35,8 @@ from ai.services import rag
 from rag_quality_provider import ModelCallFailure, QwenGeneration
 
 TOP_K = 5
-PROFILES = {'single_pass': 0, 'agentic': graph.MAX_REWRITE_ROUNDS, 'grounded': graph.MAX_REWRITE_ROUNDS}
+PROFILES = {'single_pass': 0, 'agentic': graph.MAX_REWRITE_ROUNDS, 'grounded': graph.MAX_REWRITE_ROUNDS,
+            'policy_review': graph.MAX_REWRITE_ROUNDS}
 VECTOR_THRESHOLD = graph.VECTOR_MIN_SCORE
 KEYWORD_THRESHOLD = graph.KEYWORD_MIN_SCORE
 
@@ -75,9 +76,15 @@ def rag_input(case, db_ids):
     }
 
 
-def fixture_reply(payload, *, grounded=False):
+def fixture_reply(payload, *, grounded=False, policy_review=False):
     # Only read the first evidence block in the actual prompt. No test labels or per-question routing.
     prompt = payload['messages'][-1]['content']
+    if policy_review:
+        for source in json.loads(prompt)['sources']:
+            for sentence in grounded_reply.source_sentences(source['content']):
+                if grounded_reply.MANUAL_REVIEW.search(sentence):
+                    handoff = {'decision': 'handoff', 'sources': [{'index': source['index'], 'quote': sentence}]}
+                    return {'choices': [{'message': {'content': json.dumps(handoff, ensure_ascii=False)}}]}
     evidence = (json.loads(prompt)['sources'][0]['content'] if grounded
                 else prompt.split('\n\n【问题】\n', 1)[0].splitlines()[2])
     sentence = re.split(r'(?<=[。！？])', evidence, maxsplit=1)[0]
@@ -120,13 +127,15 @@ async def observe(question, arguments, profile, logical_ids, live=None):
         if live is not None:
             receipt = {'attempted': False}
             return await live.generate(payload, receipt)
-        return fixture_reply(payload, grounded=profile == 'grounded')
+        return fixture_reply(payload, grounded=profile in {'grounded', 'policy_review'}, policy_review=profile == 'policy_review')
 
     start = perf_counter()
     error = None
     result = {}
     graph_settings = SimpleNamespace(rag_vector_min_score=VECTOR_THRESHOLD, rag_keyword_min_score=KEYWORD_THRESHOLD,
-                                     rag_require_extractive_support=False, rag_require_grounded_reply=profile == 'grounded')
+                                     rag_require_extractive_support=False,
+                                     rag_require_grounded_reply=profile in {'grounded', 'policy_review'},
+                                     rag_require_policy_review=profile == 'policy_review')
     with (patch.object(retriever, 'retrieve_with_meta', record_retrieval),
           patch.object(graph, 'get_settings', return_value=graph_settings),
           patch.object(rag, 'call_chat', record_generation)):
@@ -144,6 +153,7 @@ async def observe(question, arguments, profile, logical_ids, live=None):
     return {
         'profile': profile, 'latency_ms': round(elapsed_ms, 3), 'error': error, 'engine': result.get('engine'),
         'decision': result.get('decision'), 'abstention_reason': result.get('abstention_reason'),
+        'handoff_recommended': result.get('handoff_recommended') is True,
         'answer': result.get('answer'), 'steps': result.get('steps', []), 'retrievals': rounds,
         'retrieved': [summarize_hit(hit, logical_ids) for hit in result.get('retrieved', [])],
         'citations': [
@@ -199,6 +209,7 @@ def aggregate(rows, *, live=False):
     latencies = [row['latency_ms'] for row in rows]
     expected_refusals = [row for row in rows if row['expected_outcome'] == 'abstain']
     expected_answers = [row for row in rows if row['expected_outcome'] == 'answer']
+    expected_handoffs = [row for row in rows if row['expected_outcome'] == 'handoff']
     false_refusals = sum(row['decision'] == 'abstain' and not row['error'] for row in expected_answers)
     provider_tokens = None
     if live:
@@ -220,6 +231,11 @@ def aggregate(rows, *, live=False):
         'expected_abstention_hits': {'matched': sum(row['scores']['outcome_match'] is True for row in expected_refusals),
                                      'total': len(expected_refusals)},
         'unexpected_abstentions': {'observed': false_refusals, 'total': len(expected_answers)},
+        'policy_review_recommendations': {
+            'matched': sum(row.get('handoff_recommended') is True for row in expected_handoffs),
+            'total': len(expected_handoffs),
+            'unexpected': sum(row.get('handoff_recommended') is True and row['expected_outcome'] != 'handoff' for row in rows),
+        },
         'unauthorized_retrieval_cases': sum(bool(row['scores']['unauthorized_document_ids']) for row in rows),
         'forbidden_output_marker_cases': sum(bool(row['scores']['forbidden_output_markers']) for row in rows),
         'latency_ms': {'p50': percentile(latencies, 0.50), 'p95': percentile(latencies, 0.95)},
@@ -239,6 +255,10 @@ def violations(case, observations):
             failures.append(f'{label}: unauthorized retrieval')
         if row['scores']['citation_violation']:
             failures.append(f'{label}: broken citation contract')
+        if row.get('handoff_recommended') and (row['decision'] != 'abstain' or row['citations']
+                or row.get('abstention_reason') not in grounded_reply.POLICY_REVIEW_REASONS
+                or row['abstention_reason'] == 'policy_conflict' and row['model_calls'] != 0):
+            failures.append(f'{label}: broken policy review contract')
         count = len(row['retrievals'])
         if ((case['document_scope'] == [] and (count or row['decision'] != 'abstain' or row['model_calls']))
                 or (case['document_scope'] != [] and not 1 <= count <= 1 + PROFILES[row['profile']])
@@ -351,6 +371,10 @@ def main():
         output = args.output.open('w', encoding='utf-8')
     with output:
         report = benchmark(dataset, fixture, live, comparison=args.comparison)
+        if args.suite == 'holdout' and args.comparison == 'policy-review' and not args.live_qwen:
+            policy = report['metrics']['policy_review']['policy_review_recommendations']
+            if policy['matched'] != policy['total'] or policy['unexpected']:
+                report['violations'].append('offline policy review did not match the holdout')
         output.write(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print(json.dumps({'metrics': report['metrics'], 'violations': report['violations']}, sort_keys=True))
     return 1 if report['violations'] else 0

@@ -27,6 +27,7 @@ import psycopg
 from ..config import get_settings
 from ..core.trace import get_trace_id
 from . import retriever, store
+from .grounded_reply import POLICY_REVIEW_REASONS
 from .store import query_terms
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,7 @@ class RagState(TypedDict, total=False):
     answer_generated: bool
     extractive_only: bool
     require_grounded_reply: bool
+    policy_review: bool
     citations: list[dict]
     abstention_reason: str | None
     steps: list[dict]     # 每一步的执行记录，前端展示"编排过程"用
@@ -154,6 +156,7 @@ async def node_answer(state: RagState) -> dict:
         tenant_code=state.get("tenant_code") or "",
         extractive_only=state.get("extractive_only", False),
         require_grounded_reply=state.get("require_grounded_reply", False),
+        policy_review=state.get("policy_review", False),
     )
     return {
         "answer": answer.text,
@@ -286,6 +289,7 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
         "published_only": published_only,
         "extractive_only": getattr(settings, "rag_require_extractive_support", False),
         "require_grounded_reply": published_only and getattr(settings, "rag_require_grounded_reply", False),
+        "policy_review": getattr(settings, "rag_require_policy_review", False),
         "query": question,
         "rounds": 0,
         "max_rewrite_rounds": max_rewrite_rounds,
@@ -311,6 +315,7 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
                          enough=False, abstention_reason='stale_evidence',
                          steps=_step(final, 'verify_source', '拒绝返回已失效或无法核验的来源'))
 
+    reason = final.get('abstention_reason') or None
     return {
         "question": question,
         "answer": final.get("answer") or "",
@@ -320,7 +325,8 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
         "engine": engine_name(),
         "enough": bool(final.get("enough")),
         "decision": "answer" if final.get("enough") else "abstain",
-        "abstention_reason": final.get("abstention_reason") or None,
+        "abstention_reason": reason,
+        "handoff_recommended": reason in POLICY_REVIEW_REASONS,
         "trace_id": get_trace_id() or None,
         "steps": final.get("steps") or [],
     }

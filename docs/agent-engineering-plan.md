@@ -22,7 +22,7 @@
 | PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。已接固定工单只读 MCP 客户端。B2 |
 | PR-10 Checkpoint/HITL | 工单链路已实现并本地验收，其他写操作分批 | 原子检查点和原预算恢复、访客显式提案、限时审批、一次性消费、坐席角色与来源重验、同会话查询后审批建单、回执丢失恢复及未知写核销 | 自然语言提案和访客交互待评测；其他写操作需各自回执。B3 |
 | PR-11 Eval/Replay/Trace | 部分实现，交付跨服务时间线、离线回归和工单只读规划回放 | Java Outbox 与 Python Run/Step/审批联合查询、元数据回放、25 题 RAG 对照和逐题报告、4 个联调录制案例 | 扩充语义评测、运营展示与跨尝试及跨业务链路回放。A/D |
-| PR-12 RAG | 部分完成：证据不足、越界引用拒答及结构化证据候选 | 24 项拒答与 10 项引用契约；文档范围、空选集、发布就绪过滤；真实模型的结构化拒答、原文引用与语义对照 | 政策条件完整性、可信来源和冲突路由仍需改进，按独立样本验收上线条件。A6/C |
+| PR-12 RAG | 部分完成：证据不足、越界引用拒答、结构化证据及人工核验建议 | 24 项拒答与 10 项引用契约；发布就绪过滤；真实模型对照；同口径数值冲突零生成调用，并复用现有转人工动作 | 政策条件完整性、可信来源排序及更广的冲突仍需独立样本验收。A6/C |
 
 Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src/main/java/io/supportflow/`；Mapper XML 位于对应服务 `src/main/resources/mapper`。
 
@@ -34,7 +34,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M02 Context Engineering | 部分实现，已完成意图上下文三组实测 | 工单检查点及结构化规划历史、意图字节预算、同会话状态恢复和订单号更正、真实模型 Token 与意图质量对照 | 用留出集验证压缩和长输入兜底，继续验收大工具结果、更多记忆字段和过期策略。C |
 | M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、来源/工单/知识工具与签名SDK，实际Worker/受限PG核权/刷新/共享Embedding预算；有界工单Loop；宿主报告原子发布与回执核销；固定工单 MCP 客户端 | 原子建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE/知识决策Loop、通用未知写及 MCP 服务端部署和更广接入待完善。B |
 | M04 Permission/Guardrails | 部分实现，已接固定输入和授权回归 | PR-1/2、附件权限、受限 DB 与 RLS；工具 Scope、资源核权、操作许可、审批和回执；访客结构化输入及 10 项 PostgreSQL 边界门禁 | 增加独立模型语义样本、其他写操作的审批和防重放、链路日志与审计保留。A/B/D |
-| M05 RAG Engineering | 部分实现，访客来源复核、结构化答复与真实语义对照 | pgvector、关键词降级、改写、租户及发布过滤、越界拒答、可选逐句原文核查与结构化原文引用 | 相关性、可信来源、冲突决策和持久化版本待推进。单独对照混检重排与上线边界。A/C |
+| M05 RAG Engineering | 部分实现，访客来源复核、结构化答复、可选人工核验建议与真实语义对照 | pgvector、关键词降级、改写、租户及发布过滤、逐句原文核查、同口径数值冲突检测及人工规则原文验证 | 相关性、可信来源排序、混检重排及持久化版本待推进。扩大歧义与实际访客样本。A/C |
 | M06 Evaluation | 部分实现，配对基线、独立合成留出集与确定性工程门禁 | 原 25 题和留出 12 题、Token 回执与逐题复评分、拒答及引用契约、故障轨迹与只读模型和工具回放 | 增加独立人工复核、真实业务样本、模型评审器一致性及多轮尝试回归。A/D |
 | M07 Trace/Observability | 部分实现，跨服务查询、只读回放与租户指标已验 | 按租户关联 Java 投递、Python Run/Step 和审批，记录队列及延迟，正文到期清理后保留脱敏轨迹及用量回执 | 完善浏览器展示、服务覆盖、持续采集和轨迹元数据保留策略。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界模型传输，旧客服 Chat 按租户路由，工单 Prompt 按租户试用 | 单次 HTTP、稳定错误、Chat 供应商选择和本地降级、视觉请求限额、旧知识库向量校验、显式租户 Profile、工单 Prompt 版本固定及回退、MODEL 检查点和持久化 Token 回执 | 扩大模型路由与 Prompt 发布覆盖，验收流量比例、真实模型质量、供应商数据处理区域和备选权限、视觉与批量向量兼容性及金额结算。E |
@@ -221,6 +221,8 @@ E19 提供按租户的 Runtime 积压、审批和终态延迟检查。复用只�
 E20 通过 AI 016 和独立维护身份，按租户预览并清理已确定终态的过期检查点。审计轨迹和 Token 回执可继续读取，执行中、审批等待和写入结果未知的数据保留。见 [ADR-0079](decisions/0079-expired-checkpoint-retention.md) 和 [本地验收](reliability-verification.md#e20-过期-agent-检查点清理2026-11-25)。
 
 E21 冻结 12 题政策冲突、人工核验和证据不足留出集。复用现有真实检索、引用契约和逐题语义对照。见 [ADR-0080](decisions/0080-rag-policy-holdout.md) 和 [本地验收](reliability-verification.md#e21-rag-政策留出集2026-11-25)。
+
+E22 在可选访客模式中区分数字冲突、原文要求人工处理和普通知识不足。利用 E21 的固定样本复跑真实模型和 CI 替身，真实对照命中 4/4 道人工核验题，其余 8 题无误触发。见 [ADR-0081](decisions/0081-rag-policy-review-routing.md) 和 [本地验收](reliability-verification.md#e22-rag-政策冲突与人工核验2026-11-25)。
 
 D8 固定 RAG 质量对照语料和 25 题标注，覆盖拒答、转人工、事实与原文引用、租户和发布状态。内容摘要与负面校验纳入 CI。对照运行和质量结果在后续批次交付。数据及口径见 [ADR-0051](decisions/0051-fixed-rag-quality-dataset.md)。
 
