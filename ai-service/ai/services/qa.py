@@ -7,15 +7,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
 from typing import Any
 
-import httpx
-
 from ..config import get_settings
-from ..core.db import connect
+from ..core.chat_transport import ModelCallFailure
+from ..core.llm_chat import call_chat, resolve_provider
 from ..core.trace import get_trace_id
 
 logger = logging.getLogger(__name__)
@@ -76,13 +76,6 @@ def _keyword_hit(text: str, rule_name: str) -> bool:
     return any(word in text for word in keywords.get(rule_name, []))
 
 
-# 供应商选择 / 对话调用 / 租户模型配置统一走 core.llm_chat（第 21 篇抽出来的公共层），
-# 这里保留原有的私有名字，业务代码不用改。
-from ..core.llm_chat import call_chat as _call_chat  # noqa: E402
-from ..core.llm_chat import choose_provider as _choose_provider  # noqa: E402
-from ..core.llm_chat import tenant_model as _tenant_model  # noqa: E402
-
-
 async def evaluate(
     tenant_code: str,
     session_name: str,
@@ -95,34 +88,9 @@ async def evaluate(
 ) -> dict[str, Any]:
     """对会话执行 LLM 初检，返回 aiScore/riskLevel/rules/comment。"""
     settings = get_settings()
-    requested_provider = provider
-    requested_model = model
-    # 数据库里配了模型就优先用（来自「智能机器人 → 模型选择」）
-    if not requested_provider:
-        # tenant_model 返回的是 dict（provider/model/api_key/base_url）或 None，
-        # 早先这里按二元组解包，只要调用方没自带 provider 就直接 500
-        # （"too many values to unpack"）——接口外的人第一次调就会踩到。
-        tenant_conf = _tenant_model(tenant_code) or {}
-        tenant_provider = tenant_conf.get("provider")
-        tenant_model = tenant_conf.get("model")
-        if tenant_provider:
-            requested_provider = tenant_provider
-            requested_model = requested_model or tenant_model
-
-    chosen = _choose_provider(requested_provider, requested_model)
-    # 选中的厂商没配密钥时，退回到其它已配置密钥的厂商，避免白白走规则兜底
-    if chosen is not None and not chosen["api_key"]:
-        logger.warning("provider=%s 未配置 API Key，尝试改用其它已配置密钥的厂商", chosen["provider"])
-        chosen = _choose_provider(None, None)
-    if chosen is None or not chosen["api_key"]:
-        # 记一次降级：平台「AI 监控」据此显示"降级次数"，与真实调用量分开
-        return _fallback_result(
-            session_name, agent_name, rule_names,
-            "未配置可用的模型 API Key（SUPPORTFLOW_AI_QWEN_API_KEY / SUPPORTFLOW_AI_DEEPSEEK_API_KEY）",
-            tenant_code=tenant_code,
-            provider=requested_provider or settings.llm_default_provider or "-",
-            model=requested_model or settings.llm_default_model or "-",
-        )
+    chosen, route = await asyncio.to_thread(resolve_provider, tenant_code, provider, model)
+    if chosen is None:
+        return _fallback_result(session_name, agent_name, rule_names, route, tenant_code=tenant_code)
 
     rule_count = len(rules) if rules else len(rule_names)
     started = time.perf_counter()
@@ -160,22 +128,10 @@ async def evaluate(
         "temperature": 0.2,
         "max_tokens": 600,
     }
-    # 要求模型按 JSON 输出，避免出现 rel / risk 这类字段名偏差
-    json_payload = {**payload, "response_format": {"type": "json_object"}}
+    payload["response_format"] = {"type": "json_object"}
     try:
-        try:
-            data = await _call_chat(chosen, json_payload, settings.llm_timeout,
-                                    scene="AI质检", tenant_code=tenant_code)
-        except httpx.HTTPStatusError as exc:
-            # 个别模型 / 兼容网关不支持 response_format，退回普通模式再试一次
-            logger.warning("模型不支持 response_format=json_object（status=%s），改用普通模式重试",
-                           exc.response.status_code)
-            data = await _call_chat(chosen, payload, settings.llm_timeout,
-                                    scene="AI质检", tenant_code=tenant_code)
+        data = await call_chat(chosen, payload, settings.llm_timeout, scene="AI质检", tenant_code=tenant_code)
         content = data["choices"][0]["message"]["content"]
-        if settings.llm_log_payload:
-            logger.info("AI 质检模型出参 trace=%s provider=%s model=%s content=%s",
-                        get_trace_id() or "-", chosen["provider"], chosen["model"], content)
         result = _parse_llm_json(content)
         result["source"] = f"llm-{chosen['provider']}"
         usage = data.get("usage") or {}
@@ -189,14 +145,15 @@ async def evaluate(
             len(result["rules"]), result["source"],
         )
         return result
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
+        reason = exc.code if isinstance(exc, ModelCallFailure) else "QA_RESPONSE_INVALID"
         logger.error(
-            "AI 质检调用异常 trace=%s tenant=%s session=%s provider=%s model=%s latencyMs=%d error=%s: %s",
+            "AI 质检调用异常 trace=%s tenant=%s session=%s provider=%s model=%s latencyMs=%d code=%s",
             get_trace_id() or "-", tenant_code, session_name, chosen["provider"], chosen["model"],
-            int((time.perf_counter() - started) * 1000), type(exc).__name__, exc,
+            int((time.perf_counter() - started) * 1000), reason,
         )
         return _fallback_result(
-            session_name, agent_name, rule_names, str(exc),
+            session_name, agent_name, rule_names, reason,
             tenant_code=tenant_code, provider=chosen["provider"], model=chosen["model"],
         )
 
@@ -215,7 +172,7 @@ def _parse_llm_json(content: str) -> dict[str, Any]:
     score_raw = _pick(parsed, _SCORE_KEYS)
     if score_raw is None:
         # 拿不到评分说明模型没按约定输出，交给上层走失败降级，不能凭空编一个分数
-        raise ValueError(f"模型返回缺少评分子段：{text[:200]}")
+        raise ValueError("模型返回缺少评分字段")
     score = int(float(score_raw))
 
     risk_raw = _pick(parsed, _RISK_KEYS)

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 import logging
 import re
 from typing import Any
@@ -134,16 +135,14 @@ async def compose_answer_details(question: str, hits: list[dict[str, Any]], tena
         return ComposedAnswer("知识库里没有查到与这个问题相关的资料。可以先到「企业知识库」上传对应文档，"
                               "或者转人工客服处理。", [], generated=False)
 
-    chosen, desc = resolve_provider(tenant_code)
+    chosen, desc = await asyncio.to_thread(resolve_provider, tenant_code)
     if chosen is None:
         if require_grounded_reply:
             return ComposedAnswer('知识问答暂不可用，请联系人工客服。', [], False, 'grounded_model_unavailable')
-        # 没配密钥：不编答案，把最相关的原文摆出来（同时记一次降级）
-
         top = hits[0]
-        logger.warning("知识问答未配置大模型密钥，返回检索原文 tenant=%s questionChars=%d",
-                       tenant_code or "-", len(question))
-        return ComposedAnswer(f"（当前未配置大模型密钥，先把检索到的原文给你）\n\n"
+        logger.warning("知识问答使用检索原文 trace=%s tenant=%s questionChars=%d",
+                       get_trace_id() or "-", tenant_code or "-", len(question))
+        return ComposedAnswer(f"（当前无法使用大模型，先把检索到的原文给你）\n\n"
                 f"依据《{top.get('doc_title') or '未命名文档'}》第 {top.get('chunk_no')} 块：\n"
                 f"{top.get('content') or ''}",
                 citations, generated=False)

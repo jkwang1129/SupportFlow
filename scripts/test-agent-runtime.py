@@ -77,6 +77,7 @@ def main():
                         'tests/test_runtime_model_token_budget_postgres.py',
                         'tests/test_runtime_model_cost_budget_postgres.py',
                         'tests/test_brain_analysis_context.py',
+                        'tests/test_chat_routing_postgres.py',
                         'tests/test_knowledge_tools_postgres.py',
                         'tests/test_ticket_loop_postgres.py',
                         'tests/test_publication_postgres.py',

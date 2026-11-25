@@ -1783,3 +1783,14 @@ Windows 11、Python 3.11.5、Temurin JDK 25、隔离 PostgreSQL 17、真实客�
 - 实际签名访客消息、Java 投递、受限 Runtime、Worker CLI 和 MCP 联调共通过 10 个工单只读场景。显式试用的 Worker 真实发出 2 次模板一致的 v2 请求，两次 MODEL 事件都显示 `ticket-plan-v2`，运行成功。模型使用的实际渲染摘要为 `3006c484161bb62174d08b8f2e4d285331aeb9ceead7b59f83560174ae6322ed`。4 条既有服务录制继续通过离线回放。
 
 原始 Python 测试报告和 Runtime 联调日志分别保存为 `.local/implementation/e14-python.xml`、`.local/implementation/e14-runtime.log`，真实库与工单报告保存于 `.local/implementation/e14-evidence/`。数据验证发布、恢复及权限边界。真实模型质量和按流量比例分配仍待单独验收。
+
+## E15 旧客服 Chat 供应商路由（2026-11-25）
+
+Windows 11、Python 3.11.5、隔离 PostgreSQL 17、两个本机 HTTP 供应商夹具和已签名质检入口。覆盖意图识别、知识生成和质检的共享路由选择。配置和回退见 [ADR-0074](decisions/0074-legacy-chat-provider-routing.md)。
+
+- 默认 Python 套件 1211 项通过，489 项在默认环境下跳过。新增 25 项路由测试通过。覆盖历史模型兼容、缺少所选密钥、未知供应商、数据库故障、请求提示与租户配置冲突、规则降级以及知识问答的原文和拒答处理。
+- 质检成功、429 和 503 分别只向已选供应商请求 1 次，另一供应商各收到 0 次，已选供应商各计量 1 次。缺密钥或请求与租户选择冲突的质检用例观察到两边共 0 次请求。
+- `PYTEST_ADDOPTS="-k chat_routing_respects" python scripts/test-agent-runtime.py` 的限定测试通过。真实受限数据库角色验证同名模型取各自租户配置，停用或删除后下一次决策本地降级，清除选择后恢复平台默认。
+- `python scripts/rag_quality_benchmark.py --comparison grounding --output .local/implementation/e15-rag-grounding.json` 完成冻结合成集，每种模式各 25 题、17/17 引用索引有效，越权召回和门禁违规均为 0。
+
+原始 Python 报告为 `.local/implementation/e15-python.xml`，限定数据库报告为 `.local/implementation/e15-evidence/chat-routing-postgres.xml`。本地供应商夹具用于复核网络和计量边界。真实供应商的数据处理区域和生产可用性未验收。

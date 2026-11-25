@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import re
 from typing import Any
@@ -386,7 +387,7 @@ async def analyze_with_llm(question: str, history: list[dict[str, str]],
                           intents: list[dict[str, Any]], tenant_code: str,
                           known_slots: dict[str, str] | None = None) -> dict[str, Any] | None:
     """让模型判意图 + 情绪 + 槽位。没配密钥或调用失败返回 None，由规则结果兜底。"""
-    chosen, desc = resolve_provider(tenant_code)
+    chosen, desc = await asyncio.to_thread(resolve_provider, tenant_code)
     if chosen is None:
         # 走规则判断：记一次降级，平台侧能看到"大脑这几轮没用到真模型"
         return None
