@@ -1824,3 +1824,12 @@ Windows 11、Python 3.11.5、Temurin 25.0.5、隔离 PostgreSQL 17 和固定镜�
 - 本地单次演练观测到，附件探测在暂停期间耗时 2,021.860 ms，从恢复容器到读取和权限检查全部完成耗时 218.668 ms。两项均使用停写的合成样本。全后端 Maven `verify` 通过，新增 6 项 Java 回归全部通过。脚本测试共 73 项，其中 10 项依赖额外夹具而跳过。仅六库和仅六库加附件两种兼容模式均通过。
 
 原始报告保存在 `.local/implementation/e18-evidence/`，应用验收报告为 `with-services.json`。生产网络、流量切换以及写入结果不确定时的核销仍待验收。
+
+## E19 Runtime 积压与延迟快照（2026-11-25）
+
+Windows 11、Python 3.11.5、隔离 PostgreSQL 17 和既有受限 Runtime 角色。以 `python scripts/test-agent-runtime.py` 运行真实数据库用例。执行口径、运维入口及回退见 [ADR-0078](decisions/0078-runtime-queue-metrics.md)。
+
+- 默认 Python 套件 1,214 项通过、493 项依赖专项夹具而跳过。实际 PostgreSQL Runtime 套件 484 项全部通过。新增 3 项快速测试、4 项数据库回归。覆盖积压状态、过期租约、首次领取事件、完成窗口与截断、空样本、双租户隔离和管理员连接拒绝。
+- 告警样本用实际 Worker 执行 1 项成功和 1 项合成失败，再保留 1 项已等待 10.486 秒的任务。命令输出两种告警并返回退出码 3，另一个空租户返回 0。两次执行的首次领取延迟 P50/P95 为 36.546/64.659 ms，提交至终态为 133.828/147.569 ms。该合成样本用于验证计算与观测链路，生产容量和监测频率待验收。
+
+本地原始报告位于 `.local/implementation/e19-evidence/runtime-metrics.json` 和 `runtime-store.xml`。CI 跟随既有 Runtime 数据库和 Java 投递步骤保存同口径的报告。

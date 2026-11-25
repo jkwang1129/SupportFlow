@@ -158,6 +158,16 @@ python scripts/upgrade-runtime-security.py
 
 客服服务的 `/actuator/attachmentreadiness` 检查应用、数据库和配置的对象桶。通用就绪正常而附件就绪返回 503 时，先核对 RustFS 服务、桶和客服服务所用账号的桶访问权限，再用已授权会话重新读取原文件。聊天记录可继续按通用就绪处理。已授权的附件读取遇到存储不可用时返回 HTTP 503 和业务码 `50308`。探测与回退说明见 [ADR-0077](decisions/0077-attachment-readiness.md)。
 
+## Runtime 队列检查
+
+授权运维人员在 `ai-service` 目录使用已有受限轨迹连接 `SUPPORTFLOW_TRACE_AI_DB_DSN`。以下示例观察最近一小时，并在有 20 项任务已到执行时间或最老任务已等 60 秒时返回告警退出码 3。
+
+```text
+python -m ai.runtime.metrics --tenant TENANT_A --window-minutes 60 --alert-due-count 20 --alert-due-seconds 60
+```
+
+`waiting_approval` 用于判断待人工审批，`running` 和 `expired_leases` 用于排查执行与接管。定位具体任务时可继续按原请求号读取轨迹。以输出的样本数和截断状态解释延迟及成功率。[口径与退出码](decisions/0078-runtime-queue-metrics.md) · [跨服务轨迹](decisions/0057-cross-service-trace-timeline.md)
+
 ## Java 存活与就绪
 
 五个数据库服务（User/Tenant/Customer/Billing/Ops，9091～9095）使用现有 Actuator：`/actuator/health/liveness` 只检查进程存活；`/actuator/health/readiness` 合并应用就绪状态与本服务的 `schema/readiness.properties` 最小结构契约。缺表、缺列、缺少读取权限或数据库连接/查询异常时返回 503；`/api/*` 同时返回通用 503 和 Retry-After，不进入业务处理器。修复后下次请求重新检查，无需重启。

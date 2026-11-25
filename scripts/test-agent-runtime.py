@@ -62,6 +62,9 @@ def main():
                     'SUPPORTFLOW_RUNTIME_ADMIN_TEST_DSN': make_conninfo(**address, user='supportflow', password=environment['SUPPORTFLOW_DB_PASSWORD'])}
         report = ROOT/'.local/verification/runtime-store.xml'
         report.parent.mkdir(parents=True, exist_ok=True)
+        metrics_report = report.with_name('runtime-metrics.json')
+        metrics_report.unlink(missing_ok=True)
+        test_env['SUPPORTFLOW_RUNTIME_METRICS_TEST_REPORT'] = str(metrics_report)
         subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/test_runtime_types.py',
                         'tests/test_runtime_store_postgres.py', 'tests/test_runtime_worker_postgres.py',
                         'tests/test_runtime_api_postgres.py', 'tests/test_runtime_authority_postgres.py',
@@ -90,6 +93,7 @@ def main():
                         'tests/test_approval_expiry_postgres.py',
                         'tests/test_runtime_approval_review_postgres.py',
                         'tests/test_runtime_trace_postgres.py',
+                        'tests/test_runtime_metrics_postgres.py',
                         'tests/test_runtime_run_events_postgres.py',
                         f'--junitxml={report}'],
                        cwd=ROOT/'ai-service', env=test_env, check=True)
