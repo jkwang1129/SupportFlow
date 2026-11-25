@@ -13,7 +13,7 @@ import rag_quality_benchmark as benchmark
 class BenchmarkTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.dataset, _ = benchmark.load_fixture()
+        cls.dataset, _ = benchmark.load_suite('baseline')
         cls.case = next(case for case in cls.dataset['cases'] if case['id'] == 'relevant-but-insufficient')
         cls.allowed = benchmark.allowed_documents(cls.case, cls.dataset['documents'], cls.dataset['as_of'])
 

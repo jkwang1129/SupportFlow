@@ -35,7 +35,7 @@ Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src
 | M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、来源/工单/知识工具与签名SDK，实际Worker/受限PG核权/刷新/共享Embedding预算；有界工单Loop；宿主报告原子发布与回执核销；固定工单 MCP 客户端 | 原子建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE/知识决策Loop、通用未知写及 MCP 服务端部署和更广接入待完善。B |
 | M04 Permission/Guardrails | 部分实现，已接固定输入和授权回归 | PR-1/2、附件权限、受限 DB 与 RLS；工具 Scope、资源核权、操作许可、审批和回执；访客结构化输入及 10 项 PostgreSQL 边界门禁 | 增加独立模型语义样本、其他写操作的审批和防重放、链路日志与审计保留。A/B/D |
 | M05 RAG Engineering | 部分实现，访客来源复核、结构化答复与真实语义对照 | pgvector、关键词降级、改写、租户及发布过滤、越界拒答、可选逐句原文核查与结构化原文引用 | 相关性、可信来源、冲突决策和持久化版本待推进。单独对照混检重排与上线边界。A/C |
-| M06 Evaluation | 部分实现，真实模型配对基线、逐题语义复核与确定性工程门禁 | 25 题单次检索与 Agentic RAG 对照、实际 Token 回执与逐题复评分、拒答与引用契约、4 类故障轨迹基线、真实联调录制的只读模型与工具回放 | 扩大样本和留出集，增加独立人工复核、模型评审器一致性及多轮尝试的回归。A/D |
+| M06 Evaluation | 部分实现，配对基线、独立合成留出集与确定性工程门禁 | 原 25 题和留出 12 题、Token 回执与逐题复评分、拒答及引用契约、故障轨迹与只读模型和工具回放 | 增加独立人工复核、真实业务样本、模型评审器一致性及多轮尝试回归。A/D |
 | M07 Trace/Observability | 部分实现，跨服务查询、只读回放与租户指标已验 | 按租户关联 Java 投递、Python Run/Step 和审批，记录队列及延迟，正文到期清理后保留脱敏轨迹及用量回执 | 完善浏览器展示、服务覆盖、持续采集和轨迹元数据保留策略。A/B/D |
 | M08 Model Gateway/Prompt | 部分实现：共用有界模型传输，旧客服 Chat 按租户路由，工单 Prompt 按租户试用 | 单次 HTTP、稳定错误、Chat 供应商选择和本地降级、视觉请求限额、旧知识库向量校验、显式租户 Profile、工单 Prompt 版本固定及回退、MODEL 检查点和持久化 Token 回执 | 扩大模型路由与 Prompt 发布覆盖，验收流量比例、真实模型质量、供应商数据处理区域和备选权限、视觉与批量向量兼容性及金额结算。E |
 | M09 Streaming/交互 | 工单链路覆盖进度恢复、取消和跨节点通知 | 聊天 seq/ACK、工单通知与补拉、断线恢复、取消与完成竞争、已提交写入核查、双节点联调和首读耗时记录 | 节点地址按部署配置管理。目标环境下的网络条件及长期负载仍待验证。依赖 B、M07。E |
@@ -219,6 +219,8 @@ E18 增加附件专项就绪探测和存储不可用响应。在同一恢复目�
 E19 提供按租户的 Runtime 积压、审批和终态延迟检查。复用只读轨迹连接和首次领取事件，支持用配置阈值生成告警。见 [ADR-0078](decisions/0078-runtime-queue-metrics.md) 和 [本地验收](reliability-verification.md#e19-runtime-积压与延迟快照2026-11-25)。
 
 E20 通过 AI 016 和独立维护身份，按租户预览并清理已确定终态的过期检查点。审计轨迹和 Token 回执可继续读取，执行中、审批等待和写入结果未知的数据保留。见 [ADR-0079](decisions/0079-expired-checkpoint-retention.md) 和 [本地验收](reliability-verification.md#e20-过期-agent-检查点清理2026-11-25)。
+
+E21 冻结 12 题政策冲突、人工核验和证据不足留出集。复用现有真实检索、引用契约和逐题语义对照。见 [ADR-0080](decisions/0080-rag-policy-holdout.md) 和 [本地验收](reliability-verification.md#e21-rag-政策留出集2026-11-25)。
 
 D8 固定 RAG 质量对照语料和 25 题标注，覆盖拒答、转人工、事实与原文引用、租户和发布状态。内容摘要与负面校验纳入 CI。对照运行和质量结果在后续批次交付。数据及口径见 [ADR-0051](decisions/0051-fixed-rag-quality-dataset.md)。
 

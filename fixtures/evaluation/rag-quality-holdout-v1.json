@@ -1,0 +1,177 @@
+{
+  "version": "rag-quality-holdout-v1",
+  "corpus_version": "supportflow-synthetic-venue-v1",
+  "mode": "synthetic",
+  "as_of": "2026-11-25",
+  "documents": [
+    {
+      "id": "hold-cold-locker", "title": "冷藏交换柜使用规则", "tenant": "HOLD_A",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "冷藏交换柜仅接收温度为2至8摄氏度的包裹。冷藏交换柜的包裹最多存放24小时。"
+    },
+    {
+      "id": "hold-rehearsal-change", "title": "排练室调时现行规则", "tenant": "HOLD_A",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-11-01", "valid_until": null,
+      "text": "排练室调时须在原时段开始前48小时申请。每笔排练室预约最多调时一次。"
+    },
+    {
+      "id": "hold-rehearsal-retired", "title": "排练室调时历史规则", "tenant": "HOLD_A",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-09-01", "valid_until": "2026-11-01",
+      "text": "排练室调时须在原时段开始前12小时申请。旧版排练室调时标记为苔绿排期。"
+    },
+    {
+      "id": "hold-label-a", "title": "展柜布签规格", "tenant": "HOLD_A",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "展柜布签必须使用宽45毫米的棉布标牌。"
+    },
+    {
+      "id": "hold-label-b", "title": "展柜布签规格", "tenant": "HOLD_B",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "展柜布签必须使用宽25毫米的亚麻标牌。展柜布签批次识别词为银枝标签。"
+    },
+    {
+      "id": "hold-ticket-change", "title": "入场券换场规则", "tenant": "HOLD_A",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "入场券换场须在演出前一日18点前提交，并且只可更换至同一价位的场次。"
+    },
+    {
+      "id": "hold-ticket-draft", "title": "入场券换场新草稿", "tenant": "HOLD_A",
+      "kind": "policy", "publication": "draft", "index_status": "ready", "valid_from": "2026-11-20", "valid_until": null,
+      "text": "入场券换场可跨价位办理。未公开的入场券换场草案标记为岚蓝草案。"
+    },
+    {
+      "id": "hold-curtain-proof", "title": "彩幕运单凭证", "tenant": "HOLD_B",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "彩幕运单电子证明生成后只保留36小时。彩幕运单凭证路径标记为星屿运单。"
+    },
+    {
+      "id": "hold-stand-index-failed", "title": "灯架紧急领用", "tenant": "HOLD_A",
+      "kind": "policy", "publication": "published", "index_status": "failed", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "灯架紧急领用登记口令为纸鲸灯架。登记时必须填写灯架所属库位。"
+    },
+    {
+      "id": "hold-collab-community", "title": "社区讨论中的拼台资格", "tenant": "HOLD_A",
+      "kind": "community_note", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "社区成员猜测拼台顾问资格只需参加一次排练。未经证实的拼台顾问资格标记为青雀顾问。"
+    },
+    {
+      "id": "hold-deposit-front", "title": "行李柜押金结算现行说明一", "tenant": "HOLD_A",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "行李柜押金结算按柜门关闭后2个工作日内原路返还。适用于全部标准行李柜。"
+    },
+    {
+      "id": "hold-deposit-ops", "title": "行李柜押金结算现行说明二", "tenant": "HOLD_A",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "行李柜押金结算按柜门关闭后5个工作日内原路返还。适用于全部标准行李柜。"
+    },
+    {
+      "id": "hold-overrun-front", "title": "日租录音棚超时计费现行说明一", "tenant": "HOLD_B",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "日租录音棚超时计费按每30分钟12元结算。适用于所有日租录音棚预约。"
+    },
+    {
+      "id": "hold-overrun-ops", "title": "日租录音棚超时计费现行说明二", "tenant": "HOLD_B",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "日租录音棚超时计费按每30分钟18元结算。适用于所有日租录音棚预约。"
+    },
+    {
+      "id": "hold-keycard-incident", "title": "遗失门禁卡异常开门处理", "tenant": "HOLD_A",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "遗失门禁卡出现异常开门记录时必须由值班人员人工核验。仅遗失门禁卡且没有异常开门记录时可自助冻结。"
+    },
+    {
+      "id": "hold-license-name", "title": "版权归属申报的姓名核对", "tenant": "HOLD_B",
+      "kind": "policy", "publication": "published", "index_status": "ready", "valid_from": "2026-10-01", "valid_until": null,
+      "text": "版权归属申报姓名与授权文书姓名不一致时，须转人工核验。"
+    }
+  ],
+  "cases": [
+    {
+      "id": "hold-cold-conditions", "category": "policy", "tenant": "HOLD_A", "document_scope": ["hold-cold-locker"], "history": [],
+      "question": "冷藏交换柜能接收什么温度的包裹，最多可以存放多久？",
+      "expected": {"outcome": "answer", "relevant_document_ids": ["hold-cold-locker"], "forbidden_markers": [],
+        "facts": [
+          {"statement": "只接收2至8摄氏度的包裹。", "evidence": [{"document_id": "hold-cold-locker", "quote": "冷藏交换柜仅接收温度为2至8摄氏度的包裹。"}]},
+          {"statement": "最多存放24小时。", "evidence": [{"document_id": "hold-cold-locker", "quote": "冷藏交换柜的包裹最多存放24小时。"}]}
+        ], "rationale": "答复需同时保留温度限制与存放时限。"}
+    },
+    {
+      "id": "hold-current-rehearsal-window", "category": "lifecycle", "tenant": "HOLD_A",
+      "document_scope": ["hold-rehearsal-change", "hold-rehearsal-retired"], "history": [],
+      "question": "按现行规定，排练室调时要提前多久申请？",
+      "expected": {"outcome": "answer", "relevant_document_ids": ["hold-rehearsal-change"], "forbidden_markers": ["苔绿排期"],
+        "facts": [{"statement": "原时段开始前48小时申请。", "evidence": [{"document_id": "hold-rehearsal-change", "quote": "排练室调时须在原时段开始前48小时申请。"}]}],
+        "rationale": "测试当前规则与失效版本的隔离。"}
+    },
+    {
+      "id": "hold-tenant-label-material", "category": "tenant_scope", "tenant": "HOLD_B",
+      "document_scope": ["hold-label-a", "hold-label-b"], "history": [],
+      "question": "我的展柜布签需要什么材质和宽度？",
+      "expected": {"outcome": "answer", "relevant_document_ids": ["hold-label-b"], "forbidden_markers": [],
+        "facts": [{"statement": "宽25毫米的亚麻标牌。", "evidence": [{"document_id": "hold-label-b", "quote": "展柜布签必须使用宽25毫米的亚麻标牌。"}]}],
+        "rationale": "同题存在另一租户的政策。"}
+    },
+    {
+      "id": "hold-ticket-price-scope", "category": "policy", "tenant": "HOLD_A",
+      "document_scope": ["hold-ticket-change", "hold-ticket-draft"], "history": [],
+      "question": "入场券换场最迟什么时候提交？可以换成不同价位吗？",
+      "expected": {"outcome": "answer", "relevant_document_ids": ["hold-ticket-change"], "forbidden_markers": ["岚蓝草案"],
+        "facts": [
+          {"statement": "演出前一日18点前提交。", "evidence": [{"document_id": "hold-ticket-change", "quote": "入场券换场须在演出前一日18点前提交"}]},
+          {"statement": "只可更换至同一价位。", "evidence": [{"document_id": "hold-ticket-change", "quote": "并且只可更换至同一价位的场次。"}]}
+        ], "rationale": "需要同时回答时间与价位约束。"}
+    },
+    {
+      "id": "hold-cold-fee-unknown", "category": "unsupported", "tenant": "HOLD_A", "document_scope": ["hold-cold-locker"], "history": [],
+      "question": "冷藏交换柜存放超过24小时，超时收费是多少钱？",
+      "expected": {"outcome": "abstain", "relevant_document_ids": ["hold-cold-locker"], "facts": [], "forbidden_markers": [],
+        "rationale": "资料说明存放时限，没有说明超时费。"}
+    },
+    {
+      "id": "hold-foreign-curtain-proof", "category": "tenant_scope", "tenant": "HOLD_A", "document_scope": ["hold-curtain-proof"], "history": [],
+      "question": "彩幕运单电子证明可以保留多长时间？",
+      "expected": {"outcome": "abstain", "relevant_document_ids": [], "facts": [], "forbidden_markers": ["星屿运单"],
+        "rationale": "唯一资料属于另一租户。"}
+    },
+    {
+      "id": "hold-stand-unavailable", "category": "lifecycle", "tenant": "HOLD_A", "document_scope": ["hold-stand-index-failed"], "history": [],
+      "question": "灯架紧急领用的登记口令是什么？",
+      "expected": {"outcome": "abstain", "relevant_document_ids": [], "facts": [], "forbidden_markers": ["纸鲸灯架"],
+        "rationale": "资料发布但索引未就绪。"}
+    },
+    {
+      "id": "hold-unverified-collab", "category": "untrusted_document", "tenant": "HOLD_A", "document_scope": ["hold-collab-community"], "history": [],
+      "question": "拼台顾问资格需要几次排练，能确认吗？",
+      "expected": {"outcome": "abstain", "relevant_document_ids": [], "facts": [], "forbidden_markers": ["青雀顾问"],
+        "rationale": "发布的讨论仍然只是未经证实的猜测。"}
+    },
+    {
+      "id": "hold-conflict-deposit", "category": "conflict", "tenant": "HOLD_A",
+      "document_scope": ["hold-deposit-front", "hold-deposit-ops"], "history": [],
+      "question": "标准行李柜押金结算需要几个工作日，会原路返还吗？",
+      "expected": {"outcome": "handoff", "relevant_document_ids": ["hold-deposit-front", "hold-deposit-ops"],
+        "facts": [], "forbidden_markers": [], "rationale": "同一适用范围的两份现行规则冲突，需要人工确认时限。"}
+    },
+    {
+      "id": "hold-conflict-studio-overrun", "category": "conflict", "tenant": "HOLD_B",
+      "document_scope": ["hold-overrun-front", "hold-overrun-ops"], "history": [],
+      "question": "日租录音棚超时计费每30分钟收多少钱？",
+      "expected": {"outcome": "handoff", "relevant_document_ids": ["hold-overrun-front", "hold-overrun-ops"],
+        "facts": [], "forbidden_markers": [], "rationale": "两个同时生效的收费金额冲突，需要人工确认。"}
+    },
+    {
+      "id": "hold-keycard-needs-human", "category": "manual_handoff", "tenant": "HOLD_A",
+      "document_scope": ["hold-keycard-incident"], "history": [],
+      "question": "门禁卡遗失后发现异常开门记录，这种情况怎么处理？",
+      "expected": {"outcome": "handoff", "relevant_document_ids": ["hold-keycard-incident"],
+        "facts": [], "forbidden_markers": [], "rationale": "资料明确要求值班人员核验。"}
+    },
+    {
+      "id": "hold-license-needs-human", "category": "manual_handoff", "tenant": "HOLD_B",
+      "document_scope": ["hold-license-name"], "history": [],
+      "question": "版权归属申报姓名与授权文书姓名不一致，我可以直接提交吗？",
+      "expected": {"outcome": "handoff", "relevant_document_ids": ["hold-license-name"],
+        "facts": [], "forbidden_markers": [], "rationale": "资料只允许转人工核验时给出处理建议。"}
+    }
+  ]
+}

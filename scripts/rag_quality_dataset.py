@@ -1,4 +1,5 @@
 """Load and validate the versioned, synthetic RAG quality comparison fixture."""
+import argparse
 from collections import Counter
 from datetime import date
 from hashlib import sha256
@@ -9,6 +10,8 @@ import sys
 
 
 FIXTURE = Path(__file__).resolve().parents[1] / 'fixtures/evaluation/rag-quality-v1.json'
+HOLDOUT_FIXTURE = FIXTURE.with_name('rag-quality-holdout-v1.json')
+SUITES = {'baseline': FIXTURE, 'holdout': HOLDOUT_FIXTURE}
 COMPARISONS = {'rewrite': ('single_pass', 'agentic'), 'grounding': ('agentic', 'grounded')}
 IDENTIFIER = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*')
 TENANT = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,15}')
@@ -131,7 +134,8 @@ def validate_case(case, documents, tenants, as_of):
 
 def validate_dataset(dataset):
     check_keys(dataset, {'version', 'corpus_version', 'mode', 'as_of', 'documents', 'cases'}, 'dataset')
-    require(dataset['version'] == FIXTURE.stem and dataset['mode'] == 'synthetic', 'dataset: unsupported version or mode')
+    require(dataset['version'] in {path.stem for path in SUITES.values()} and dataset['mode'] == 'synthetic',
+            'dataset: unsupported version or mode')
     check_text(dataset['corpus_version'], 'corpus version')
     require(IDENTIFIER.fullmatch(dataset['corpus_version']), 'dataset: invalid corpus version')
     check_date(dataset['as_of'], 'as_of')
@@ -184,15 +188,36 @@ def reject_duplicate_keys(pairs):
 def load_fixture(path=FIXTURE):
     dataset = json.loads(path.read_text(encoding='utf-8'), object_pairs_hook=reject_duplicate_keys)
     summary = validate_dataset(dataset)
+    require(dataset['version'] == path.stem, 'dataset version differs from its filename')
     digest = canonical_digest(dataset)
     expected_digest = path.with_suffix('.sha256').read_text(encoding='ascii').strip()
     require(digest == expected_digest, 'dataset SHA-256 differs from the frozen version')
     return dataset, summary | {'dataset_sha256': digest, 'corpus_sha256': canonical_digest(dataset['documents'])}
 
 
+def validate_holdout_independence(baseline, holdout):
+    require(baseline['corpus_version'] != holdout['corpus_version'], 'holdout reuses baseline corpus version')
+    for collection, field in (('cases', 'question'), ('documents', 'text')):
+        base_ids = {row['id'] for row in baseline[collection]}
+        base_text = {' '.join(row[field].split()).casefold() for row in baseline[collection]}
+        require(all(row['id'] not in base_ids and ' '.join(row[field].split()).casefold() not in base_text
+                    for row in holdout[collection]), f'holdout reuses baseline {collection}')
+
+
+def load_suite(suite):
+    dataset, summary = load_fixture(SUITES[suite])
+    if suite == 'holdout':
+        baseline, _ = load_fixture()
+        validate_holdout_independence(baseline, dataset)
+    return dataset, summary
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--suite', choices=SUITES, default='baseline')
+    args = parser.parse_args()
     try:
-        _, summary = load_fixture()
+        _, summary = load_suite(args.suite)
         print(json.dumps(summary, sort_keys=True))
     except (OSError, ValueError) as error:
         print(f'RAG quality dataset invalid. {error}', file=sys.stderr)

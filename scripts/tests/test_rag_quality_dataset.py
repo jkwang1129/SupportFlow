@@ -7,7 +7,8 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from rag_quality_dataset import DatasetError, FIXTURE, load_fixture, validate_dataset
+from rag_quality_dataset import (DatasetError, FIXTURE, load_fixture, load_suite, validate_dataset,
+                                 validate_holdout_independence)
 
 
 class RagQualityDatasetTest(unittest.TestCase):
@@ -97,4 +98,31 @@ class RagQualityDatasetTest(unittest.TestCase):
             path = Path(directory) / FIXTURE.name
             path.write_text('{"mode":"synthetic","mode":"ambiguous"}', encoding='utf-8')
             with self.assertRaisesRegex(DatasetError, 'duplicate keys'):
+                load_fixture(path)
+
+    def test_holdout_balances_three_outcomes_and_uses_its_own_corpus(self):
+        holdout, summary = load_suite('holdout')
+        self.assertEqual({'answer': 4, 'abstain': 4, 'handoff': 4}, summary['outcomes'])
+        self.assertEqual(9, summary['recall_eligible_cases'])
+        self.assertEqual(2, summary['category_counts']['conflict'])
+        self.assertNotEqual(self.summary['dataset_sha256'], summary['dataset_sha256'])
+        self.assertNotEqual(self.summary['corpus_sha256'], summary['corpus_sha256'])
+        validate_holdout_independence(self.dataset, holdout)
+
+    def test_holdout_rejects_reused_ids_questions_and_source_passages(self):
+        holdout, _ = load_suite('holdout')
+        for collection, field in (('cases', 'id'), ('cases', 'question'), ('documents', 'id'), ('documents', 'text')):
+            with self.subTest(collection=collection, field=field):
+                modified = deepcopy(holdout)
+                value = self.dataset[collection][0][field]
+                modified[collection][0][field] = value if field == 'id' else f'\n  {value.upper()}  '
+                with self.assertRaisesRegex(DatasetError, f'holdout reuses baseline {collection}'):
+                    validate_holdout_independence(self.dataset, modified)
+
+    def test_fixture_version_must_match_the_selected_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'rag-quality-holdout-v1.json'
+            path.write_bytes(FIXTURE.read_bytes())
+            path.with_suffix('.sha256').write_bytes(FIXTURE.with_suffix('.sha256').read_bytes())
+            with self.assertRaisesRegex(DatasetError, 'version differs from its filename'):
                 load_fixture(path)

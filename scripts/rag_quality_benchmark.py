@@ -25,7 +25,7 @@ from psycopg.rows import dict_row
 
 from isolated_postgres import disposable_postgres
 from migration_engine import load_plan, run_plan
-from rag_quality_dataset import COMPARISONS, load_fixture
+from rag_quality_dataset import COMPARISONS, SUITES, load_suite
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'ai-service'))
@@ -334,9 +334,10 @@ def main():
     parser.add_argument('--output', type=Path, required=True, help='Path for the JSON report with paired observations')
     parser.add_argument('--live-qwen', action='store_true', help='Send the fixed synthetic prompts to paid Qwen Chat')
     parser.add_argument('--comparison', choices=COMPARISONS, default='rewrite', help='Choose the paired profiles')
+    parser.add_argument('--suite', choices=SUITES, default='baseline', help='Choose the frozen dataset')
     args = parser.parse_args()
     logging.basicConfig(level=logging.ERROR)
-    dataset, fixture = load_fixture()
+    dataset, fixture = load_suite(args.suite)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     if args.live_qwen:
         try:

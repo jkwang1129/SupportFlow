@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 
-from rag_quality_dataset import COMPARISONS, load_fixture, reject_duplicate_keys
+from rag_quality_dataset import COMPARISONS, SUITES, load_suite, reject_duplicate_keys
 
 DECISIONS = {'answer', 'abstain', 'handoff', 'error'}
 
@@ -122,11 +122,12 @@ def main():
     parser.add_argument('--raw', required=True, type=Path)
     parser.add_argument('--review', type=Path, help='When omitted, create an empty review template')
     parser.add_argument('--output', required=True, type=Path)
+    parser.add_argument('--suite', choices=SUITES, default='baseline')
     args = parser.parse_args()
     try:
         content = args.raw.read_bytes()
         raw = json.loads(content, object_pairs_hook=reject_duplicate_keys)
-        dataset, fixture = load_fixture()
+        dataset, fixture = load_suite(args.suite)
         require(raw['fixture']['dataset_sha256'] == fixture['dataset_sha256'], 'raw report references a different fixture')
         cases, indexed = observations(dataset, raw)
         source_sha256 = sha256(content).hexdigest()
