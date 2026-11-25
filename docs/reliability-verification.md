@@ -1794,3 +1794,13 @@ Windows 11、Python 3.11.5、隔离 PostgreSQL 17、两个本机 HTTP 供应商�
 - `python scripts/rag_quality_benchmark.py --comparison grounding --output .local/implementation/e15-rag-grounding.json` 完成冻结合成集，每种模式各 25 题、17/17 引用索引有效，越权召回和门禁违规均为 0。
 
 原始 Python 报告为 `.local/implementation/e15-python.xml`，限定数据库报告为 `.local/implementation/e15-evidence/chat-routing-postgres.xml`。本地供应商夹具用于复核网络和计量边界。真实供应商的数据处理区域和生产可用性未验收。
+
+## E16 六库与附件联合恢复（2026-11-25）
+
+Windows 11、Python 3.11.5、隔离 PostgreSQL 17 和固定镜像摘要的 RustFS。通过 `python scripts/test-database-restore.py --with-attachments` 从两个独立源实例恢复到两个空目标。行为、计时和回退见 [ADR-0075](decisions/0075-attachment-and-database-restore.md)。
+
+- 六库目录核验 103 张应用表，恢复后表行数与源数据逐表核对。5 个对象共 80,063 字节，ZIP 归档 81,717 字节。对象集合、字节数、SHA-256 和 MIME 类型一致。4 条活动附件元数据引用和 1 条带文件的知识库向量恢复一致。软删除文件行和保留的无引用对象按原状态处理。
+- 恢复脚本在首个 PUT 前拒绝损坏归档和非空目标。RustFS 返回 412 拒绝条件覆盖，返回 403 拒绝匿名 GET。目标的受限客服账号继续只看到当前租户的附件元数据，缺失对象引用会使核对失败。脚本 unittest 套件执行 73 项，其中 10 项需要额外夹具而跳过，新增附件测试 7 项均通过。省略 `--with-attachments` 的六库回归也通过，仍生成 v1 报告。
+- 本地联合备份阶段为 2,205.926 ms，目标恢复与核验阶段为 9,653.410 ms。范围为停写、人工合成数据和已经启动的空目标，用来记录本次演练耗时。生产环境的可恢复时间点和恢复时间仍待测量。
+
+联合和仅数据库恢复的原始报告分别为 `.local/implementation/e16-evidence/combined-restore.json` 和 `.local/implementation/e16-evidence/database-only.json`。联合演练运行日志为 `.local/implementation/e16-combined-restore-final.log`。

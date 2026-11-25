@@ -51,8 +51,8 @@ jobs:
         run: python scripts/test-schema-drift.py
       - name: Verify fresh initialization and refusal to overwrite existing databases
         run: python scripts/test-database-init.py
-      - name: Rehearse backup and restore of six isolated databases
-        run: python scripts/test-database-restore.py
+      - name: Rehearse backup and restore of six databases and attachments
+        run: python scripts/test-database-restore.py --with-attachments
       - name: Verify AI service authorization
         working-directory: ai-service
         run: python -m pytest -q --junitxml=../.local/verification/ai-tests.xml

@@ -1,10 +1,14 @@
-"""Rehearse backup and restore on two disposable PostgreSQL 17 clusters."""
+"""Rehearse a quiesced backup and restore on disposable PostgreSQL and optional RustFS."""
+import argparse
+from contextlib import ExitStack
 import hashlib
 import json
 import os
 from pathlib import Path
 import secrets
 import subprocess
+from tempfile import TemporaryFile
+from time import perf_counter
 from uuid import uuid4
 
 import psycopg
@@ -111,7 +115,7 @@ def table_counts(connect, name):
                 for (table,) in names}
 
 
-def assert_restricted_restored_reads(environment, passwords):
+def assert_restricted_restored_reads(environment, passwords, *, check_attachments=False):
     for database, role, table in (('ai_db', 'AI', 'agent_run'), ('customer_db', 'CUSTOMER', 'agent_event_outbox')):
         with psycopg.connect(host='127.0.0.1', port=environment['SUPPORTFLOW_DB_PORT'], dbname=database,
                              user='supportflow_'+role.lower(), password=passwords[role], connect_timeout=3) as connection:
@@ -127,18 +131,44 @@ def assert_restricted_restored_reads(environment, passwords):
                     assert connection.execute('SELECT tenant_code FROM agent_model_token_day').fetchall() == expected
                     assert connection.execute('SELECT tenant_code FROM agent_model_cost_day').fetchall() == expected
                     assert connection.execute('SELECT tenant_code FROM agent_run_event').fetchall() == expected
+                elif check_attachments:
+                    files = connection.execute('SELECT tenant_code FROM file_meta WHERE NOT is_deleted').fetchall()
+                    assert files == expected * 2
             assert connection.execute('SELECT has_table_privilege(current_user,%s,%s)', (table, 'TRUNCATE')).fetchone() == (False,)
 
 
-def main():
-    with disposable_postgres(initialize=False) as (source, source_env), \
-            disposable_postgres(initialize=False) as (target, target_env):
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--with-attachments', action='store_true', help='also restore the RustFS attachment bucket')
+    args = parser.parse_args(argv)
+    path = ROOT/'.local/verification/database-restore-drill.json'
+    path.unlink(missing_ok=True)
+    with ExitStack() as stack:
+        source, source_env = stack.enter_context(disposable_postgres(initialize=False))
+        target, target_env = stack.enter_context(disposable_postgres(initialize=False))
         names = sorted(DATABASES)
         initialize_databases(source_env)
         source_passwords = provision(source_env)
         seed(source)
+        if args.with_attachments:
+            from attachment_backup import backup_objects, restore_objects, verify_objects, verify_references
+            from attachment_restore_fixture import (BUCKET, IMAGE, disposable_rustfs, live_references,
+                                                    reject_corrupted_archive, restored_knowledge, seed_attachments,
+                                                    verify_missing_reference_guard, verify_target_guards)
+            source_bucket = stack.enter_context(disposable_rustfs())
+            target_bucket = stack.enter_context(disposable_rustfs())
+            object_archive = stack.enter_context(TemporaryFile())
+            seed_attachments(source, source_bucket)
+            expected_refs = live_references(source)
+            expected_knowledge = restored_knowledge(source)
+            assert len(expected_refs) == 4 and len(expected_knowledge) == 1 and expected_knowledge[0][-1] == 0
         expected_projection = projection(source)
         expected_counts = {name: table_counts(source, name) for name in names}
+        backup_started = perf_counter()
+        if args.with_attachments:
+            records = backup_objects(source_bucket, BUCKET, object_archive, page_size=2)
+            assert len(records) == 5
+            verify_references(expected_refs, records)
         roles = pg(source_env, 'pg_dumpall', '--roles-only', '--no-role-passwords', '-w').stdout
         assert all(value.encode() not in roles for value in source_passwords.values()) and b' PASSWORD ' not in roles
         # The target fixture already owns its own bootstrap login. Retain
@@ -147,11 +177,15 @@ def main():
         assert roles.count(bootstrap_create) == 1
         roles = roles.replace(bootstrap_create, b'\n', 1)
         archives = {name: pg(source_env, 'pg_dump', '-Fc', '-w', '-d', name).stdout for name in names}
+        backup_ms = round((perf_counter() - backup_started) * 1000, 3)
 
+        if args.with_attachments:
+            reject_corrupted_archive(object_archive, target_bucket)
         bad = pg(target_env, 'pg_restore', '--list', content=b'not a PostgreSQL archive', check=False)
         assert bad.returncode != 0
         with target('postgres', readonly=True) as connection:
             assert connection.execute('SELECT datname FROM pg_database WHERE datname=ANY(%s)', (names,)).fetchall() == []
+        restore_started = perf_counter()
         pg(target_env, 'psql', '-wXq', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1', content=roles)
         for archive in archives.values():
             pg(target_env, 'pg_restore', '--create', '--exit-on-error', '-w', '-d', 'postgres', content=archive)
@@ -159,7 +193,14 @@ def main():
         verified = migrate_databases(target_env, verify=True)
         assert len(verified) == 6 and projection(target) == expected_projection
         assert {name: table_counts(target, name) for name in names} == expected_counts
-        assert_restricted_restored_reads(target_env, passwords)
+        assert_restricted_restored_reads(target_env, passwords, check_attachments=args.with_attachments)
+        if args.with_attachments:
+            assert restore_objects(target_bucket, BUCKET, object_archive) == records
+            verify_objects(target_bucket, BUCKET, records)
+            restored_refs = live_references(target)
+            assert restored_refs == expected_refs and restored_knowledge(target) == expected_knowledge
+            matched_references = verify_references(restored_refs, records)
+        restore_and_verify_ms = round((perf_counter() - restore_started) * 1000, 3)
         assert projection(source) == expected_projection
 
         report = {
@@ -176,10 +217,28 @@ def main():
             'matched_run_events': len(expected_projection[7]),
             'restricted_roles_verified': 2, 'invalid_archive_rejected': True,
         }
-        path = ROOT/'.local/verification/database-restore-drill.json'
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
-        print(json.dumps(report), flush=True)
+        if args.with_attachments:
+            verify_target_guards(target_bucket, object_archive, records)
+            verify_missing_reference_guard(restored_refs, records)
+            verify_objects(source_bucket, BUCKET, records)
+            archive_bytes = object_archive.seek(0, os.SEEK_END)
+            object_archive.seek(0)
+            report['schema_version'] = 'supportflow-restore-drill-v2'
+            report['environment'] = 'DISPOSABLE_POSTGRES_17_RUSTFS_SYNTHETIC_DATA'
+            report['attachments'] = {
+                'image': IMAGE, 'checked_objects': len(records),
+                'checked_object_bytes': sum(entry['size'] for entry in records),
+                'archive_bytes': archive_bytes, 'archive_sha256': hashlib.file_digest(object_archive, 'sha256').hexdigest(),
+                'matched_active_references': matched_references, 'matched_knowledge_vectors': len(expected_knowledge),
+                'corrupted_archive_rejected': True, 'nonempty_destination_rejected': True,
+                'conditional_overwrite_rejected': True, 'missing_active_reference_rejected': True,
+                'anonymous_object_read_rejected': True, 'restored_file_metadata_scope_verified': True,
+            }
+            report['combined_backup_ms'] = backup_ms
+            report['combined_restore_and_verify_ms'] = restore_and_verify_ms
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2)+'\n', encoding='utf-8')
+    print(json.dumps(report), flush=True)
 
 
 if __name__ == '__main__':
