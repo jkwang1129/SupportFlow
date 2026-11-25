@@ -171,6 +171,20 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
     }
 
     @Test
+    void expiredStagingCannotBecomeTheActiveIndexEvenWithAMatchingReceipt() {
+        when(ai.indexText(eq("TENANT_A"), eq(documentId), any(UUID.class), eq(NEW_POLICY))).thenAnswer(call -> {
+            stageChunk(call.getArgument(2), NEW_POLICY, 48);
+            return indexResult(NEW_POLICY, 1);
+        });
+        var failure = assertThrows(BizException.class, () -> tx(() -> knowledge.update(EDITOR, documentId, null, null, NEW_POLICY, null)));
+        assertEquals(50001, failure.getCode());
+        assertEquals(OLD_POLICY, activeChunk());
+        assertEquals(OLD_POLICY, scoped(() -> jdbc.queryForObject(
+                "SELECT content FROM kb_document WHERE id=? AND index_status=3", String.class, documentId)));
+        assertEquals(1, scoped(() -> jdbc.queryForObject("SELECT count(*) FROM kb_chunk_stage WHERE doc_id=?", Integer.class, documentId)));
+    }
+
+    @Test
     void foreignAndDeletedDocumentsCannotStartIndexingOrPublication() {
         var foreign = new LoginUser(102, "U102", "editor", 2, "TENANT_B");
         var denied = assertThrows(BizException.class, () -> TenantContext.bind("TENANT_B",
@@ -211,18 +225,23 @@ class KbDocumentLifecyclePostgresTest extends SessionPostgresFixture {
     }
 
     private void stageChunk(UUID attempt, String body) throws SQLException {
+        stageChunk(attempt, body, 0);
+    }
+
+    private void stageChunk(UUID attempt, String body, int ageHours) throws SQLException {
         try (var connection = DriverManager.getConnection(System.getenv("SUPPORTFLOW_RLS_TEST_URL"), "rls_test_kb",
                 System.getenv("SUPPORTFLOW_RLS_TEST_KB_PASSWORD"))) {
             connection.setAutoCommit(false);
             try (var scope = connection.createStatement(); var insert = connection.prepareStatement("""
-                    INSERT INTO kb_chunk_stage (id, tenant_code, doc_id, attempt_id, chunk_no, content)
-                    VALUES (?, 'TENANT_A', ?, ?, 0, ?)
+                    INSERT INTO kb_chunk_stage (id, tenant_code, doc_id, attempt_id, chunk_no, content, create_time)
+                    VALUES (?, 'TENANT_A', ?, ?, 0, ?, statement_timestamp() - ? * interval '1 hour')
                     """)) {
                 scope.execute("SELECT set_config('app.tenant_code', 'TENANT_A', true)");
                 insert.setInt(1, IDS.incrementAndGet());
                 insert.setLong(2, documentId);
                 insert.setObject(3, attempt);
                 insert.setString(4, body);
+                insert.setInt(5, ageHours);
                 insert.executeUpdate();
             }
             connection.commit();

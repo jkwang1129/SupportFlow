@@ -82,6 +82,8 @@ def main():
             env=db_env, encoding='utf-8')
         run(psql, input=(ROOT / 'backend/deploy/migrations/sql/customer_db_010_kb_chunk_stage.sql').read_text(encoding='utf-8'),
             env=db_env, encoding='utf-8')
+        run(psql, input=(ROOT / 'backend/deploy/migrations/sql/customer_db_011_kb_stage_retention.sql').read_text(encoding='utf-8'),
+            env=db_env, encoding='utf-8')
         run(psql, env=db_env, input=f"""
             CREATE ROLE rls_test_java LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{app_password}';
             GRANT supportflow_customer_tenant TO rls_test_java;

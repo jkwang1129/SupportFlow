@@ -3748,6 +3748,7 @@
       "format": 1,
       "functions": {
         "supportflow_channel_tenant(p_app_key text)": "CREATE OR REPLACE FUNCTION public.supportflow_channel_tenant(p_app_key text)\n RETURNS text\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n    SELECT (SELECT min(k.tenant_code)::text\n    FROM public.channel_key AS k\n    JOIN public.channel AS c ON c.id = k.channel_id AND c.tenant_code = k.tenant_code\n    WHERE length(p_app_key) BETWEEN 1 AND 64\n      AND k.app_key = p_app_key AND k.status = 1 AND NOT k.is_deleted\n      AND (k.expire_time IS NULL OR k.expire_time > CURRENT_TIMESTAMP)\n      AND c.status = 1 AND NOT c.is_deleted\n      AND k.tenant_code ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'\n      AND upper(k.tenant_code) <> 'PLATFORM'\n    HAVING count(*) = 1)\n$function$\n",
+        "supportflow_expired_kb_stage_batch(p_tenant text, p_limit integer, p_apply boolean)": "CREATE OR REPLACE FUNCTION public.supportflow_expired_kb_stage_batch(p_tenant text, p_limit integer, p_apply boolean)\n RETURNS bigint\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO 'pg_catalog', 'pg_temp'\n SET row_security TO 'off'\nAS $function$\nDECLARE\n affected bigint;\n cutoff timestamptz := statement_timestamp() - interval '24 hours';\nBEGIN\n IF p_tenant IS NULL OR p_tenant !~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$' OR upper(p_tenant)='PLATFORM'\n    OR p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 500 OR p_apply IS NULL THEN\n   RAISE EXCEPTION 'Invalid KB stage maintenance scope' USING ERRCODE='22023';\n END IF;\n\n IF NOT p_apply THEN\n   SELECT count(*) INTO affected FROM (\n     SELECT 1 FROM public.kb_chunk_stage s\n      WHERE s.tenant_code=p_tenant AND s.create_time<cutoff\n      ORDER BY s.create_time,s.doc_id,s.attempt_id,s.chunk_no LIMIT p_limit\n   ) AS preview;\n   RETURN affected;\n END IF;\n\n WITH eligible AS MATERIALIZED (\n   SELECT s.doc_id,s.attempt_id,s.chunk_no FROM public.kb_chunk_stage s\n    WHERE s.tenant_code=p_tenant AND s.create_time<cutoff\n    ORDER BY s.create_time,s.doc_id,s.attempt_id,s.chunk_no LIMIT p_limit FOR UPDATE OF s SKIP LOCKED\n )\n DELETE FROM public.kb_chunk_stage s USING eligible e\n  WHERE s.tenant_code=p_tenant AND (s.doc_id,s.attempt_id,s.chunk_no)=(e.doc_id,e.attempt_id,e.chunk_no);\n GET DIAGNOSTICS affected = ROW_COUNT;\n RETURN affected;\nEND $function$\n",
         "supportflow_license_scope(actor bigint)": "CREATE OR REPLACE FUNCTION public.supportflow_license_scope(actor bigint)\n RETURNS text\n LANGUAGE plpgsql\n IMMUTABLE STRICT\n SET search_path TO 'pg_catalog'\nAS $function$\nDECLARE n bigint := actor; result text := ''; digits constant text := '0123456789abcdefghijklmnopqrstuvwxyz';\nBEGIN\n    IF n<=0 THEN RAISE EXCEPTION 'Positive applicant ID required'; END IF;\n    WHILE n>0 LOOP result := substr(digits,(n%36)::int+1,1)||result; n:=n/36; END LOOP;\n    RETURN 'L'||result;\nEND $function$\n",
         "supportflow_public_bot_avatar(p_id bigint)": "CREATE OR REPLACE FUNCTION public.supportflow_public_bot_avatar(p_id bigint)\n RETURNS TABLE(file_name character varying, mime_type character varying, object_key character varying)\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n    SELECT f.file_name, f.mime_type, f.object_key\n    FROM public.file_meta f\n    WHERE f.id = p_id AND f.biz_type = 1 AND NOT f.is_deleted\n      AND starts_with(f.object_key, 'bot/avatar/' || f.tenant_code || '/')\n$function$\n",
         "supportflow_wechat_tenant(p_app_id text)": "CREATE OR REPLACE FUNCTION public.supportflow_wechat_tenant(p_app_id text)\n RETURNS text\n LANGUAGE sql\n STABLE SECURITY DEFINER\n SET search_path TO 'pg_catalog'\nAS $function$\n    SELECT (SELECT min(w.tenant_code)::text\n    FROM public.channel_wechat_config AS w\n    JOIN public.channel AS c ON c.id = w.channel_id AND c.tenant_code = w.tenant_code\n    WHERE length(p_app_id) BETWEEN 1 AND 64 AND w.app_id = p_app_id\n      AND w.status = 1 AND NOT w.is_deleted AND c.status = 1 AND NOT c.is_deleted\n      AND c.channel_type IN (2, 3)\n      AND w.tenant_code ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,15}$'\n      AND upper(w.tenant_code) <> 'PLATFORM'\n    HAVING count(*) = 1)\n$function$\n"
@@ -7567,7 +7568,7 @@
               "generated": "",
               "identity": "",
               "not_null": true,
-              "type": "timestamp without time zone"
+              "type": "timestamp with time zone"
             },
             "doc_id": {
               "default": null,
@@ -14565,6 +14566,10 @@
       {
         "checksum": "7bc1674e16242bc66faa29a0752ba6778952b4728df1e7139ed4c892b5289c24",
         "version": "010"
+      },
+      {
+        "checksum": "55fb4b5ba88ba1db0b4e962040e71399e7e48d16fc2f6a4035a51fa65e95ec50",
+        "version": "011"
       }
     ],
     "ops_db": [

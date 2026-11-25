@@ -118,7 +118,7 @@ def replace_chunks(
             cur.execute("""
                 DELETE FROM kb_chunk_stage WHERE tenant_code=%s AND ctid IN (
                     SELECT ctid FROM kb_chunk_stage WHERE tenant_code=%s
-                      AND create_time < CURRENT_TIMESTAMP - interval '1 day'
+                      AND create_time < statement_timestamp() - interval '24 hours'
                     ORDER BY create_time LIMIT 256
                 )
                 """, (tenant_code, tenant_code))

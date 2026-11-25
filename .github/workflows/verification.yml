@@ -37,6 +37,8 @@ jobs:
         run: mvn -B -f backend/pom.xml verify
       - name: Verify PostgreSQL tenant isolation and knowledge store
         run: python scripts/test-customer-rls.py --with-ai
+      - name: Verify bounded knowledge staging maintenance
+        run: python scripts/test-kb-stage-retention.py
       - name: Verify immutable ticket creation receipt storage
         run: python scripts/test-ticket-receipts.py
       - name: Verify PostgreSQL usage batch ledger and outbox

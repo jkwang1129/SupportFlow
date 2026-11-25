@@ -172,7 +172,7 @@ def main():
             with psycopg.connect(dsn(database),autocommit=True) as connection:
                 applied=[]
                 if database=='customer_db':
-                    assert plan[-1].version=='010'
+                    assert plan[-1].version=='011'
                     applied=run_plan(connection,plan[:6])["applied"]
                     read=existing_runtime_source(connection)
                     before=read()
@@ -273,10 +273,32 @@ def main():
                         finally:connection.execute(f'ALTER ROLE supportflow_kb_tenant {restore}')
                     print('007 -> 008 preserved existing business/source/draft/chunk data; granted only index_status SELECT; 3 unsafe capability states rejected',flush=True)
                     print('008 -> 009 preserved every existing ticket/source/message/knowledge field; immutable ticket receipt initially empty; old global ticket PK retained',flush=True)
-                    upgrade010=run_plan(connection,plan)
+                    upgrade010=run_plan(connection,plan[:10])
                     assert upgrade010['applied']==['010'] and read_kb()==before_kb and read_ticket()==before_ticket
                     assert connection.execute('SELECT count(*) FROM kb_chunk_stage').fetchone()==(0,)
                     print('009 -> 010 preserved existing knowledge and ticket data; isolated index staging starts empty',flush=True)
+                    connection.execute("SET TIME ZONE 'Asia/Shanghai'")
+                    connection.execute("""INSERT INTO kb_chunk_stage(id,tenant_code,doc_id,attempt_id,chunk_no,content,create_time)
+                        VALUES (774102,'UPGRADE_A',774100,'894e4ae8-4496-423f-8915-57d981597400',0,
+                                'existing staged body',statement_timestamp()::timestamp - interval '2 days')""")
+                    snapshot_stage = """SELECT id,tenant_code,doc_id,attempt_id,chunk_no,content,char_count,token_count,
+                        embedding::text,embedding_model,create_time::timestamptz FROM kb_chunk_stage"""
+                    before_stage=connection.execute(snapshot_stage).fetchall()
+                    connection.execute('CREATE ROLE supportflow_kb_stage_maintenance LOGIN')
+                    try:
+                        with connection.transaction():
+                            connection.execute(plan[-1].content)
+                    except psycopg.errors.RaiseException as failure:
+                        assert 'non-administrative' in str(failure)
+                    else:
+                        raise AssertionError('Unsafe knowledge staging maintenance capability accepted')
+                    connection.execute('ALTER ROLE supportflow_kb_stage_maintenance NOLOGIN')
+                    upgrade011=run_plan(connection,plan)
+                    assert upgrade011['applied']==['011'] and read_kb()==before_kb and read_ticket()==before_ticket
+                    assert connection.execute(snapshot_stage).fetchall()==before_stage
+                    assert connection.execute("SELECT public.supportflow_expired_kb_stage_batch('UPGRADE_A', 100, false)").fetchone()==(1,)
+                    connection.execute('RESET TIME ZONE')
+                    print('010 -> 011 preserved active and staged knowledge; rejected elevated maintenance capability and previewed existing expired row',flush=True)
                 if database=='ai_db':
                     assert result['applied']==['014'] and read_ai()==before_ai and read_body()==before_body and read_reply()==before_reply and read_ticket_audit()==before_ticket_audit
                     assert read_approval()==before_approval

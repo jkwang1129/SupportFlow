@@ -28,6 +28,7 @@
             DELETE FROM kb_chunk_stage
              WHERE tenant_code = #{tenantCode} AND doc_id = #{docId}
                AND attempt_id = CAST(#{attemptId} AS uuid)
+               AND create_time >= statement_timestamp() - interval '24 hours'
             RETURNING id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model
         )
         INSERT INTO kb_chunk (id, tenant_code, doc_id, chunk_no, content, char_count, token_count, embedding, embedding_model)
