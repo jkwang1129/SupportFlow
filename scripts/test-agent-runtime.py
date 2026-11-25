@@ -6,6 +6,7 @@ import secrets
 import subprocess
 import sys
 
+from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
 from isolated_postgres import disposable_postgres
@@ -57,19 +58,30 @@ def main():
         subprocess.run(command, env=provision_env, input=provisioning,
                        text=True, check=True, stdout=subprocess.DEVNULL)
         address = dict(host='127.0.0.1', port=environment['SUPPORTFLOW_DB_PORT'], dbname='ai_db')
+        maintenance_password = secrets.token_hex(24)
+        with connect('ai_db') as connection:
+            connection.execute(sql.SQL('CREATE ROLE payload_maintenance_fixture LOGIN PASSWORD {}').format(sql.Literal(maintenance_password)))
+            connection.execute('GRANT CONNECT ON DATABASE ai_db TO payload_maintenance_fixture')
+            connection.execute('GRANT USAGE ON SCHEMA public TO payload_maintenance_fixture')
+            connection.execute('GRANT supportflow_payload_maintenance TO payload_maintenance_fixture')
         test_env = {**os.environ, 'PYTHONUTF8': '1',
                     'SUPPORTFLOW_RUNTIME_TEST_DSN': make_conninfo(**address, user='supportflow_ai', password=passwords['AI']),
+                    'SUPPORTFLOW_RETENTION_TEST_DSN': make_conninfo(**address, user='payload_maintenance_fixture', password=maintenance_password),
                     'SUPPORTFLOW_RUNTIME_ADMIN_TEST_DSN': make_conninfo(**address, user='supportflow', password=environment['SUPPORTFLOW_DB_PASSWORD'])}
         report = ROOT/'.local/verification/runtime-store.xml'
         report.parent.mkdir(parents=True, exist_ok=True)
         metrics_report = report.with_name('runtime-metrics.json')
         metrics_report.unlink(missing_ok=True)
         test_env['SUPPORTFLOW_RUNTIME_METRICS_TEST_REPORT'] = str(metrics_report)
+        retention_report = report.with_name('runtime-payload-retention.json')
+        retention_report.unlink(missing_ok=True)
+        test_env['SUPPORTFLOW_PAYLOAD_RETENTION_TEST_REPORT'] = str(retention_report)
         subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/test_runtime_types.py',
                         'tests/test_runtime_store_postgres.py', 'tests/test_runtime_worker_postgres.py',
                         'tests/test_runtime_api_postgres.py', 'tests/test_runtime_authority_postgres.py',
                         'tests/test_runtime_ticket_authority_postgres.py',
                         'tests/test_runtime_payloads_postgres.py',
+                        'tests/test_runtime_payload_retention_postgres.py',
                         'tests/test_runtime_worker_payloads_postgres.py',
                         'tests/test_runtime_tools_postgres.py',
                         'tests/test_ticket_write_tool_postgres.py',

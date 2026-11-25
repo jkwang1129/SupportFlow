@@ -1833,3 +1833,13 @@ Windows 11、Python 3.11.5、隔离 PostgreSQL 17 和既有受限 Runtime 角色
 - 告警样本用实际 Worker 执行 1 项成功和 1 项合成失败，再保留 1 项已等待 10.486 秒的任务。命令输出两种告警并返回退出码 3，另一个空租户返回 0。两次执行的首次领取延迟 P50/P95 为 36.546/64.659 ms，提交至终态为 133.828/147.569 ms。该合成样本用于验证计算与观测链路，生产容量和监测频率待验收。
 
 本地原始报告位于 `.local/implementation/e19-evidence/runtime-metrics.json` 和 `runtime-store.xml`。CI 跟随既有 Runtime 数据库和 Java 投递步骤保存同口径的报告。
+
+## E20 过期 Agent 检查点清理（2026-11-25）
+
+Windows 11、Python 3.11.5、隔离 PostgreSQL 17。AI 016 注册独立维护能力及单批清理函数。部署、运行和回退见 [ADR-0079](decisions/0079-expired-checkpoint-retention.md)。
+
+- 5 项专项数据库回归通过。测试覆盖单租户批次限制、预览只读、锁跳过、事务回滚、重复执行、无正文读取权限和 Runtime 拒绝执行。任务执行中、审批等待、写结果未知、正文未到期和其他租户的正文均保留。
+- CLI 实测先预览 1 条并删除 0 条，显式执行后删除 1 条，重复执行删除 0 条。清理前后的 Runtime 轨迹、事件明细和模型回执相同，实测样本继续返回 13 个已记录输入 Token。CI 保存 `runtime-payload-retention.json`。
+- `python scripts/test-versioned-migrations.py` 验证 AI 015 至 016 的存量正文与审计记录保持一致，新库、重复迁移及 17 项迁移回归通过。六库 103 张表的结构核验通过，拒绝 16 处 SQL 漂移及 3 处元数据漂移。六库与 5 个附件对象恢复也通过。
+
+维护命令和删除均在隔离环境验证。生产清理调度、备份副本保留以及其他业务数据的到期策略待验收。

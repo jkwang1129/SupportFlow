@@ -168,6 +168,16 @@ python -m ai.runtime.metrics --tenant TENANT_A --window-minutes 60 --alert-due-c
 
 `waiting_approval` 用于判断待人工审批，`running` 和 `expired_leases` 用于排查执行与接管。定位具体任务时可继续按原请求号读取轨迹。以输出的样本数和截断状态解释延迟及成功率。[口径与退出码](decisions/0078-runtime-queue-metrics.md) · [跨服务轨迹](decisions/0057-cross-service-trace-timeline.md)
 
+## Agent 检查点到期处理
+
+使用 AI 016 及具备 `supportflow_payload_maintenance` 权限的专用维护登录。在 `ai-service` 目录用 `SUPPORTFLOW_PAYLOAD_MAINTENANCE_DSN` 指定目标 AI 数据库。先运行以下命令查看一个租户的一批候选数量。
+
+```text
+python -m ai.runtime.payload_retention --tenant TENANT_A --limit 100
+```
+
+明确授权的实际清理通过 `--apply` 提交当前批次。输出包含候选或删除计数。任务尚未结束、写结果未知及正文尚未到期时继续保留。部署权限、复验和回退见 [ADR-0079](decisions/0079-expired-checkpoint-retention.md)。
+
 ## Java 存活与就绪
 
 五个数据库服务（User/Tenant/Customer/Billing/Ops，9091～9095）使用现有 Actuator：`/actuator/health/liveness` 只检查进程存活；`/actuator/health/readiness` 合并应用就绪状态与本服务的 `schema/readiness.properties` 最小结构契约。缺表、缺列、缺少读取权限或数据库连接/查询异常时返回 503；`/api/*` 同时返回通用 503 和 Retry-After，不进入业务处理器。修复后下次请求重新检查，无需重启。
