@@ -1,7 +1,7 @@
 # SupportFlow Agent 工程能力矩阵与收官路线
 
 > **项目定位**：SupportFlow — 多租户 SaaS 智能客服 Agent 平台（*Multi-tenant Customer Service Agent Platform*）
-> **当前核查基线**：分支 `codex/p1-reliability`，已完成基础可靠性改造（A0–E27，86 份 ADR、六库 106 张表）及 Phase 1–6 全栈 Agent 平台能力收官（RAG 2.0 混合重排与来源治理、Workflow+Agent Loop 混合路由与多工具闭环、上下文压缩与熔断降级、OTel+Langfuse 全链路观测、200 条 Golden Dataset + 50 安全 + 50 故障恢复实测与运维 Runbook）。
+> **当前核查基线**：主干分支 `main`，已完成基础可靠性改造（A0–E27，86 份 ADR、六库 106 张表）及 Phase 1–6 全栈 Agent 平台能力收官（RAG 2.0 混合重排与来源治理、Workflow+Agent Loop 混合路由与多工具闭环、上下文压缩与熔断降级、OTel+Langfuse 全链路观测、200 条 Golden Dataset + 50 安全 + 50 故障恢复实测与运维 Runbook）。
 > **关联文档**：量化评测汇总见 [量化评测与证据汇总](evaluation-summary.md)；运维手册见 [生产运维 Runbook](runbook.md)；历史逐批推进日志见 [批次归档（A0–E27）](archive/batch-changelog-a0-e27.md)；实测命令与报告哈希见 [可靠性改造验收记录](reliability-verification.md)；设计决策见 [ADR 索引](decisions/README.md)。
 
 ---

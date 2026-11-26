@@ -1,7 +1,7 @@
 # SupportFlow 量化评测与可复现证据汇总
 
 > **项目定位**：SupportFlow — 多租户 SaaS 智能客服 Agent 平台（*Multi-tenant Customer Service Agent Platform*）
-> **评测日期**：2026-11-26（开发分支 `codex/p1-reliability`）
+> **评测日期**：2026-11-26（主干基线 `main`）
 > **数据口径声明**：以下全部数据均来自本仓库版本化冻结合成数据集、隔离 PostgreSQL 17 + `pgvector` 实例及真实阿里云 DashScope（`qwen-plus` / `text-embedding-v3` / `gte-rerank`）受控实测，**不包含任何未观测的线上生产流量、客户数量或虚构性能宣称**。
 
 ---
