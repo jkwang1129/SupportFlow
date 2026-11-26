@@ -3,10 +3,17 @@ import asyncio
 from contextlib import nullcontext
 import json
 import math
+import os
 import re
 from urllib.parse import urlsplit
 
 import httpx
+
+from .circuit_breaker import (
+    CircuitBreaker,
+    CircuitBreakerOpenError,
+    default_circuit_breaker_registry,
+)
 
 MAX_CHAT_BYTES = 262144
 MAX_VISION_REQUEST_BYTES = 19 * 1024 * 1024
@@ -81,18 +88,21 @@ def _configuration(chosen, timeout):
     return base, key, model
 
 
-async def _send_chat_json(chosen, payload, timeout, *, transport=None):
-    return await _send_model_json(chosen, payload, timeout, endpoint='chat/completions', transport=transport)
-
-
-async def _send_vision_json(chosen, payload, timeout, *, transport=None):
+async def _send_chat_json(chosen, payload, timeout, *, transport=None, circuit_breaker: CircuitBreaker | None = None):
     return await _send_model_json(chosen, payload, timeout, endpoint='chat/completions',
-                                  transport=transport, request_limit=MAX_VISION_REQUEST_BYTES)
+                                  transport=transport, circuit_breaker=circuit_breaker)
 
 
-async def _send_embedding_json(chosen, payload, timeout, *, transport=None, client=None):
+async def _send_vision_json(chosen, payload, timeout, *, transport=None, circuit_breaker: CircuitBreaker | None = None):
+    return await _send_model_json(chosen, payload, timeout, endpoint='chat/completions',
+                                  transport=transport, request_limit=MAX_VISION_REQUEST_BYTES,
+                                  circuit_breaker=circuit_breaker)
+
+
+async def _send_embedding_json(chosen, payload, timeout, *, transport=None, client=None,
+                               circuit_breaker: CircuitBreaker | None = None):
     return await _send_model_json(chosen, payload, timeout, endpoint='embeddings',
-                                  transport=transport, client=client)
+                                  transport=transport, client=client, circuit_breaker=circuit_breaker)
 
 
 def _model_client(timeout, *, transport=None):
@@ -100,7 +110,19 @@ def _model_client(timeout, *, transport=None):
                              timeout=httpx.Timeout(min(30, timeout), connect=min(5, timeout)))
 
 
-async def _send_model_json(chosen, payload, timeout, *, endpoint, transport=None, request_limit=MAX_CHAT_BYTES, client=None):
+def _resolve_circuit_breaker(chosen: dict, base_url: str, explicit: CircuitBreaker | None) -> CircuitBreaker | None:
+    if explicit is not None:
+        return explicit
+    flag = os.getenv('SUPPORTFLOW_AI_CIRCUIT_BREAKER_ENABLED', '').strip().lower()
+    if flag in ('1', 'true', 'yes', 'on'):
+        provider = chosen.get('provider')
+        key = provider if isinstance(provider, str) and provider.strip() else (urlsplit(base_url).hostname or 'default')
+        return default_circuit_breaker_registry.get(key)
+    return None
+
+
+async def _send_model_json(chosen, payload, timeout, *, endpoint, transport=None, request_limit=MAX_CHAT_BYTES,
+                           client=None, circuit_breaker: CircuitBreaker | None = None):
     if endpoint not in ('chat/completions', 'embeddings') or type(endpoint) is not str:
         raise ModelCallFailure('MODEL_OPERATION_INVALID', attempted=False)
     base, key, model = _configuration(chosen, timeout)
@@ -110,6 +132,11 @@ async def _send_model_json(chosen, payload, timeout, *, endpoint, transport=None
         body = _request_body(payload, request_limit)
     except (ValueError, TypeError, UnicodeError, RecursionError):
         raise ModelCallFailure('MODEL_REQUEST_INVALID', attempted=False) from None
+
+    active_breaker = _resolve_circuit_breaker(chosen, base, circuit_breaker)
+    if active_breaker is not None:
+        active_breaker.before_call()
+
     try:
         # No hidden retry/fallback. Header and body completion share one deadline.
         async with asyncio.timeout(timeout):
@@ -137,13 +164,23 @@ async def _send_model_json(chosen, payload, timeout, *, endpoint, transport=None
                         if len(raw) + len(chunk) > MAX_CHAT_BYTES:
                             raise ModelCallFailure('MODEL_RESPONSE_TOO_LARGE')
                         raw.extend(chunk)
+    except CircuitBreakerOpenError:
+        raise
     except (TimeoutError, httpx.TimeoutException):
+        if active_breaker is not None:
+            active_breaker.record_failure(transient=True, reason='MODEL_TIMEOUT')
         raise ModelCallFailure('MODEL_TIMEOUT', retryable=True) from None
     except httpx.RequestError:
+        if active_breaker is not None:
+            active_breaker.record_failure(transient=True, reason='MODEL_NETWORK_ERROR')
         raise ModelCallFailure('MODEL_NETWORK_ERROR', retryable=True) from None
-    except ModelCallFailure:
+    except ModelCallFailure as exc:
+        if active_breaker is not None:
+            active_breaker.record_failure(transient=bool(exc.retryable), reason=exc.code)
         raise
     except Exception:
+        if active_breaker is not None:
+            active_breaker.record_failure(transient=False, reason='MODEL_TRANSPORT_ERROR')
         raise ModelCallFailure('MODEL_TRANSPORT_ERROR') from None
 
     def unique(pairs):
@@ -159,6 +196,10 @@ async def _send_model_json(chosen, payload, timeout, *, endpoint, transport=None
         value = json.loads(bytes(raw).decode('utf-8'), object_pairs_hook=unique, parse_constant=constant)
         if type(value) is not dict:
             raise ValueError()
+        if active_breaker is not None:
+            active_breaker.record_success()
         return value
     except (ValueError, UnicodeError, RecursionError):
+        if active_breaker is not None:
+            active_breaker.record_failure(transient=False, reason='MODEL_RESPONSE_INVALID')
         raise ModelCallFailure('MODEL_RESPONSE_INVALID') from None

@@ -1,0 +1,629 @@
+{
+  "version": "rag-hard-benchmark-v1",
+  "corpus_version": "hard-enterprise-v1",
+  "mode": "synthetic_enterprise",
+  "chunk_size": 140,
+  "chunk_overlap": 12,
+  "documents": [
+    {
+      "id": "hard-a-sla-vip",
+      "tenant": "HARD_A",
+      "title": "VIP 专属客户 SLA 服务等级承诺与故障赔付代金券条例",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "签约尊享保障计划覆盖核心工单流转引擎与话务分配集群。生产环境全站中断的 P0 级紧急故障工单首次响应时限为 15 分钟内，P1 级严重故障首次响应时限为 30 分钟内。\n\n若单一自然月度核心生产集群可用率低于九九点九五约定水位，签约主体须于次月前五个工作日内递交书面核定表。经审计确属底座责任的中断时长，按当月实付月费四分之一核发专属抵扣券冲抵后续续费结算。"
+    },
+    {
+      "id": "hard-a-rma-hardware",
+      "tenant": "HARD_A",
+      "title": "智能话机终端 RMA 硬件返修授权与 DOA 备机先行规程",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "桌面话机质保期内非人为损坏时，凭序列号提报 RMA 申请。RMA 编码签发后 7 个工作日内有效，RMA 外箱贴 RMA 条码，超期未揽收的 RMA 单自动作废。\n\n加购年度尊享维保包的政企主体可启用 DOA 备机先行寄出特权，复核通过当日顺丰航空寄出同型号良品替换机。收货方须在签收良品备机后 10 个自然日内将故障旧机寄回检测仓，逾期扣划担保金。"
+    },
+    {
+      "id": "hard-a-sso-saml",
+      "tenant": "HARD_A",
+      "title": "企业单点登录 SSO（SAML 2.0 与 OIDC）身份源对接及证书轮换规范",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "统一身份认证中心兼容标准 SAML 2.0 断言交互与 OIDC 授权码流程对接集团身份目录。上传元数据 XML 描述文件后，默认提取企业邮箱主字段映射坐席唯一工号，并整点增量同步部门组织架构树。\n\n为规避数字签名凭证到期引发全员登入中断，托管后台允许同时挂载新旧两份 X.509 公钥验签文件。双公钥并行平滑切换窗口最长维持 14 天，流量切至新密钥核验零报错后旧验签文件自动废止。"
+    },
+    {
+      "id": "hard-a-webhook-hmac",
+      "tenant": "HARD_A",
+      "title": "开放平台 API Webhook 回调验签与 HTTP 429 限流退避重推规范",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "开放总线推送事件报文时，请求头携带 X-SupportFlow-Signature 摘要。消费端按 HMAC-SHA256 完成 HMAC 验签，HMAC 引擎拒绝超 5 分钟的 HMAC 重放报文。\n\n若外部接收服务连接超时或抛出拥塞响应，异步投递引擎按指数退避算法最多自动重推 6 次。全部退避重推次数耗尽仍未获成功回执的载荷将写入死信队列留存 72 小时，供排障修复后手工批量重放。"
+    },
+    {
+      "id": "hard-a-billing-export",
+      "tenant": "HARD_A",
+      "title": "企业财务中心月结消费明细 CSV 报表导出与专票冲红规程",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "汇总结算单次月 3 日清分出账，核算员可下载 CSV 月结消费流水报表与坐席分摊表。单次离线打包最大跨度为 6 个自然月，链接 24 小时后销毁。\n\n跨自然月已完成勾选认证抵扣的增值税专用发票如因购方税务信息变更或退费需办理作废冲红重开，因涉及税务数字账户红字信息表交叉稽核，必须转由财务结算专员人工审核确认后方可开具红字专票。"
+    },
+    {
+      "id": "hard-a-seat-rbac",
+      "tenant": "HARD_A",
+      "title": "客服坐席子账号 RBAC 权限星号掩码与人员离职交接办法",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "一线坐席套用最小授权模板，仅限调阅承接队列并屏蔽跨组检索。启用敏感字段保护后，侧边栏渲染的访客手机号码统一执行中段星号掩码展示。\n\n团队成员办结离职并在后台执行子账号冻结瞬间，网关同步吊销其桌面令牌与移动端推送通道。该账号名下所有未结案跟进工单及个人快捷回复话术模板，整批自动划转至直属技能组主管名下承接。"
+    },
+    {
+      "id": "hard-a-data-retention",
+      "tenant": "HARD_A",
+      "title": "语音热线双轨 WAV 录音加密存储与合规归档留存政策",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "400 热线呼入双声道 WAV 音频落盘前，经 AES-256 密钥完成 AES-256 透明加密。标准商业版图文归档与 WAV 录音，默认留存周期设定为 180 天。\n\n持牌金融机构与三甲医院合规专享版可申请将在线加密归档保存期限延长至 365 天。达到留存截止天数的历史语音文件与聊天附件由夜间任务执行不可逆覆写擦除，物理销毁后无法恢复原始音频。"
+    },
+    {
+      "id": "hard-a-onboarding-ref",
+      "tenant": "HARD_A",
+      "title": "客户成功入职导览手册（常见服务与联调参考）",
+      "source_authority": "reference",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "上线导览：管理员日常查看系统硬件坏了怎么查看寄修状态、VIP 客户月度 SLA 没达标怎么申请故障赔付代金券或接口 429 报错时，可先看监控页。生产环境全站中断的 P0 级紧急故障工单首次响应时限为 30 分钟内。\n\n运营常见咨询：系统里遇到硬件坏了怎么查看寄修状态和寄回要求、接口联调请求头签名校验报错怎么排查、后台双声道录音怎么查看加密状态以及开放平台 API Webhook 遇到 429 限流报错怎么查日志。"
+    },
+    {
+      "id": "hard-a-integration-ref",
+      "tenant": "HARD_A",
+      "title": "开放网关与单点登录集成排障速查参考",
+      "source_authority": "reference",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "接口联调问答：对接开放平台 API Webhook 遇到 429 限流报错怎么排查，或者接口联调时请求头签名校验报错怎么排查？请先核对服务器时钟同步状态与防火墙出口连接池并发阈值配置。\n\n服务核查清单：VIP 客户如果月度 SLA 没达标怎么申请故障赔付代金券、系统里遇到硬件坏了怎么查看寄修状态和寄回要求、后台双声道录音怎么查看加密状态以及审计日志导出，支持按操作人筛选。"
+    },
+    {
+      "id": "hard-a-community-1",
+      "tenant": "HARD_A",
+      "title": "技术社区热帖：API Webhook 429 重试与 VIP 客户 SLA 赔付讨论",
+      "source_authority": "community",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "楼主发帖求助：请问对接开放平台 API Webhook 遇到 429 限流报错怎么处理呀？另外请问 VIP 客户如果月度 SLA 没达标怎么申请故障赔付代金券，有人说找客户经理能退全月现金是不是真的呀？\n\n网友回帖交流：请问咱们系统里遇到硬件坏了怎么查看寄修状态和寄回要求呀？上次我们接口联调时请求头签名校验报错怎么排查折腾了半天，还有后台双声道录音怎么查看加密状态，求大佬分享经验！"
+    },
+    {
+      "id": "hard-a-community-2",
+      "tenant": "HARD_A",
+      "title": "用户论坛问答：历史账单导出、离职账号工单与海外节点传闻",
+      "source_authority": "community",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "新手管理员提问：麻烦问一下咱们那个以前不用的账单如果我想一次性拉出来看看怎么弄呀？还有请问咱们管理员在日常打开保护之后界面里怎么看客户信息，以及系统里遇到硬件坏了怎么查看寄修状态和寄回要求？\n\n论坛小道消息：听说下个月给标准版免费开通欧洲法兰克福与新加坡独立双活私有化机房节点，而且 VIP 客户如果月度 SLA 没达标怎么申请故障赔付代金券以及开放平台 API Webhook 遇到 429 限流报错好像手机端也能看。"
+    },
+    {
+      "id": "hard-a-draft-canary",
+      "tenant": "HARD_A",
+      "title": "未发布内部草案：2027 下一代旗舰极速服务内测稿",
+      "source_authority": "official",
+      "publication": "draft",
+      "index_status": "ready",
+      "text": "内部保密草案 DRAFT-ONLY-A01：拟将 VIP 客户 P0 级紧急故障工单首次响应时限压缩至 2 分钟，故障赔付代金券比例拟上调至当月月费三倍，尚未会签严禁对外展示。\n\n内部保密草案 DRAFT-ONLY-A02：开放平台 API Webhook 遇到 429 拟支持无限次重试，死信队列拟改为永久免费留存，仅供内部架构评审讨论。"
+    },
+    {
+      "id": "hard-b-dr-failover",
+      "tenant": "HARD_B",
+      "title": "异地多活容灾切换演练与 RPO/RTO 恢复目标白皮书",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "核心生产底座采用同城双活加异地热备三机房分布式拓扑。单一可用区遭遇市电中断或骨干光缆挖断时，同城集群自动完成流量接管且 RTO 耗时控制在 5 分钟以内，工单库实现 RPO 零数据丢失。\n\n跨地域主备中心全链路流量接管例行检验每季度固定组织一次，统一排期在周日凌晨 02:00 至 04:00 业务波谷窗口内实施，运维组提前 5 个工作日向全体租户管理员推送站内信预告。"
+    },
+    {
+      "id": "hard-b-ip-allowlist",
+      "tenant": "HARD_B",
+      "title": "管理后台登录 IPv4 CIDR 白名单访问控制与应急解锁规程",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "安全员可在防护页录入专线出口 CIDR 白名单，单租户 CIDR 上限支持 50 条 CIDR 规则，CIDR 策略保存后 60 秒内下发边缘节点阻断非授信源地址。\n\n若企业主管理员因宽带运营商动态公网出口变更导致全员被白名单拦截锁死在后台门外，为严防社会工程学冒名重置风险，必须由平台安全应急团队人工核验加盖公章的书面解锁授权函后代为清除限制。"
+    },
+    {
+      "id": "hard-b-kb-quota",
+      "tenant": "HARD_B",
+      "title": "企业知识库文档上传格式限制与 pgvector 向量切片配额规范",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "知识库控制台原生支持直接上传并解析 PDF、DOCX、Markdown 与纯文本 TXT 四种办公文档。单份上传附件体积上限严格设定为 20 MB，纯图像扫描版 PDF 文档上传前须预先完成光学字符识别文字提取。\n\n专业版订阅主体默认获配 50000 条有效活跃存储额度上限。当企业名下已发布与草稿态累计占用量触及总额度的 90% 警戒水位线时，系统每日自动向主管理员发送站内信与邮件扩容提醒。"
+    },
+    {
+      "id": "hard-b-kms-byok",
+      "tenant": "HARD_B",
+      "title": "专属加密 KMS 自持主密钥（BYOK）信封托管与吊销失效规范",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "金融政务租户可开通 BYOK 根密钥托管，对接自有 HSM 密码机 256 位密钥。存储层基于信封加密仅在内存短暂解封 DEK 密钥，进程退出即销毁 DEK 缓存。\n\n一旦客户安全团队在自有外部管理端主动执行禁用或撤回访问授权指令，平台各业务节点内存缓存的工作密钥将在 10 分钟内强制清零销毁，存量密文工单正文与私密附件随即全面阻断解密读取。"
+    },
+    {
+      "id": "hard-b-uat-sandbox",
+      "tenant": "HARD_B",
+      "title": "UAT 沙箱测试环境脱敏克隆与闲置资源自动回收规则",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "每个签约租户可免费申领一套逻辑完全隔离的 UAT 沙箱验证环境，支持一键由生产租户脱敏克隆机器人对话编排流、工单自定义字段与分派触发器，克隆流水线强制剥离真实访客会话文本与客户通讯录。\n\n为集约利用多租户测试集群算力，连续静默满 30 天无任何控制台登录记录及开放接口调用流量的实例将触发自动停机销毁，运维调度器会在执行销毁前 72 小时向主管理员邮箱发送保活续期提醒。"
+    },
+    {
+      "id": "hard-b-outbound-sip",
+      "tenant": "HARD_B",
+      "title": "智能外呼语音机器人 SIP 并发线路上限与禁呼静默时段条例",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "单租户智能外呼任务默认开通 30 路并发 SIP 语音中继通道，批量导入外呼名单瞬时并发触及水位上限时，超额待呼号码自动进入内存平滑缓冲队列并按任务优先级依次发起拨号调度。\n\n严格执行防骚扰红线，调度中心在每日晚间 21:00 至次日早晨 08:30 法定休息静默窗口期内，强制拦截商业营销推广与满意度回访批次。"
+    },
+    {
+      "id": "hard-b-refund-contract",
+      "tenant": "HARD_B",
+      "title": "企业年度预付费订阅中途退订违约金规则（线下合同版）",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "企业年度预付费订阅未满六个月申请中途退订时，除按已消耗自然月标准目录原价折算扣减外，须固定加收违约手续费 500 元。适用于所有企业年度预付费订阅主协议及增购模块订单。\n\n中途退订结算确认单经甲乙双方财务签章核对无误后，剩余应退预付款余额将在十个工作日内原路退回企业对公付款银行账户，前期已开具的增值税发票须同步配合办理红字冲销手续。"
+    },
+    {
+      "id": "hard-b-refund-portal",
+      "tenant": "HARD_B",
+      "title": "企业年度预付费订阅中途退订违约金规则（官网公示版）",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "企业年度预付费订阅未满六个月申请中途退订时，除按已消耗自然月标准目录原价折算扣减外，须固定加收违约手续费 200 元。适用于所有企业年度预付费订阅主协议及增购模块订单。\n\n中途退订结算确认单经甲乙双方财务签章核对无误后，剩余应退预付款余额将在十个工作日内原路退回企业对公付款银行账户，前期已开具的增值税发票须同步配合办理红字冲销手续。"
+    },
+    {
+      "id": "hard-b-ops-handbook-ref",
+      "tenant": "HARD_B",
+      "title": "企业基础设施运维与安全配置日常巡检参考手册",
+      "source_authority": "reference",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "巡检导航：管理员核查异地多活容灾切换演练多久做一次、管理后台登录网段白名单怎么配置条目限制或专属加密密钥托管怎么检查连接状态时，可在安全大盘查看。单租户智能外呼任务默认开通 50 路并发 SIP 语音中继通道。\n\n排障参考：请问异地多活容灾切换演练排在周几、管理后台登录网段白名单怎么配置条目限制保存问题、企业知识库 pgvector 向量切片配额上限是多少条以及平时晚上外呼任务为什么被系统拦截，建议翻阅正式白皮书。"
+    },
+    {
+      "id": "hard-b-ops-faq-ref",
+      "tenant": "HARD_B",
+      "title": "租户安全合规与测试资源常见咨询索引参考",
+      "source_authority": "reference",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "高频问题索引：客户技术团队经常咨询请问异地多活容灾切换演练多久做一次、管理后台登录网段白名单怎么配置条目限制、专属加密密钥托管怎么检查连接状态以及请问企业知识库 pgvector 向量切片配额上限是多少条。\n\n顾问接待备忘：遇到客户询问平时晚上外呼任务为什么被系统拦截呀、专属加密密钥托管怎么检查连接状态报错或者核对企业知识库 pgvector 向量切片配额扩容流程时，参考手册仅作引导，具体口径以正式制度为准。"
+    },
+    {
+      "id": "hard-b-community-1",
+      "tenant": "HARD_B",
+      "title": "运维社区交流：容灾切换演练、白名单配置与向量配额讨论",
+      "source_authority": "community",
+      "publication": "published",
+      "index_status": "ready",
+      "text": "同行发帖求助：请问大家知道异地多活容灾切换演练多久做一次吗？另外管理后台登录网段白名单怎么配置条目限制呀，还有专属加密密钥托管怎么检查连接状态，麻烦问一下咱们平时晚上外呼任务为什么被系统拦截呀？\n\n热心网友跟帖：有人问请问企业知识库 pgvector 向量切片配额上限是多少条，我猜应该有几十万条吧；另外听说咱们客服平台还能按小时单独对外出租 H100 裸金属显卡服务器给客户训练大模型，不知道真假。"
+    },
+    {
+      "id": "hard-b-failed-index",
+      "tenant": "HARD_B",
+      "title": "索引异常未就绪文档：实验性实时多语种同传坐席插件",
+      "source_authority": "official",
+      "publication": "published",
+      "index_status": "failed",
+      "text": "索引异常标记 FAILED-INDEX-B01：实验性实时语音同声传译坐席辅助插件支持 48 种小语种毫秒级双语字幕转写，当前后台向量化构建任务执行失败处于未就绪状态。\n\n索引异常标记 FAILED-INDEX-B02：凡未完成向量索引构建与完整性校验的知识库文档，检索底座严禁将其纳入线上访客智能问答的候选召回范围。"
+    }
+  ],
+  "questions": [
+    {
+      "id": "qa-a01-vip-p0-sla",
+      "tenant": "HARD_A",
+      "category": "authority_conflict_ref",
+      "question": "生产环境全站中断的 P0 级紧急故障工单首次响应时限是多少分钟？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-sla-vip"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a02-vip-sla-voucher",
+      "tenant": "HARD_A",
+      "category": "title_chunk_rerank",
+      "question": "请问 VIP 客户如果月度 SLA 没达标怎么申请故障赔付代金券，按月费多少折算？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-sla-vip"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a03-rma-validity-days",
+      "tenant": "HARD_A",
+      "category": "vector_strength",
+      "question": "请问咱们系统里遇到硬件坏了怎么查看寄修状态和寄回要求，RMA 申请后 RMA 几天有效？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-rma-hardware"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a04-doa-advance-replacement",
+      "tenant": "HARD_A",
+      "category": "code_abbreviation",
+      "question": "启用 DOA 备机先行寄出特权签收良品备机后，故障旧机须在几个自然日内寄回检测仓？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-rma-hardware"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a05-sso-saml-xml",
+      "tenant": "HARD_A",
+      "category": "code_abbreviation",
+      "question": "上传元数据 XML 描述文件对接 SAML 2.0 后默认提取什么字段映射坐席唯一工号？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-sso-saml"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a06-sso-cert-rotation",
+      "tenant": "HARD_A",
+      "category": "decoy_rerank",
+      "question": "企业 SSO 登录证书轮换同时挂载新旧两份 X.509 公钥时，平滑切换窗口最长维持几天？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-sso-saml"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a07-webhook-hmac-replay",
+      "tenant": "HARD_A",
+      "category": "vector_strength",
+      "question": "请问咱们系统里遇到接口联调时请求头签名校验报错怎么排查呀，HMAC 拒绝超几分钟？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-webhook-hmac"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a08-webhook-429-retry",
+      "tenant": "HARD_A",
+      "category": "title_chunk_rerank",
+      "question": "请问大家对接开放平台 API Webhook 遇到 429 限流报错怎么处理，失败写入死信队列留存多久？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-webhook-hmac"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a09-billing-csv-span",
+      "tenant": "HARD_A",
+      "category": "keyword_strength",
+      "question": "麻烦问一下咱们那个以前不用的账单如果我想一次性拉出来看看怎么弄呀，月结消费流水最大跨度几个月？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-billing-export"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a10-invoice-red-review",
+      "tenant": "HARD_A",
+      "category": "manual_handoff",
+      "question": "跨自然月已完成勾选认证抵扣的增值税专用发票需要办理作废冲红重开怎么处理？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-billing-export"
+      ],
+      "expected_outcome": "handoff"
+    },
+    {
+      "id": "qa-a11-rbac-phone-masking",
+      "tenant": "HARD_A",
+      "category": "keyword_strength",
+      "question": "请问咱们管理员在日常打开那个保护之后怎么看客户信息呀，访客手机号码是不是中段星号掩码？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-seat-rbac"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a12-offboarding-ticket-transfer",
+      "tenant": "HARD_A",
+      "category": "colloquial",
+      "question": "请问大家平时在系统里遇到离职怎么弄呀，后台子账号冻结后未结案跟进工单整批划转给谁？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-seat-rbac"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a13-wav-aes256-retention",
+      "tenant": "HARD_A",
+      "category": "vector_strength",
+      "question": "请问咱们系统里遇到后台双声道录音怎么查看加密状态呀，AES-256 留存多少天？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-data-retention"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a14-medical-archive-365",
+      "tenant": "HARD_A",
+      "category": "multi_chunk",
+      "question": "持牌金融机构与三甲医院合规专享版的在线加密归档保存期限可延长至多少天？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-data-retention"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a15-community-only-overseas",
+      "tenant": "HARD_A",
+      "category": "community_abstain",
+      "question": "下个月平台是不是给标准版免费开通欧洲法兰克福与新加坡双活私有化机房节点？",
+      "document_scope": [
+        "hard-a-community-2"
+      ],
+      "relevant_document_ids": [],
+      "expected_outcome": "abstain"
+    },
+    {
+      "id": "qa-a16-draft-isolation-check",
+      "tenant": "HARD_A",
+      "category": "security_boundary",
+      "question": "生产环境 P1 级严重故障工单首次响应时限是多少分钟？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-sla-vip"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a17-synonym-hard-1",
+      "tenant": "HARD_A",
+      "category": "semantic_synonym_gap",
+      "question": "坐席同买主唠嗑的声频搁满半年抹除后还能复原吗？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-data-retention"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-a18-oidc-org-sync",
+      "tenant": "HARD_A",
+      "category": "code_abbreviation",
+      "question": "通过 OIDC 授权码流程对接集团身份目录支持整点增量同步部门组织架构树吗？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-a-sso-saml"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b01-dr-rto-rpo",
+      "tenant": "HARD_B",
+      "category": "code_abbreviation",
+      "question": "骨干光缆挖断时同城集群自动完成流量接管 RTO 耗时几分钟内，RPO 会丢数据吗？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-dr-failover"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b02-dr-quarterly-drill",
+      "tenant": "HARD_B",
+      "category": "title_chunk_rerank",
+      "question": "请问大家知道异地多活容灾切换演练多久做一次吗，排在业务波谷窗口内实施提前几天预告？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-dr-failover"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b03-cidr-rule-limit",
+      "tenant": "HARD_B",
+      "category": "vector_strength",
+      "question": "请问大家知道管理后台登录网段白名单怎么配置条目限制吗，CIDR 支持多少条？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-ip-allowlist"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b04-ip-lockout-handoff",
+      "tenant": "HARD_B",
+      "category": "manual_handoff",
+      "question": "企业主管理员因动态公网出口变更导致全员被白名单拦截锁死在后台门外怎么清除限制？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-ip-allowlist"
+      ],
+      "expected_outcome": "handoff"
+    },
+    {
+      "id": "qa-b05-kb-file-size-20mb",
+      "tenant": "HARD_B",
+      "category": "colloquial",
+      "question": "知识库控制台原生支持直接上传解析哪四种办公文档，单份附件体积上限多少 MB？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-kb-quota"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b06-kb-vector-quota-50k",
+      "tenant": "HARD_B",
+      "category": "title_chunk_rerank",
+      "question": "请问大家企业知识库 pgvector 向量切片配额上限是多少条呀，有人猜几十万条还是多少额度？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-kb-quota"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b07-kms-byok-dek",
+      "tenant": "HARD_B",
+      "category": "vector_strength",
+      "question": "请问大家知道专属加密密钥托管怎么检查连接状态吗，DEK 密钥在哪解封且退出销毁 DEK？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-kms-byok"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b08-kms-revoke-10min",
+      "tenant": "HARD_B",
+      "category": "decoy_rerank",
+      "question": "请问大家在安全大盘核查专属加密 KMS 自持主密钥撤回访问授权指令后，内存工作密钥几分钟清零销毁？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-kms-byok"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b09-uat-sandbox-clone",
+      "tenant": "HARD_B",
+      "category": "code_abbreviation",
+      "question": "UAT 沙箱验证环境脱敏克隆机器人对话编排流时会强制剥离真实访客会话文本吗？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-uat-sandbox"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b10-uat-idle-30days",
+      "tenant": "HARD_B",
+      "category": "colloquial",
+      "question": "连续静默满多少天无任何控制台登录记录及接口流量的实例会触发自动停机销毁？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-uat-sandbox"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b11-sip-concurrency-ref-conflict",
+      "tenant": "HARD_B",
+      "category": "authority_conflict_ref",
+      "question": "单租户智能外呼任务默认开通多少路并发 SIP 语音中继通道？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-outbound-sip"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b12-outbound-quiet-hours",
+      "tenant": "HARD_B",
+      "category": "keyword_strength",
+      "question": "请问大家平时晚上外呼任务为什么被系统拦截呀，商业营销推广与回访在法定休息静默窗口期是每日晚间几点至早晨几点？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-outbound-sip"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b13-official-refund-conflict",
+      "tenant": "HARD_B",
+      "category": "official_policy_conflict",
+      "question": "企业年度预付费订阅未满六个月申请中途退订时须固定加收违约手续费多少元？",
+      "document_scope": [
+        "hard-b-refund-contract",
+        "hard-b-refund-portal"
+      ],
+      "relevant_document_ids": [
+        "hard-b-refund-contract",
+        "hard-b-refund-portal"
+      ],
+      "expected_outcome": "handoff"
+    },
+    {
+      "id": "qa-b14-community-only-gpu",
+      "tenant": "HARD_B",
+      "category": "community_abstain",
+      "question": "客服平台是不是能按小时单独对外出租 H100 裸金属显卡服务器给客户训练大模型？",
+      "document_scope": [
+        "hard-b-community-1"
+      ],
+      "relevant_document_ids": [],
+      "expected_outcome": "abstain"
+    },
+    {
+      "id": "qa-b15-failed-index-excluded",
+      "tenant": "HARD_B",
+      "category": "security_boundary",
+      "question": "实验性实时语音同声传译坐席辅助插件目前可以在访客智能问答中召回使用吗？",
+      "document_scope": [
+        "hard-b-failed-index"
+      ],
+      "relevant_document_ids": [],
+      "expected_outcome": "abstain"
+    },
+    {
+      "id": "qa-b16-synonym-hard-2",
+      "tenant": "HARD_B",
+      "category": "semantic_synonym_gap",
+      "question": "给研发练手搭的那个假演练台子扔那儿晾一个月没人碰是不是就给端掉了？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-uat-sandbox"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b17-refund-bank-return-days",
+      "tenant": "HARD_B",
+      "category": "multi_chunk",
+      "question": "中途退订结算确认单经双方财务签章核对无误后剩余余额几个工作日退回对公账户？",
+      "document_scope": [
+        "hard-b-refund-contract"
+      ],
+      "relevant_document_ids": [
+        "hard-b-refund-contract"
+      ],
+      "expected_outcome": "answer"
+    },
+    {
+      "id": "qa-b18-pdf-ocr-requirement",
+      "tenant": "HARD_B",
+      "category": "colloquial",
+      "question": "纯图像扫描版 PDF 文档上传前须预先完成什么文字提取处理？",
+      "document_scope": null,
+      "relevant_document_ids": [
+        "hard-b-kb-quota"
+      ],
+      "expected_outcome": "answer"
+    }
+  ]
+}

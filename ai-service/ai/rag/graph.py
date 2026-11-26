@@ -26,7 +26,7 @@ import psycopg
 
 from ..config import get_settings
 from ..core.trace import get_trace_id
-from . import retriever, store
+from . import grounded_reply, retriever, store
 from .grounded_reply import POLICY_REVIEW_REASONS
 from .store import query_terms
 
@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 #   keyword → 命中片段占比，默认 0.12：分母是查询片段数，基数小。
 VECTOR_MIN_SCORE = 0.35
 KEYWORD_MIN_SCORE = 0.12
+RERANK_MIN_SCORE = 0.15
 
 
 def thresholds() -> tuple[float, float]:
@@ -46,6 +47,11 @@ def thresholds() -> tuple[float, float]:
     vector = float(getattr(settings, "rag_vector_min_score", VECTOR_MIN_SCORE) or VECTOR_MIN_SCORE)
     keyword = float(getattr(settings, "rag_keyword_min_score", KEYWORD_MIN_SCORE) or KEYWORD_MIN_SCORE)
     return vector, keyword
+
+
+def rerank_threshold() -> float:
+    settings = get_settings()
+    return float(getattr(settings, "rag_rerank_min_score", RERANK_MIN_SCORE) or RERANK_MIN_SCORE)
 
 
 # 最多改写重检几次（防死循环）
@@ -60,6 +66,7 @@ class RagState(TypedDict, total=False):
     top_k: int
     doc_ids: list[int] | None
     published_only: bool
+    search_mode: str | None
     query: str            # 当前这一轮实际用的检索问法
     hits: list[dict]      # 召回的切片
     mode: str             # 检索口径
@@ -90,12 +97,14 @@ def _step(state: RagState, node: str, detail: str, **extra: Any) -> list[dict]:
 def node_retrieve(state: RagState) -> dict:
     """检索：拿当前问法去知识库捞最相关的切片。"""
     query = state.get("query") or state["question"]
+    extra = {"search_mode": state["search_mode"]} if state.get("search_mode") is not None else {}
     result = {"mode": "empty-scope", "results": []} if state.get('doc_ids') == [] else retriever.retrieve_with_meta(
         query=query,
         tenant_code=state["tenant_code"],
         top_k=state.get("top_k", 5),
         doc_ids=state.get("doc_ids"),
         published_only=state.get('published_only', False),
+        **extra,
     )
     hits = result.get("results") or []
     mode = result.get("mode") or "vector"
@@ -112,11 +121,42 @@ def node_retrieve(state: RagState) -> dict:
 def node_grade(state: RagState) -> dict:
     """判断召回够不够：有没有结果 + 最高分有没有过阈值。"""
     hits = state.get("hits") or []
-    keyword_mode = "keyword" in (state.get("mode") or "")
+    mode = state.get("mode") or ""
     vector_min, keyword_min = thresholds()
-    threshold = keyword_min if keyword_mode else vector_min
-    top = max((float(hit.get("score") or 0) for hit in hits), default=0.0)
-    enough = bool(hits) and top >= threshold
+    if mode == "hybrid_rerank":
+        threshold = rerank_threshold()
+        top = max((float(hit.get("rerank_score", hit.get("score")) or 0) for hit in hits), default=0.0)
+        leg_ok = any(
+            (hit.get("vector_score") is not None and float(hit["vector_score"]) >= vector_min)
+            or (hit.get("keyword_score") is not None and float(hit["keyword_score"]) >= keyword_min)
+            for hit in hits
+        )
+        has_leg_scores = any(
+            hit.get("vector_score") is not None or hit.get("keyword_score") is not None
+            for hit in hits
+        )
+        enough = bool(hits) and top >= threshold and (leg_ok or not has_leg_scores)
+    elif mode == "hybrid":
+        has_leg_scores = any(
+            hit.get("vector_score") is not None or hit.get("keyword_score") is not None
+            for hit in hits
+        )
+        top = max((float(hit.get("score") or 0) for hit in hits), default=0.0)
+        if has_leg_scores:
+            threshold = keyword_min
+            enough = any(
+                (hit.get("vector_score") is not None and float(hit["vector_score"]) >= vector_min)
+                or (hit.get("keyword_score") is not None and float(hit["keyword_score"]) >= keyword_min)
+                for hit in hits
+            )
+        else:
+            threshold = 0.012
+            enough = bool(hits) and top >= threshold
+    else:
+        keyword_mode = "keyword" in mode
+        threshold = keyword_min if keyword_mode else vector_min
+        top = max((float(hit.get("score") or 0) for hit in hits), default=0.0)
+        enough = bool(hits) and top >= threshold
     # 这一行是"为什么答不上来"的第一现场：命中几条、走的是向量还是关键词、
     # 最高分多少、阈值多少、判定够不够——一眼能看出是"没检索到"还是"检索到了但被判不够"
     logger.info("召回判分 queryChars=%d 命中=%d 模式=%s 最高分=%.4f 阈值=%.4f 判定=%s",
@@ -151,15 +191,21 @@ async def node_answer(state: RagState) -> dict:
     """生成回答：把召回切片编号后交给模型，要求它按 [1][2] 标注出处。"""
     from ..services.rag import compose_answer_details
 
+    raw_hits = state.get("hits") or []
+    require_grounded = state.get("require_grounded_reply", False)
+    governed_hits = grounded_reply.govern_authority_hits(
+        state["question"], raw_hits, grounded_only=require_grounded
+    )
     answer = await compose_answer_details(
         question=state["question"],
-        hits=state.get("hits") or [],
+        hits=raw_hits,
         tenant_code=state.get("tenant_code") or "",
         extractive_only=state.get("extractive_only", False),
-        require_grounded_reply=state.get("require_grounded_reply", False),
+        require_grounded_reply=require_grounded,
         policy_review=state.get("policy_review", False),
     )
     return {
+        "hits": governed_hits,
         "answer": answer.text,
         "answer_generated": answer.generated,
         "citations": answer.citations,
@@ -274,12 +320,16 @@ _graph = None
 
 async def ask(question: str, tenant_code: str, top_k: int = 5,
               doc_ids: list[int] | None = None, *, published_only: bool = False,
-              max_rewrite_rounds: int = MAX_REWRITE_ROUNDS) -> dict:
+              max_rewrite_rounds: int = MAX_REWRITE_ROUNDS,
+              search_mode: str | None = None) -> dict:
     """知识问答主入口：编排一条完整的"查资料 → 回答 → 标出处"链路。"""
     global _graph
     from .document_scope import document_scope, published_policy
+    from .pipeline import resolve_search_mode
     doc_ids = document_scope(doc_ids)
     published_only = published_policy(published_only)
+    if search_mode is not None:
+        search_mode = resolve_search_mode(search_mode)
     if type(max_rewrite_rounds) is not int or not 0 <= max_rewrite_rounds <= MAX_REWRITE_ROUNDS:
         raise ValueError(f'max_rewrite_rounds must be an integer from 0 to {MAX_REWRITE_ROUNDS}')
     settings = get_settings()
@@ -289,6 +339,7 @@ async def ask(question: str, tenant_code: str, top_k: int = 5,
         "top_k": top_k,
         "doc_ids": doc_ids,
         "published_only": published_only,
+        "search_mode": search_mode,
         "extractive_only": getattr(settings, "rag_require_extractive_support", False),
         "require_grounded_reply": published_only and getattr(settings, "rag_require_grounded_reply", False),
         "policy_review": getattr(settings, "rag_require_policy_review", False),

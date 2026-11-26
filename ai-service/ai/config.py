@@ -104,9 +104,19 @@ class Settings(BaseSettings):
     #   keyword → 命中片段占比（命中词数 / 查询片段数），基数小，0.12 起步。
     rag_vector_min_score: float = 0.35
     rag_keyword_min_score: float = 0.12
+    rag_rerank_min_score: float = 0.15
     rag_require_extractive_support: bool = False
     rag_require_grounded_reply: bool = False
     rag_require_policy_review: bool = False
+    rag_search_mode: str = "auto"
+    rag_hybrid_candidate_depth: int = Field(default=15, ge=1, le=50)
+    rag_rrf_k: int = Field(default=60, ge=1, le=200)
+    rag_rerank_mode: str = "auto"
+    rag_rerank_api_key: str = ""
+    rag_rerank_url: str = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
+    rag_rerank_model: str = "gte-rerank"
+    rag_rerank_timeout: float = Field(default=5.0, gt=0.0, le=30.0)
+    rag_rerank_max_response_bytes: int = Field(default=262144, ge=4096, le=2097152)
     brain_context_max_bytes: int = Field(default=0, ge=0, le=32768)
 
     # 训练版本做意图匹配时的相似度门槛：低于它就不采信（交回字面规则匹配）。
@@ -121,6 +131,10 @@ class Settings(BaseSettings):
         让用户把同一个密钥配两遍（少配一处就悄悄退化成兜底向量）是个坑。
         """
         return self.embedding_api_key or self.qwen_api_key
+
+    def rerank_key(self) -> str:
+        """重排模型用哪个密钥：优先专用 rag_rerank_api_key，否则复用向量或千问密钥。"""
+        return self.rag_rerank_api_key or self.embedding_api_key or self.qwen_api_key
 
     # 知识库：切片参数与数据源（切片存在 customer_db，和文档表同库，租户隔离靠 tenant_code）
     kb_database_url: str = "postgresql://supportflow_kb@127.0.0.1:5432/customer_db"

@@ -21,6 +21,7 @@ from ..config import get_settings
 from ..core.llm_chat import call_chat, message_content, resolve_provider
 from ..core.trace import get_trace_id
 from ..rag import grounded_reply
+from ..rag.store import normalize_source_authority
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ def _citations_of(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "chunk_no": hit.get("chunk_no"),
             "score": hit.get("score"),
             "content": hit.get("content") or "",
+            "source_authority": normalize_source_authority(hit.get("source_authority")),
         })
     return citations
 
@@ -131,10 +133,20 @@ async def compose_answer_details(question: str, hits: list[dict[str, Any]], tena
                                  extractive_only: bool = False, require_grounded_reply: bool = False,
                                  policy_review: bool = False) -> ComposedAnswer:
     """生成回答及来源，标记正文来自模型或检索原文。"""
-    citations = _citations_of(hits)
     if not hits:
         return ComposedAnswer("知识库里没有查到与这个问题相关的资料。可以先到「企业知识库」上传对应文档，"
                               "或者转人工客服处理。", [], generated=False)
+    hits = grounded_reply.govern_authority_hits(
+        question, hits, grounded_only=require_grounded_reply
+    )
+    if not hits:
+        return ComposedAnswer(
+            "当前仅检索到未核验的社区或讨论资料，无法作为正式政策依据回答，请联系人工客服。",
+            [],
+            generated=False,
+            abstention_reason="insufficient_authority",
+        )
+    citations = _citations_of(hits)
     policy_review = policy_review and require_grounded_reply
     if policy_review and grounded_reply.conflicting_policy_numbers(question, citations):
         return ComposedAnswer('当前资料对同一规则的数值表述不一致，请联系人工客服核验。', [], False, 'policy_conflict')

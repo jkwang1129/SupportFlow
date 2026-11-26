@@ -10,12 +10,12 @@ SupportFlow 是一个面向企业智能客服场景构建的多租户 SaaS AI Ag
 
 | 工程维度 | 核心能力与架构设计 | 关键源码位置 |
 | --- | --- | --- |
-| **Agent Runtime** | 持久化 `Run / Step / Payload` 状态机、事务 `Outbox` 投递、数据库租约与递增 `fence`、跨进程崩溃接管、限时人工审批（HITL）及基于不可变业务回执的未知副作用核销。 | [`ai-service/ai/runtime/`](ai-service/ai/runtime/)、`Customer` 侧 Outbox 与回执服务 |
-| **Context Engineering** | 系统规则与不可信用户/工具数据隔离、工单规划历史结构化压缩、客服意图字节预算（`Token Budget`）、回合锚定截断及当前轮业务槽位确定性更正。 | [`ai-service/ai/services/brain.py`](ai-service/ai/services/brain.py)、[`ai-service/ai/runtime/ticket_loop.py`](ai-service/ai/runtime/ticket_loop.py) |
-| **AI Security** | 六库逻辑隔离 + **8 个非超级用户受限数据库角色** + PostgreSQL `FORCE RLS`（fail-closed）；服务间请求体绑定 HMAC 认证、工具 `Scope` 与实时资源归属复核、单次参数绑定审批消费。 | [`backend/deploy/db-init/40-runtime-roles.sql`](backend/deploy/db-init/40-runtime-roles.sql)、[`ai-service/ai/core/internal_auth.py`](ai-service/ai/core/internal_auth.py) |
-| **Agentic RAG & 知识治理** | `pgvector` HNSW 检索、查询改写、低置信度确定性拒答、逐句原文支撑校验、政策数值冲突拦截与转人工建议；知识索引暂存原子切换、过期清理与上一版索引一键回滚。 | [`ai-service/ai/rag/`](ai-service/ai/rag/)、[`KbService.java`](backend/supportflow-customer-service/src/main/java/io/supportflow/customer/service/bot/KbService.java) |
-| **Evaluation** | 版本化冻结评测集与留出集、确定性契约门禁与真实模型配对基准（关键词 / 稠密向量 / RRF 混合检索、原文支撑、意图预算、越权与注入回归），接入 GitHub Actions CI。 | [`scripts/benchmarks/`](scripts/benchmarks/)、[`fixtures/evaluation/`](fixtures/evaluation/) |
-| **Observability & LLMOps** | 跨 Java/Python 异步请求关联与执行时间线、无副作用离线规划回放、队列积压与延迟快照告警；共用有界模型传输、租户供应商路由、Prompt 版本发布/回退、租户并发配额及日/月 Token 与金额预留。 | [`ai-service/ai/core/`](ai-service/ai/core/)、[`ai-service/ai/runtime/trace_timeline.py`](ai-service/ai/runtime/trace_timeline.py) |
+| **Agent Runtime** | `Workflow + Agent Loop` 混合路由（`IntentRouter`）与多工具动态规划（`CustomerAgentLoop`）、持久化 `Run / Step / Payload` 状态机、事务 `Outbox`、数据库租约与递增 `fence`、跨进程崩溃接管、自然语言建单提案与限时 HITL 审批及基于不可变回执的未知副作用核销。 | [`ai-service/ai/runtime/`](ai-service/ai/runtime/)、`Customer` 侧 Outbox、受控工具端点与回执服务 |
+| **Context Engineering** | 系统规则与不可信 JSON 帧隔离（内置提示注入检测）、长多轮 `SlidingWindowCompressor` 摘要压缩与关键业务槽位保留、`ToolResultPruner` 白名单裁剪、`TokenBudgetManager` 确定性裁剪与当前轮槽位覆盖。 | [`ai-service/ai/core/context_engine.py`](ai-service/ai/core/context_engine.py)、[`ai-service/ai/services/brain.py`](ai-service/ai/services/brain.py) |
+| **AI Security** | 六库逻辑隔离 + **8 个非超级用户受限数据库角色** + PostgreSQL `FORCE RLS`（fail-closed）；服务间 HMAC 签名认证、客户资料脱敏与历史会话只读隔离、工具闭合 Schema + `Scope` + 实时资源归属复核、单次参数绑定审批消费（50 项红队越权/注入拦截率 **100%**）。 | [`backend/deploy/db-init/40-runtime-roles.sql`](backend/deploy/db-init/40-runtime-roles.sql)、[`ai-service/ai/core/internal_auth.py`](ai-service/ai/core/internal_auth.py) |
+| **Agentic RAG & 知识治理** | `pgvector` HNSW + 线上可选 `Hybrid Search + RRF + Reranking`（Qwen / 本地混合重排）、查询改写、服务端可信来源权威分级（`official / reference / community`）、低置信度拒答、逐句原文支撑校验、数值冲突拦截与索引暂存原子切换/一键回滚。 | [`ai-service/ai/rag/`](ai-service/ai/rag/)、`customer_db` `013` 迁移、[`KbService.java`](backend/supportflow-customer-service/src/main/java/io/supportflow/customer/service/bot/KbService.java) |
+| **Evaluation** | 六大类 **200 条 Golden Dataset** + 40 条人工校准 `LLM-as-a-Judge`、50 项越权与注入红队套件、50 项故障恢复矩阵、36 题高区分度 RAG 2.0 基准与 16 组多轮成本基准，离线门禁全量接入 GitHub Actions CI。 | [`scripts/benchmarks/`](scripts/benchmarks/)、[`fixtures/evaluation/`](fixtures/evaluation/)、[`docs/evaluation-summary.md`](docs/evaluation-summary.md) |
+| **Observability & LLMOps** | `OpenTelemetry + W3C Trace Context + Langfuse` 全链路 `Run/Step/Span` 追踪（10 个关键执行节点覆盖率 **100%**）、无副作用规划回放；`Model Gateway` 多供应商路由、滑动窗口 `CircuitBreaker` 熔断与降级、租户并发及日/月 Token 与金额预留、运维 `Runbook`。 | [`ai-service/ai/core/telemetry.py`](ai-service/ai/core/telemetry.py)、[`ai-service/ai/core/circuit_breaker.py`](ai-service/ai/core/circuit_breaker.py)、[`docs/runbook.md`](docs/runbook.md) |
 
 ---
 
@@ -128,4 +128,6 @@ python scripts/benchmarks/brain_context_benchmark.py --output .local/verificatio
 - [本地运行与数据库升级指南](docs/local-development.md) — 本地部署、最小权限凭据分发、存量库升级与备份
 - [Agent 工程能力矩阵与实施路线](docs/agent-engineering-plan.md) — PR-0～PR-12 与 M01～M12 当前真实能力边界与待收口项
 - [架构决策记录索引（ADR 0001–0086）](docs/decisions/README.md) — 按六大工程主题归类的设计取舍与回滚规范
+- [量化评测与可复现证据汇总](docs/evaluation-summary.md) — 200 条 Golden Dataset、50 安全红队、50 故障恢复、RAG 2.0 召回与上下文成本实测
+- [生产运维手册与故障处置 Runbook](docs/runbook.md) — SLI/SLO、健康探针、熔断降级、未知副作用核销与六库灾备恢复 SOP
 - [可靠性与评测实测验收记录](docs/reliability-verification.md) — 各阶段复现命令、分母口径与报告摘要

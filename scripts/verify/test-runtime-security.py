@@ -105,7 +105,7 @@ def scenario(legacy, with_ai_readiness=False):
         for _ in range(2):
             result = run(cmd, input=sql, capture_output=True)
         for migration in ('customer_db_010_kb_chunk_stage.sql', 'customer_db_011_kb_stage_retention.sql',
-                          'customer_db_012_kb_previous_index.sql'):
+                          'customer_db_012_kb_previous_index.sql', 'customer_db_013_kb_source_authority.sql'):
             run(cmd, input=(ROOT / 'backend/deploy/migrations/sql'
                 / migration).read_text(encoding='utf-8'), capture_output=True)
         with connect() as conn:
@@ -135,6 +135,8 @@ def scenario(legacy, with_ai_readiness=False):
                   == ([('B',)] if legacy else []), 'KB tenant isolation')
             check(conn.execute("SELECT has_column_privilege(current_user,'kb_document','index_status','SELECT')").fetchone()[
                   0], 'KB reads publication readiness only')
+            check(conn.execute("SELECT has_column_privilege(current_user,'kb_document','source_authority','SELECT')").fetchone()[
+                  0], 'KB reads source authority metadata')
             denied(conn, 'SELECT * FROM file_meta')
             denied(conn, 'SELECT content FROM kb_document')
             denied(conn, 'SELECT content_snapshot FROM kb_index_previous')

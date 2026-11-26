@@ -23,6 +23,15 @@ from .document_scope import document_scope, published_policy
 
 logger = logging.getLogger(__name__)
 
+VALID_SOURCE_AUTHORITIES = ("official", "reference", "community")
+
+
+def normalize_source_authority(value: object) -> str:
+    """Normalize source authority metadata with safe fallback for legacy/mocked rows."""
+    if isinstance(value, str) and value in VALID_SOURCE_AUTHORITIES:
+        return value
+    return "official"
+
 # 单进程内的自增序号：配合毫秒时间戳拼成 19 位雪花号（和 Java 侧的 id 风格保持一致）
 _lock = threading.Lock()
 _last_ms = 0
@@ -162,6 +171,7 @@ def search(tenant_code: str, vector: list[float], top_k: int = 5, doc_ids: list[
     sql = """
         SELECT c.id, c.doc_id, c.chunk_no, c.content, c.embedding_model,
                d.title AS doc_title, d.status AS doc_status,
+               COALESCE(d.source_authority, 'official') AS source_authority,
                1 - (c.embedding <=> %s::vector) AS score
           FROM kb_chunk c
           JOIN kb_document d ON d.id = c.doc_id AND d.tenant_code = c.tenant_code
@@ -187,7 +197,11 @@ def search(tenant_code: str, vector: list[float], top_k: int = 5, doc_ids: list[
     for row in rows:
         row["score"] = round(float(row["score"]), 4)
         row["create_time"] = str(row.get("create_time") or "")
+        row["source_authority"] = normalize_source_authority(row.get("source_authority"))
     return rows
+
+
+vector_search = search
 
 
 # 中文没有分词器时的通用做法：把查询切成"相邻两字"的片段（bigram）逐个匹配。
@@ -270,6 +284,7 @@ def keyword_search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[i
     sql = f"""
         SELECT c.id, c.doc_id, c.chunk_no, c.content, c.embedding_model,
                d.title AS doc_title, d.status AS doc_status,
+               COALESCE(d.source_authority, 'official') AS source_authority,
                ({hit_case})::float / %s AS score
           FROM kb_chunk c
           JOIN kb_document d ON d.id = c.doc_id AND d.tenant_code = c.tenant_code
@@ -291,7 +306,113 @@ def keyword_search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[i
     for row in rows:
         row["score"] = round(float(row["score"]), 4)
         row["create_time"] = str(row.get("create_time") or "")
+        row["source_authority"] = normalize_source_authority(row.get("source_authority"))
     return rows
+
+
+def _candidate_identity(hit: dict) -> tuple[object, object]:
+    """Identify a chunk across legs by (doc_id, chunk_no) with id fallback."""
+    doc_id = hit.get("doc_id")
+    chunk_no = hit.get("chunk_no")
+    chunk_id = hit.get("id")
+    by_doc = ("doc_chunk", doc_id, chunk_no) if doc_id is not None and chunk_no is not None else None
+    by_id = ("id", chunk_id) if chunk_id is not None else None
+    return by_doc, by_id
+
+
+def hybrid_search(
+    tenant_code: str,
+    query: str,
+    query_vector: list[float] | None,
+    top_k: int = 5,
+    candidate_depth: int = 15,
+    rrf_k: int = 60,
+    doc_ids: list[int] | None = None,
+    published_only: bool = False,
+) -> list[dict]:
+    """Combine vector_search and keyword_search via Reciprocal Rank Fusion (RRF)."""
+    doc_ids = document_scope(doc_ids)
+    published_only = published_policy(published_only)
+    if doc_ids == []:
+        return []
+    limit = max(1, min(int(top_k), 50))
+    depth = max(limit, min(int(candidate_depth), 50))
+    rrf_constant = max(1, int(rrf_k))
+
+    has_vector = bool(query_vector) and any(value != 0 for value in query_vector)
+    vector_hits = (
+        search(tenant_code, query_vector, top_k=depth, doc_ids=doc_ids, published_only=published_only)
+        if has_vector
+        else []
+    )
+    keyword_hits = (
+        keyword_search(tenant_code, query, top_k=depth, doc_ids=doc_ids, published_only=published_only)
+        if (query or "").strip()
+        else []
+    )
+
+    merged: list[dict] = []
+    key_to_slot: dict[object, int] = {}
+
+    for leg_name, hits in (("vector", vector_hits), ("keyword", keyword_hits)):
+        seen_slots: set[int] = set()
+        for rank, raw_hit in enumerate(hits, start=1):
+            by_doc, by_id = _candidate_identity(raw_hit)
+            slot = None
+            if by_doc is not None and by_doc in key_to_slot:
+                slot = key_to_slot[by_doc]
+            elif by_id is not None and by_id in key_to_slot:
+                slot = key_to_slot[by_id]
+
+            if slot is None:
+                entry = {
+                    "hit": dict(raw_hit),
+                    "rrf_score": 0.0,
+                    "best_rank": rank,
+                    "vector_score": None,
+                    "keyword_score": None,
+                }
+                entry["hit"]["source_authority"] = normalize_source_authority(
+                    entry["hit"].get("source_authority")
+                )
+                slot = len(merged)
+                merged.append(entry)
+            if by_doc is not None:
+                key_to_slot[by_doc] = slot
+            if by_id is not None:
+                key_to_slot[by_id] = slot
+
+            if slot in seen_slots:
+                continue
+            seen_slots.add(slot)
+            target = merged[slot]
+            target["rrf_score"] += 1.0 / (rrf_constant + rank)
+            target["best_rank"] = min(target["best_rank"], rank)
+            leg_score = float(raw_hit.get("score") or 0.0)
+            if leg_name == "vector":
+                target["vector_score"] = round(leg_score, 4)
+            else:
+                target["keyword_score"] = round(leg_score, 4)
+
+    ordered = sorted(
+        merged,
+        key=lambda item: (
+            -round(item["rrf_score"], 10),
+            item["best_rank"],
+            -max(item["vector_score"] or 0.0, item["keyword_score"] or 0.0),
+            int(item["hit"].get("id") or 0),
+        ),
+    )
+    results: list[dict] = []
+    for item in ordered[:limit]:
+        row = dict(item["hit"])
+        rrf_val = round(item["rrf_score"], 6)
+        row["rrf_score"] = rrf_val
+        row["score"] = rrf_val
+        row["vector_score"] = item["vector_score"]
+        row["keyword_score"] = item["keyword_score"]
+        results.append(row)
+    return results
 
 
 def published_evidence_is_current(tenant_code: str, hits: list[dict], doc_ids: list[int] | None) -> bool:
@@ -299,8 +420,18 @@ def published_evidence_is_current(tenant_code: str, hits: list[dict], doc_ids: l
     if not 1 <= len(hits) <= 50:
         return False
     scope = document_scope(doc_ids)
-    fields = ('doc_id', 'chunk_no', 'content', 'doc_title')
-    expected = {hit['id']: tuple(hit[key] for key in fields) for hit in hits}
+    expected: dict[int, tuple] = {}
+    for hit in hits:
+        chunk_id = hit["id"]
+        raw_authority = hit.get("source_authority")
+        authority = "official" if raw_authority is None else raw_authority
+        expected[chunk_id] = (
+            hit["doc_id"],
+            hit["chunk_no"],
+            hit["content"],
+            hit["doc_title"],
+            authority,
+        )
     if len(expected) != len(hits) or any(type(chunk_id) is not int or not 1 <= chunk_id <= 9223372036854775807
                                          for chunk_id in expected):
         return False
@@ -309,13 +440,26 @@ def published_evidence_is_current(tenant_code: str, hits: list[dict], doc_ids: l
     with tenant_connection(tenant_code) as conn, conn.cursor() as cur:
         cur.execute("SET LOCAL statement_timeout = '2000ms'")
         cur.execute("""
-            SELECT c.id, c.doc_id, c.chunk_no, c.content, d.title AS doc_title
+            SELECT c.id, c.doc_id, c.chunk_no, c.content, d.title AS doc_title,
+                   COALESCE(d.source_authority, 'official') AS source_authority
               FROM kb_chunk c JOIN kb_document d ON d.id=c.doc_id AND d.tenant_code=c.tenant_code
              WHERE c.tenant_code=%s AND c.id=ANY(%s)
                AND d.is_deleted=FALSE AND d.status=3 AND d.index_status=3
         """, (tenant_code, list(expected)))
-        actual = {row['id']: tuple(row[key] for key in fields) for row in cur.fetchall()}
+        actual = {
+            row["id"]: (
+                row["doc_id"],
+                row["chunk_no"],
+                row["content"],
+                row["doc_title"],
+                normalize_source_authority(row.get("source_authority")),
+            )
+            for row in cur.fetchall()
+        }
     return actual == expected
+
+
+recheck_published_chunks = published_evidence_is_current
 
 
 def ping() -> bool:

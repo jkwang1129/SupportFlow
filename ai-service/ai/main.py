@@ -16,7 +16,8 @@ from .core.logging_config import setup_logging
 from .core.schema_guard import ensure_schema
 from .core import schema_guard
 from starlette.concurrency import run_in_threadpool
-from .core.trace import TRACE_ID_HEADER, new_trace_id, set_trace_id
+from .core.telemetry import start_span
+from .core.trace import TRACE_ID_HEADER, TRACEPARENT_HEADER, new_trace_id, set_trace_id
 
 # 先初始化日志再导入 API：保证模块级组件（如 LLM 网关）的启动日志走统一格式
 setup_logging()
@@ -93,9 +94,24 @@ def _install_trace_middleware(app: FastAPI) -> None:
         incoming = request.headers.get(TRACE_ID_HEADER)
         trace_id = (incoming or "").strip() or new_trace_id()
         set_trace_id(trace_id)
-        response = await call_next(request)
-        response.headers[TRACE_ID_HEADER] = trace_id
-        return response
+        incoming_tp = request.headers.get(TRACEPARENT_HEADER)
+        with start_span(
+            "http.request",
+            kind="SERVER",
+            parent_traceparent=incoming_tp,
+            attributes={
+                "http.method": request.method,
+                "http.route": request.url.path,
+                "http.request_id": trace_id,
+            },
+        ) as span:
+            response = await call_next(request)
+            span.set_attribute("http.status_code", response.status_code)
+            if response.status_code >= 500:
+                span.set_status("ERROR", f"HTTP {response.status_code}")
+            response.headers[TRACE_ID_HEADER] = trace_id
+            response.headers[TRACEPARENT_HEADER] = span.traceparent
+            return response
 
 
 def create_app() -> FastAPI:

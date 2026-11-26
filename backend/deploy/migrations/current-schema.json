@@ -7774,6 +7774,13 @@
               "not_null": false,
               "type": "timestamp without time zone"
             },
+            "source_authority": {
+              "default": "'official'::character varying",
+              "generated": "",
+              "identity": "",
+              "not_null": true,
+              "type": "character varying(16)"
+            },
             "source_type": {
               "default": "1",
               "generated": "",
@@ -7825,6 +7832,7 @@
             }
           },
           "constraints": {
+            "chk_kb_document_source_authority": "CHECK (((source_authority)::text = ANY ((ARRAY['official'::character varying, 'reference'::character varying, 'community'::character varying])::text[])))",
             "ck_kb_document_source_type": "CHECK ((source_type = ANY (ARRAY[1, 2, 3])))",
             "ck_kb_document_status": "CHECK ((status = ANY (ARRAY[1, 2, 3, 4])))",
             "kb_document_pkey": "PRIMARY KEY (id)",
@@ -14755,6 +14763,10 @@
       {
         "checksum": "7ef08b13b8f9cef96f9059b95082a4b6ddd4a043473356a75261fef73a3e7508",
         "version": "012"
+      },
+      {
+        "checksum": "e09764df99e34dd669c9f9ad35df2d02eba6a2b6df05876d7017f1939eb17c01",
+        "version": "013"
       }
     ],
     "ops_db": [

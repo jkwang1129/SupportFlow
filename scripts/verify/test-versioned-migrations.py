@@ -197,7 +197,7 @@ def main():
             with psycopg.connect(dsn(database), autocommit=True) as connection:
                 applied = []
                 if database == 'customer_db':
-                    assert plan[-1].version == '012'
+                    assert plan[-1].version == '013'
                     applied = run_plan(connection, plan[:6])["applied"]
                     read = existing_runtime_source(connection)
                     before = read()
@@ -369,7 +369,7 @@ def main():
                     connection.execute("""INSERT INTO kb_version (id,tenant_code,doc_id,version_no,content_snapshot)
                         VALUES (774103,'UPGRADE_A',774100,1,'existing historical metadata')""")
                     previous_history = connection.execute('SELECT * FROM kb_version WHERE id=774103').fetchone()
-                    upgrade012 = run_plan(connection, plan)
+                    upgrade012 = run_plan(connection, plan[:12])
                     assert upgrade012['applied'] == ['012'] and read_kb(
                     ) == before_kb and read_ticket() == before_ticket
                     assert connection.execute(snapshot_stage).fetchall() == before_stage
@@ -379,6 +379,19 @@ def main():
                     assert connection.execute('SELECT count(*) FROM kb_index_previous_chunk').fetchone() == (0,)
                     print(
                         '011 -> 012 preserved active, staged and legacy version rows; new index rollback tables start empty', flush=True)
+                    upgrade013 = run_plan(connection, plan)
+                    assert upgrade013['applied'] == ['013'] and read_kb() == (
+                        before_kb[0] + ('official',), before_kb[1]
+                    ) and read_ticket() == before_ticket
+                    assert connection.execute(
+                        "SELECT has_column_privilege('supportflow_kb_tenant','kb_document','source_authority','SELECT'),"
+                        "has_column_privilege('supportflow_kb_tenant','kb_document','content','SELECT'),"
+                        "has_table_privilege('supportflow_kb_tenant','kb_document','UPDATE,INSERT,DELETE')"
+                    ).fetchone() == (True, False, False)
+                    print(
+                        '012 -> 013 backfilled official source_authority and granted narrow column read without exposing body',
+                        flush=True,
+                    )
                 if database == 'ai_db':
                     assert result['applied'] == ['014'] and read_ai() == before_ai and read_body(
                     ) == before_body and read_reply() == before_reply and read_ticket_audit() == before_ticket_audit

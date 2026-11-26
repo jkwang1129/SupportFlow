@@ -33,7 +33,7 @@ import java.util.regex.Pattern;
 public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
     private static final String AUDIENCE = "supportflow-customer-runtime:v1";
     private static final String UUID_PATTERN = "[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}";
-    private static final Pattern ROUTE = Pattern.compile("/api/customer/internal/runtime/events/(" + UUID_PATTERN + ")/runs/(" + UUID_PATTERN + ")/(snapshot|reply|tickets/([A-Za-z0-9][A-Za-z0-9_-]{0,63})|knowledge/search|ticket-create)");
+    private static final Pattern ROUTE = Pattern.compile("/api/customer/internal/runtime/events/(" + UUID_PATTERN + ")/runs/(" + UUID_PATTERN + ")/(snapshot|reply|tickets/([A-Za-z0-9][A-Za-z0-9_-]{0,63})|knowledge/search|ticket-create|customer-profile|session-history)");
     private static final Pattern CREDENTIAL = Pattern.compile("runtime:ai:([0-9]{1,12}):([0-9a-f]{64}):([0-9a-f]{64})");
     private final ObjectMapper mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
@@ -104,12 +104,13 @@ public final class RuntimeSourceAccessFilter extends OncePerRequestFilter {
         }
         boolean reply=route.group(3).equals("reply");
         boolean ticket=route.group(4)!=null;
+        boolean customerRead=route.group(3).equals("customer-profile") || route.group(3).equals("session-history");
         boolean knowledge=route.group(3).equals("knowledge/search");
         boolean ticketCreate=route.group(3).equals("ticket-create");
-        if (ticket && !request.getMethod().equals("GET")) { reject(response,403,"Runtime read operation requires GET"); return; }
+        if ((ticket || customerRead) && !request.getMethod().equals("GET")) { reject(response,403,"Runtime read operation requires GET"); return; }
         if (knowledge && !request.getMethod().equals("POST")) { reject(response,403,"Runtime knowledge operation requires POST"); return; }
         boolean allowed=ticketCreate ? (request.getMethod().equals("POST") ? ticketCreateEnabled : readToolsEnabled)
-                : ticket || knowledge ? readToolsEnabled : reply ? resultEnabled : sourceEnabled;
+                : ticket || customerRead || knowledge ? readToolsEnabled : reply ? resultEnabled : sourceEnabled;
         if (!allowed) { reject(response, 503, "Runtime API is disabled"); return; }
         // Exact write JSON may escape each content byte as six characters.
         // The parsed content still has the independent 8192 UTF-8 byte bound.

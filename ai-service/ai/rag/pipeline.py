@@ -34,10 +34,28 @@ from . import embedding as embedding_module
 from .document_scope import document_scope, published_policy
 from . import llama_engine
 from . import parser as parser_module
+from . import reranker
 from . import splitter as splitter_module
 from . import store
 
 logger = logging.getLogger(__name__)
+
+VALID_SEARCH_MODES = ("auto", "hybrid", "hybrid_rerank")
+
+
+def resolve_search_mode(search_mode: str | None = None) -> str:
+    """Resolve explicit or configured RAG search mode ('auto' | 'hybrid' | 'hybrid_rerank')."""
+    if search_mode is None:
+        settings = get_settings()
+        configured = getattr(settings, "rag_search_mode", "auto") or "auto"
+        mode = str(configured).strip().lower()
+    elif isinstance(search_mode, str):
+        mode = search_mode.strip().lower()
+    else:
+        raise ValueError("Unsupported search_mode")
+    if mode not in VALID_SEARCH_MODES:
+        raise ValueError(f"Unsupported search_mode: {mode}")
+    return mode
 
 
 @dataclass
@@ -185,24 +203,146 @@ def _builtin_index_text(
     )
 
 
-def search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | None = None, *, published_only: bool = False) -> dict:
-    """检索：两种引擎共用向量化，向量命中不足时退回关键词。"""
+def search(
+    tenant_code: str,
+    query: str,
+    top_k: int = 5,
+    doc_ids: list[int] | None = None,
+    *,
+    published_only: bool = False,
+    search_mode: str | None = None,
+) -> dict:
+    """检索：两种引擎共用向量化，支持 auto / hybrid / hybrid_rerank 模式。"""
     doc_ids = document_scope(doc_ids)
     published_only = published_policy(published_only)
+    effective_mode = resolve_search_mode(search_mode)
     if doc_ids == []:
         return {"query": query, "results": [], "mode": "empty-scope", "vector_source": "none"}
+    if effective_mode in ("hybrid", "hybrid_rerank"):
+        return _hybrid_pipeline_search(
+            tenant_code,
+            query,
+            top_k=top_k,
+            doc_ids=doc_ids,
+            published_only=published_only,
+            search_mode=effective_mode,
+        )
     if llama_engine.available():
         return llama_engine.search(tenant_code, query, top_k=top_k, doc_ids=doc_ids, published_only=published_only)
     return _builtin_search(tenant_code, query, top_k=top_k, doc_ids=doc_ids, published_only=published_only)
 
 
-def _builtin_search(tenant_code: str, query: str, top_k: int = 5,
-                    doc_ids: list[int] | None = None, *, published_only: bool = False) -> dict:
+def _hybrid_pipeline_search(
+    tenant_code: str,
+    query: str,
+    top_k: int = 5,
+    doc_ids: list[int] | None = None,
+    *,
+    published_only: bool = False,
+    search_mode: str = "hybrid",
+) -> dict:
+    """RAG 2.0 混合检索与重排流水线。"""
+    query = (query or "").strip()
+    if not query:
+        return {"query": query, "results": [], "vector_source": "none", "mode": "empty"}
+
+    settings = get_settings()
+    limit = max(1, min(int(top_k), 50))
+    candidate_depth = max(limit, int(getattr(settings, "rag_hybrid_candidate_depth", 15) or 15))
+    rrf_k = int(getattr(settings, "rag_rrf_k", 60) or 60)
+
+    vectors, source = embedding_module.embed_texts(
+        [query], tenant_code=tenant_code, trace_id=get_trace_id() or "-"
+    )
+    query_vector = vectors[0] if vectors else None
+
+    if search_mode == "hybrid_rerank":
+        candidates = store.hybrid_search(
+            tenant_code,
+            query,
+            query_vector,
+            top_k=candidate_depth,
+            candidate_depth=candidate_depth,
+            rrf_k=rrf_k,
+            doc_ids=doc_ids,
+            published_only=published_only,
+        )
+        reranked = reranker.rerank_candidates(
+            query,
+            candidates,
+            top_k=limit,
+            tenant_code=tenant_code,
+        )
+        results = reranked["results"]
+        logger.info(
+            "知识库混合重排检索 trace=%s tenant=%s queryChars=%d 候选=%d 命中=%d 重排=%s 向量来源=%s",
+            get_trace_id() or "-",
+            tenant_code,
+            len(query),
+            len(candidates),
+            len(results),
+            reranked.get("rerank_mode"),
+            source,
+        )
+        return {
+            "query": query,
+            "results": results,
+            "vector_source": source,
+            "mode": "hybrid_rerank",
+            "rerank_mode": reranked.get("rerank_mode"),
+            "rerank_usage": reranked.get("usage"),
+        }
+
+    results = store.hybrid_search(
+        tenant_code,
+        query,
+        query_vector,
+        top_k=limit,
+        candidate_depth=candidate_depth,
+        rrf_k=rrf_k,
+        doc_ids=doc_ids,
+        published_only=published_only,
+    )
+    logger.info(
+        "知识库混合检索 trace=%s tenant=%s queryChars=%d 命中=%d 模式=hybrid 向量来源=%s",
+        get_trace_id() or "-",
+        tenant_code,
+        len(query),
+        len(results),
+        source,
+    )
+    return {
+        "query": query,
+        "results": results,
+        "vector_source": source,
+        "mode": "hybrid",
+    }
+
+
+def _builtin_search(
+    tenant_code: str,
+    query: str,
+    top_k: int = 5,
+    doc_ids: list[int] | None = None,
+    *,
+    published_only: bool = False,
+    search_mode: str | None = None,
+) -> dict:
     """内置实现：先用向量找语义相近的，没配密钥（向量不靠谱）就退回关键词匹配。"""
     doc_ids = document_scope(doc_ids)
     published_only = published_policy(published_only)
+    effective_mode = resolve_search_mode(search_mode)
     if doc_ids == []:
         return {"query": query, "results": [], "mode": "empty-scope", "vector_source": "none"}
+    if effective_mode in ("hybrid", "hybrid_rerank"):
+        return _hybrid_pipeline_search(
+            tenant_code,
+            query,
+            top_k=top_k,
+            doc_ids=doc_ids,
+            published_only=published_only,
+            search_mode=effective_mode,
+        )
     query = (query or "").strip()
     if not query:
         return {"query": query, "results": [], "vector_source": "none", "mode": "empty"}

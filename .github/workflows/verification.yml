@@ -74,6 +74,16 @@ jobs:
         run: python scripts/benchmarks/rag_retrieval_benchmark.py --output .local/verification/rag-retrieval-benchmark.json
       - name: Compare intent context budgets and session recovery on the frozen corpus
         run: python scripts/benchmarks/brain_context_benchmark.py --output .local/verification/brain-context-benchmark.json
+      - name: Run high-discrimination RAG 2.0 hybrid + rerank benchmark
+        run: python scripts/benchmarks/rag_hard_benchmark.py --output .local/verification/rag-hard-offline.json
+      - name: Run multi-turn context compression & token budget benchmark
+        run: python scripts/benchmarks/context_cost_benchmark.py --output .local/verification/context-cost-offline.json
+      - name: Run 50-case unauthorized & prompt injection red-team suite
+        run: python scripts/benchmarks/security_redteam_suite.py --output .local/verification/security-redteam-50.json
+      - name: Run 50-case fault injection & crash recovery matrix
+        run: python scripts/benchmarks/fault_recovery_suite.py --output .local/verification/fault-recovery-50.json
+      - name: Run 200-case Golden Dataset evaluation & 100% trace coverage audit
+        run: python scripts/benchmarks/golden_eval_runner.py --output .local/verification/golden-200-offline.json
       - name: Verify evaluation gate negative cases
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
       - name: Verify fresh and legacy runtime database privileges

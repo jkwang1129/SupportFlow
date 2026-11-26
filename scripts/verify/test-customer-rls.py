@@ -95,6 +95,8 @@ def main():
             env=db_env, encoding='utf-8')
         run(psql, input=(ROOT / 'backend/deploy/migrations/sql/customer_db_012_kb_previous_index.sql').read_text(encoding='utf-8'),
             env=db_env, encoding='utf-8')
+        run(psql, input=(ROOT / 'backend/deploy/migrations/sql/customer_db_013_kb_source_authority.sql').read_text(encoding='utf-8'),
+            env=db_env, encoding='utf-8')
         run(psql, env=db_env, input=f"""
             CREATE ROLE rls_test_java LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD '{app_password}';
             GRANT supportflow_customer_tenant TO rls_test_java;
@@ -147,7 +149,8 @@ def main():
             report.parent.mkdir(parents=True, exist_ok=True)
             subprocess.run(
                 [sys.executable, "-m", "pytest", "-q", "tests/unit/test_kb_console_status.py", "tests/postgres/test_rag_document_scope_postgres.py",
-                 "tests/postgres/test_rag_published_policy_postgres.py", f"--junitxml={report}"],
+                 "tests/postgres/test_rag_published_policy_postgres.py", "tests/postgres/test_rag_source_authority_postgres.py",
+                 f"--junitxml={report}"],
                 cwd=ROOT / "ai-service", check=True,
                 env={
                     **os.environ,

@@ -25,17 +25,17 @@
 
 ### 2.1 确定性客服大脑 + Agentic RAG 2.0（常规问答主链路）
 1. **入站与并发保障**：访客消息经 `SessionService#appendMessage` 获取会话行锁并基于唯一索引幂等落库（消除并发重发 `25P02` 事务中止），每会话轮次通过引用计数锁 `SessionSerialExecutor` 保证进程内严格串行。
-2. **上下文构建（Context Engineering）**：历史消息按当前有效客户回合锚定截断，支持可选字节预算（`2 KiB` / `4 KiB`）裁剪早期历史，保留结构化意图槽位并支持当前轮明确订单号确定性覆盖。
-3. **Agentic RAG 编排**：执行 `retrieve -> grade -> rewrite（最多 1 次）-> answer / abstain`。
-   - **可见性与一致性**：访客问答强制限定当前租户“已发布且索引完成”的文档，返回前二次复核发布状态与原文切片（`ADR-0042`）；知识重索引通过 `kb_chunk_stage` 暂存表生成并在 Java 文档写锁事务内原子切换，支持上一版索引按版本 UUID 一键回滚（`ADR-0082`～`0085`）。
-   - **事实支撑与拒答**：改写耗尽仍低于阈值时确定性拒答（零生成调用）；生成结果剔除越界引用，可选启用结构化答复逐句原文核查、同口径数值冲突拦截及政策人工核验建议（`ADR-0055`、`0081`）。
+2. **上下文工程（Context Engineering）**：`ai/core/context_engine.py` 实现系统规则与不可信 JSON 帧隔离（内置提示注入检测）、`SlidingWindowCompressor` 长多轮摘要与关键槽位保留、`ToolResultPruner` 工具输出白名单裁剪以及 `TokenBudgetManager` 确定性优先级裁剪。
+3. **Agentic RAG 2.0 编排**：执行 `retrieve（vector / keyword / hybrid_rrf / hybrid_rerank）-> rerank（Qwen gte-rerank 或本地 lexical_hybrid）-> grade -> rewrite（最多 1 次）-> answer / abstain`。
+   - **可信来源治理与可见性**：`customer_db` `013` 迁移引入受控 `source_authority`（`official / reference / community`）与受限列授权；访客问答强制限定当前租户“已发布且索引完成”的文档，返回前二次复核发布状态与原文切片（`ADR-0042`），正式政策权威高于参考材料、社区来源不可单独支撑政策作答；知识重索引通过 `kb_chunk_stage` 原子切换并支持版本 UUID 一键回滚（`ADR-0082`～`0085`）。
+   - **事实支撑与拒答**：改写耗尽仍低于阈值时确定性拒答（零生成调用）；生成结果剔除越界引用，支持结构化答复逐句原文核查、同口径数值冲突拦截及政策人工核验建议（`ADR-0055`、`0081`）。
 
-### 2.2 持久化有界 Agent Runtime + HITL 工单闭环（复杂任务受控链路）
-针对需要跨步业务读取与受控副作用的任务，`ai-service/ai/runtime/` 提供独立的持久化执行引擎（当前默认按租户显式开启，正在推进与主对话路由的统一 `Intent Router` 合流）：
+### 2.2 Workflow + Agent Loop 混合路由与持久化 HITL 闭环（复杂任务受控链路）
+针对需要多步业务读取与受控副作用的任务，`ai-service/ai/runtime/` 提供 `IntentRouter`（`WORKFLOW / AGENT_LOOP / HUMAN_HANDOFF`）与持久化有界 `CustomerAgentLoop`：
 1. **可靠投递与多 Worker 协调**：Java 在消息事务内写入 `agent_event_outbox` 并带 `fence` 投递至签名接收端；Python Worker 基于数据库时钟领取租约、定期心跳、超时自动接管，同会话任务严格保序。
 2. **原子步骤检查点与预算**：每次模型推理（`MODEL`）、只读工具（`READ`）或写操作（`WRITE`）前原子预留步骤并扣减 `max_steps / max_model_calls / max_tool_calls / wall_seconds` 预算；已完成只读/模型步骤的正文检查点在进程崩溃重启后直接复用，不重复扣费或重跑。
-3. **受控工具层与 MCP 接入**：`ToolRegistry` / `ToolExecutor` 采用闭合 Pydantic Schema，禁止模型传入租户/身份/URL 等特权字段；每次执行重新向 Java 核验来源会话快照与资源归属（已接入来源消息读取、知识检索、工单状态查询、只读 MCP 客户端及幂等创建工单）。
-4. **限时人工审批（HITL）与进度续传**：写操作提案进入 `WAITING_APPROVAL` 持久化暂停状态，绑定参数 SHA-256 摘要、来源快照与过期时间；主管/管理员在工作台预览并审批，审批通过后一次性原子消费许可；工作台支持按事件游标自动补拉执行进度、整页重载恢复及任务取消竞争处理。
+3. **受控多工具层与 MCP 接入**：`ToolRegistry` / `ToolExecutor` 采用闭合 Pydantic Schema，禁止模型传入租户/身份/URL 等特权字段；每次执行重新向 Java 核验来源会话快照与资源归属（已完整覆盖来源消息读取、知识检索、脱敏客户资料查询、访客可见历史会话检索、工单状态查询、只读 MCP 客户端及幂等创建工单）。
+4. **自然语言建单提案与限时 HITL 审批**：`CustomerAgentLoop` 既兼容 `/ticket-request`，也支持自然语言触发 `propose_ticket` 提案，进入 `WAITING_APPROVAL` 持久化暂停状态并绑定参数 SHA-256 摘要、来源快照与过期时间；主管/管理员审批后一次性原子消费许可；工作台支持事件游标自动补拉进度、整页重载恢复及取消竞争处理。
 5. **未知副作用阻断与回执核销**：若写请求响应丢失或进程中断，步骤标记为 `SIDE_EFFECT_UNKNOWN` 并阻断同会话后续任务，严禁盲目重发 POST；恢复或终态核销仅通过只读查询 Java 不可变回执表（`agent_result_receipt` / `ticket_create_receipt`）确认真实提交结果。
 
 ---
@@ -50,8 +50,8 @@
 
 ## 4. 观测、评测与成本治理（LLMOps）
 
-- **跨服务追踪与安全回放**：请求号从入站贯穿 Java 异步线程、Outbox 与 Python Worker；`trace_timeline.py` 支持按租户隔离联合查询 Java 投递、Python Run/Step 与审批时间线；`ticket_replay.py` 支持基于录制磁带的离线只读规划回放（篡改输入摘要立即触发门禁失败，绝不触发真实写操作）。
-- **多层预算与配额预留**：Runtime 支持租户级模型并发配额、UTC 每日/月度 Token 原子预留与回执结算、基于版本化价目表的日/月金额预留；旧客服链路接入 Ops 月度预算闸门，无法确认额度时安全降级。检查点正文到期清理后，脱敏审计轨迹与独立 Token 用量回执仍完整保留。
+- **OpenTelemetry + Langfuse 全链路追踪与安全回放**：W3C `traceparent` 与请求号贯穿 Java 异步线程、Outbox、Python FastAPI 与 Runtime Worker；`ai/core/telemetry.py` 桥接 OpenTelemetry API 并提供 `LangfuseIngestionExporter` 批量异步导出与 PII/密钥脱敏，覆盖 10 个核心执行节点（`100%`）；`trace_timeline.py` 支持跨库联合时间线查询，`ticket_replay.py` / `replay_agent_plan` 支持无副作用规划回放。
+- **熔断降级与多层预算预留**：`ai/core/circuit_breaker.py` 实现按供应商滑动窗口熔断器（`CLOSED / OPEN / HALF_OPEN`），在 `Model Gateway` 中触发自动切换备选供应商或降级至确定性规则响应；Runtime 支持租户级并发配额、UTC 每日/月度 Token 与金额预留结算；运维手册见 [`docs/runbook.md`](runbook.md)，全量量化评测见 [`docs/evaluation-summary.md`](evaluation-summary.md)。
 
 ---
 

@@ -1949,3 +1949,18 @@ Windows 11、Python 3.11.5、隔离 PostgreSQL 17.12 和受限知识库连接。
 RRF 作为评测对照保留。基准集相较向量单路无召回增益，排序指标下降；留出集指标持平。两组都出现了无相关文档标注问题仍返回候选的情况，各为 3 题和 1 题。该结果用于查看排序，线上拒答质量、向量服务耗时和更大语料吞吐仍需独立验收。
 
 离线哈希向量对照、既有政策核验基准均通过。脚本测试共 82 项，72 项通过、10 项依赖额外夹具跳过。原始逐题排名、Token 回执及源码摘要位于 `.local/implementation/e27-retrieval-live.json` 和 `e27-retrieval-offline-final.json`。
+
+## Phase 1–6 全栈 Agent 工程收官（E28–E33）
+
+- **时间与环境**：2026-11-26，分支 `codex/p1-reliability`，OpenJDK 25.0.3、Maven 3.9.16、Python 3.12（`.local/implementation/d20-python`）、隔离 PostgreSQL 17 + `pgvector`、真实 DashScope（`qwen-plus` / `text-embedding-v3` / `gte-rerank`）受控合成评测。
+- **核心落地范围**：
+  1. **Phase 1（RAG 2.0 混合检索重排与来源权威治理）**：新增 `customer_db` `013` 迁移（`kb_document.source_authority` + 受限角色列授权）、线上可选 `Hybrid Search + RRF + Reranking`（Qwen / `lexical_hybrid`）、权威排序与社区低信源拦截，及 24 文档 / 48 切片 / 36 题高区分度基准 `scripts/benchmarks/rag_hard_benchmark.py`。
+  2. **Phase 2（Workflow + Agent Loop 混合路由与多工具闭环）**：新增 Java 脱敏客户档案与访客可见历史会话受控端点（`RuntimeCustomerProfileController`、`RuntimeSessionHistoryController`），新增 Python `IntentRouter`、`CustomerAgentLoop`、`profile_tools.py` 与自然语言 `propose_ticket` HITL 提案。
+  3. **Phase 3 & 4（Context Engineering、熔断降级与 OTel + Langfuse）**：新增 `ai/core/context_engine.py`、`ai/core/circuit_breaker.py`、`ai/core/telemetry.py`（W3C `traceparent` + OpenTelemetry 桥接 + Langfuse 批量导出 + PII/密钥脱敏 + 10 节点覆盖审计）与 `scripts/benchmarks/context_cost_benchmark.py`。
+  4. **Phase 5 & 6（三大冻结评测套件、Runbook 与 CI 收口）**：冻结 `golden-dataset-200-v1.json`、`security-redteam-50-v1.json`、`fault-recovery-50-v1.json` 及 `.sha256`；实现 `security_redteam_suite.py`、`fault_recovery_suite.py`、`llm_judge_calibration.py`、`golden_eval_runner.py`；新增 `docs/runbook.md` 与 `docs/evaluation-summary.md`；将 5 项离线门禁接入 `.github/workflows/verification.yml`。
+- **实际验证结果**：
+  - `mvn -B -f backend/pom.xml verify`：9 个模块全部 `BUILD SUCCESS`（`01:11 min`）。
+  - `ai-service` pytest：`1,314 passed, 507 skipped (PG-gated), 0 failed, 0 errors`；`report-rag-contract.py`：`24/24 + 10/10 + 20/20`（`gate_passed: true`）。
+  - `scripts/tests`：`93` 项运行 `OK`；`scripts/security`：`6/6 OK`；前端 `npm --prefix frontend run build` 通过。
+  - 隔离 PG17：`test-schema-drift.py`（106 表）、`test-versioned-migrations.py`（含 `012 -> 013`）、`test-customer-rls.py --with-ai`（Java **183 passed** + Python PG17 **37 passed**）、`test-agent-runtime.py`（**489 passed**）全量通过。
+  - 量化实测明细与原始报告 SHA-256 见 [量化评测与可复现证据汇总](evaluation-summary.md)。

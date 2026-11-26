@@ -169,13 +169,33 @@ def index_text(tenant_code: str, doc_id: int, content: str,
     )
 
 
-def search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | None = None, *, published_only: bool = False) -> dict:
-    """检索：使用共用向量化，再交给 pgvector 做余弦检索。"""
+def search(
+    tenant_code: str,
+    query: str,
+    top_k: int = 5,
+    doc_ids: list[int] | None = None,
+    *,
+    published_only: bool = False,
+    search_mode: str | None = None,
+) -> dict:
+    """检索：使用共用向量化，再交给 pgvector 做余弦检索或混合检索。"""
     from .document_scope import document_scope, published_policy
+    from . import pipeline as pipeline_module
+
     doc_ids = document_scope(doc_ids)
     published_only = published_policy(published_only)
+    effective_mode = pipeline_module.resolve_search_mode(search_mode)
     if doc_ids == []:
         return {"query": query, "results": [], "mode": "empty-scope", "vector_source": "none"}
+    if effective_mode in ("hybrid", "hybrid_rerank"):
+        return pipeline_module._hybrid_pipeline_search(
+            tenant_code,
+            query,
+            top_k=top_k,
+            doc_ids=doc_ids,
+            published_only=published_only,
+            search_mode=effective_mode,
+        )
     vectors, source = _embed_texts([query], tenant_code)
     vector = vectors[0] if vectors else []
 
