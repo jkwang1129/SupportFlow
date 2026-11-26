@@ -1,8 +1,6 @@
-# SupportFlow — 多租户 SaaS 智能客服 Agent 平台
+# SupportFlow - Multi-tenant Customer Service Agent Platform
 
-**Multi-tenant Customer Service Agent Platform**
-
-SupportFlow 是一个面向企业智能客服场景构建的多租户 SaaS AI Agent 工程平台。系统在保留确定性多渠道客服接待、工单 SLA 与计费运营闭环的基础上，围绕生产级 Agent 工程能力构建了集**多轮对话、受控工具调用、人工审批（HITL）、知识检索、全链路追踪与成本治理**于一体的可追踪、可恢复服务闭环。
+SupportFlow 是一个面向企业智能客服场景构建的多租户 AI Agent 工程平台。系统在保留确定性多渠道客服接待、工单 SLA 与计费运营闭环的基础上，围绕生产级 Agent 工程能力构建了集**多轮对话、受控工具调用、人工审批（HITL）、知识检索、全链路追踪与成本治理**于一体的可追踪、可恢复服务闭环。
 
 ---
 
