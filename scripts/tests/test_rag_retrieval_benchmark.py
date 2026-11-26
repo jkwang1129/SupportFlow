@@ -1,4 +1,11 @@
 """Verify order-based fusion, relevance denominators and full-leg scope checks."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parents[1]  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 from math import log2
 from pathlib import Path
 import sys
@@ -37,7 +44,8 @@ class RetrievalBenchmarkTest(unittest.TestCase):
         scope = {'tenant_code': 'TEST_A', 'top_k': 10, 'published_only': True, 'doc_ids': None}
         with (patch.object(benchmark.store, 'keyword_search', return_value=matches) as keyword,
               patch.object(benchmark.store, 'search', return_value=matches[:5]) as dense):
-            result = benchmark.measure_case(case, 'synthetic query', scope, [1], keys, set(keys.values()), dense_first=False)
+            result = benchmark.measure_case(case, 'synthetic query', scope, [
+                                            1], keys, set(keys.values()), dense_first=False)
         keyword.assert_called_once_with(query='synthetic query', **scope)
         dense.assert_called_once_with(vector=[1], **scope)
         self.assertEqual([None], result['violations']['keyword'])

@@ -147,9 +147,9 @@ async def compose_answer_details(question: str, hits: list[dict[str, Any]], tena
         logger.warning("知识问答使用检索原文 trace=%s tenant=%s questionChars=%d",
                        get_trace_id() or "-", tenant_code or "-", len(question))
         return ComposedAnswer(f"（当前无法使用大模型，先把检索到的原文给你）\n\n"
-                f"依据《{top.get('doc_title') or '未命名文档'}》第 {top.get('chunk_no')} 块：\n"
-                f"{top.get('content') or ''}",
-                citations, generated=False)
+                              f"依据《{top.get('doc_title') or '未命名文档'}》第 {top.get('chunk_no')} 块：\n"
+                              f"{top.get('content') or ''}",
+                              citations, generated=False)
 
     prompt = SYSTEM_PROMPT + (EXTRACTIVE_INSTRUCTIONS if extractive_only else "")
     if require_grounded_reply:

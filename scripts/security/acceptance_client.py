@@ -1,4 +1,11 @@
 """Exercise the local customer support flow using synthetic test data."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parents[1]  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 import base64
 import json
 import os
@@ -25,7 +32,8 @@ def note(name, detail):
 
 
 def api(method, path, token=None, data=None, want_failure=False, **kw):
-    response = client.request(method, path, headers={"Authorization": "Bearer " + token} if token else {}, json=data, **kw)
+    response = client.request(method, path, headers={
+                              "Authorization": "Bearer " + token} if token else {}, json=data, **kw)
     try:
         body = response.json()
     except ValueError:
@@ -34,7 +42,8 @@ def api(method, path, token=None, data=None, want_failure=False, **kw):
         assert response.is_error or body.get("code") != 0, f"{method} {path}: expected business denial"
         return body.get("code") or response.status_code
     if response.is_error or body.get("code") != 0:
-        raise AssertionError(f"{method} {path}: HTTP {response.status_code}, code {body.get('code')}, {str(body.get('message', ''))[:200]}")
+        raise AssertionError(
+            f"{method} {path}: HTTP {response.status_code}, code {body.get('code')}, {str(body.get('message', ''))[:200]}")
     return body.get("data")
 
 
@@ -48,7 +57,8 @@ def login(email, password):
     return r["token"]
 
 
-png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/l8AAAAASUVORK5CYII=")
+png = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a/l8AAAAASUVORK5CYII=")
 
 
 def enroll(admin, name):
@@ -64,7 +74,8 @@ def enroll(admin, name):
         data["verifyCode"] = verification["debugCode"]
     api("POST", "/user/auth/register", data={**data, **captcha()})
     token = login(email, password)
-    uploaded = api("POST", "/customer/files/enterprise/license", token, files={"file": ("test-license.png", png, "image/png")})
+    uploaded = api("POST", "/customer/files/enterprise/license", token,
+                   files={"file": ("test-license.png", png, "image/png")})
     api("POST", "/tenant/enterprise/my/submit", token, data={"companyName": company, "industry": "零售", "scale": "20人以下",
         "licenseNo": "91" + "".join(str(secrets.randbelow(10)) for _ in range(16)), "registerAddress": "测试地址", "legalPerson": "测试法人",
         "licenseFileId": uploaded["fileId"], "contactName": "测试坐席", "contactPhone": phone, "contactEmail": email})
@@ -76,7 +87,8 @@ def enroll(admin, name):
     assert api("GET", "/user/auth/me", token)["tenantCode"] == approved["tenantCode"]
     licenses[name] = uploaded['fileId']
     for reader in (token, admin):
-        response = client.get('/customer/files/enterprise/' + uploaded['fileId'], headers={'Authorization': 'Bearer ' + reader})
+        response = client.get('/customer/files/enterprise/' +
+                              uploaded['fileId'], headers={'Authorization': 'Bearer ' + reader})
         assert response.status_code == 200 and response.content == png
         assert response.headers['cache-control'] == 'no-store'
     return token
@@ -87,7 +99,7 @@ def recv(ws, kind, predicate=lambda msg: True, seconds=42):
     seen = []
     try:
         while time.monotonic() < deadline:
-            m = json.loads(ws.recv(timeout=max(0, deadline-time.monotonic())))
+            m = json.loads(ws.recv(timeout=max(0, deadline - time.monotonic())))
             seen.append(m.get("type"))
             if m.get("type") == kind and predicate(m):
                 return m

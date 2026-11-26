@@ -1,4 +1,11 @@
 """Check benchmark bookkeeping separately from the disposable database run."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parents[1]  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 import asyncio
 from copy import deepcopy
 from pathlib import Path

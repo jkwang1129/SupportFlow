@@ -47,8 +47,10 @@ def build_worker(settings, tenant, provider, *, owner, prompt_version=STABLE_PRO
         if secret == mcp_secret:
             raise ValueError('MCP and customer credentials must be distinct')
         mcp = McpTicketClient(settings.runtime_ticket_mcp_url, mcp_secret)
-    access = ToolExecutor(ToolRegistry([current_message_tool(SourceClient(base, secret))]), frozenset({'session:read'}))
-    tools = ToolExecutor(ToolRegistry([ticket_status_tool(TicketClient(base, secret), mcp_client=mcp)]), frozenset({'ticket:read'}))
+    access = ToolExecutor(ToolRegistry([current_message_tool(
+        SourceClient(base, secret))]), frozenset({'session:read'}))
+    tools = ToolExecutor(ToolRegistry([ticket_status_tool(TicketClient(
+        base, secret), mcp_client=mcp)]), frozenset({'ticket:read'}))
     store = RuntimeStore()
     loop = TicketReadLoop(access, tools, RuntimeChatClient(profile),
                           canonical_history=settings.runtime_canonical_planner_history,
@@ -76,7 +78,8 @@ def main(argv=None):
     parser.add_argument('--tenant', required=True, help='Tenant assigned to this worker by the operator')
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument('--provider', choices=PROVIDERS)
-    mode.add_argument('--approved-tickets-only', action='store_true', help='Execute existing approved ticket proposals')
+    mode.add_argument('--approved-tickets-only', action='store_true',
+                      help='Execute existing approved ticket proposals')
     parser.add_argument('--prompt-version', choices=tuple(TICKET_PROMPTS),
                         help='Prompt for newly bound read tasks; defaults to the stable version')
     parser.add_argument('--once', action='store_true', help='Run at most one due task and exit')

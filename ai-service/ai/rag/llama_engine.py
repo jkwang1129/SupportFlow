@@ -15,6 +15,7 @@ from . import store
 
 logger = logging.getLogger(__name__)
 
+
 def available() -> bool:
     """Whether the optional parsing and splitting engine can be loaded."""
     import importlib.util
@@ -73,7 +74,7 @@ def _read_file(file_name: str, payload: bytes):
     except Exception as exc:  # noqa: BLE001
         from . import parser as parser_module
 
-        logger.warning("LlamaIndex 读取失败，改用内置解析器 code=RAG_READER_FALLBACK errorType=%s",type(exc).__name__)
+        logger.warning("LlamaIndex 读取失败，改用内置解析器 code=RAG_READER_FALLBACK errorType=%s", type(exc).__name__)
         text = parser_module.normalize(parser_module.parse(file_name, payload))
         if not text.strip():
             raise
@@ -168,12 +169,13 @@ def index_text(tenant_code: str, doc_id: int, content: str,
     )
 
 
-def search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | None = None,*,published_only: bool=False) -> dict:
+def search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | None = None, *, published_only: bool = False) -> dict:
     """检索：使用共用向量化，再交给 pgvector 做余弦检索。"""
-    from .document_scope import document_scope,published_policy
-    doc_ids=document_scope(doc_ids)
-    published_only=published_policy(published_only)
-    if doc_ids==[]:return {"query":query,"results":[],"mode":"empty-scope","vector_source":"none"}
+    from .document_scope import document_scope, published_policy
+    doc_ids = document_scope(doc_ids)
+    published_only = published_policy(published_only)
+    if doc_ids == []:
+        return {"query": query, "results": [], "mode": "empty-scope", "vector_source": "none"}
     vectors, source = _embed_texts([query], tenant_code)
     vector = vectors[0] if vectors else []
 
@@ -183,12 +185,14 @@ def search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | No
     if local:
         # 向量化没配密钥（退回本地兜底向量）时不做余弦检索：
         # 那种向量没有语义，检出来的结果反而误导人
-        results = store.keyword_search(tenant_code, query, top_k=top_k,doc_ids=doc_ids,published_only=published_only)
+        results = store.keyword_search(tenant_code, query, top_k=top_k,
+                                       doc_ids=doc_ids, published_only=published_only)
         mode = "keyword-local-vector"
     elif vector and any(value != 0 for value in vector):
-        results = store.search(tenant_code, vector, top_k=top_k, doc_ids=doc_ids,published_only=published_only)
+        results = store.search(tenant_code, vector, top_k=top_k, doc_ids=doc_ids, published_only=published_only)
     if not results:
-        results = store.keyword_search(tenant_code, query, top_k=top_k,doc_ids=doc_ids,published_only=published_only)
+        results = store.keyword_search(tenant_code, query, top_k=top_k,
+                                       doc_ids=doc_ids, published_only=published_only)
         mode = "keyword"
     # 局部导入：pipeline 顶层也 import 了本模块，放顶层会形成循环导入
     from . import pipeline as pipeline_module

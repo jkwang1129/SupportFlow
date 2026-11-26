@@ -1,4 +1,11 @@
 """Publish structural failure evidence, never raw service logs or request data."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parents[1]  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 import json
 from pathlib import Path
 import re
@@ -6,7 +13,8 @@ import re
 LOG_NAMES = ('runtime', 'compose', 'gateway', 'user-service', 'tenant-service',
              'customer-service', 'billing-service', 'ops-service', 'realtime-service', 'ai')
 EXCEPTION = re.compile(r'(?:Caused by:\s*|^|\s)((?:[a-zA-Z_$][\w$]*\.)+[\w$]*(?:Exception|Error))\b')
-FRAME = re.compile(r'^\s*at ([a-zA-Z_$][\w$./<>]*\([A-Za-z0-9_$.-]+(?::[0-9]+)?\))\s*(?:~?\[[^\]\r\n]{1,160}\])?\s*$')
+FRAME = re.compile(
+    r'^\s*at ([a-zA-Z_$][\w$./<>]*\([A-Za-z0-9_$.-]+(?::[0-9]+)?\))\s*(?:~?\[[^\]\r\n]{1,160}\])?\s*$')
 # Emit fixed categories rather than database messages (which can contain input values).
 DATABASE_REASONS = (
     ('permission denied', 'permission_denied'),

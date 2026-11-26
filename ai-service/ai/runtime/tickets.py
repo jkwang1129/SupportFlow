@@ -43,52 +43,60 @@ class TicketStatus:
 
 
 def decode_ticket_status(value, source, run, ticket_no):
-    fields = {'schema_version','tenant_code','source_event_id','run_id','snapshot_id','source_hash',
-              'ticket_no','status','updated_at','resource_version'}
+    fields = {'schema_version', 'tenant_code', 'source_event_id', 'run_id', 'snapshot_id', 'source_hash',
+              'ticket_no', 'status', 'updated_at', 'resource_version'}
     try:
-        if (not isinstance(value,dict) or set(value)!=fields or value['schema_version']!='ticket-status-v1'
-                or value['tenant_code']!=source.tenant or value['source_event_id']!=str(source.source_event_id)
-                or value['run_id']!=str(run) or value['ticket_no']!=ticket_no):raise ValueError()
-        snapshot=UUID(value['snapshot_id'])
-        if str(snapshot)!=value['snapshot_id'] or type(value['status']) is not int or not 1<=value['status']<=5:raise ValueError()
-        for key in ('source_hash','resource_version'):
-            if not isinstance(value[key],str) or not re.fullmatch('[0-9a-f]{64}',value[key]):raise ValueError()
-        updated=ticket_timestamp(value['updated_at'])
-        digest=ticket_digest(source,run,snapshot,value['source_hash'],ticket_no,value['status'],updated)
-        if not hmac.compare_digest(digest,value['resource_version']):raise ValueError()
-        return TicketStatus(run,source.source_event_id,snapshot,value['source_hash'],ticket_no,value['status'],updated,digest)
-    except (ValueError,TypeError,KeyError,UnicodeError,RecursionError,AttributeError):
+        if (not isinstance(value, dict) or set(value) != fields or value['schema_version'] != 'ticket-status-v1'
+                or value['tenant_code'] != source.tenant or value['source_event_id'] != str(source.source_event_id)
+                or value['run_id'] != str(run) or value['ticket_no'] != ticket_no):
+            raise ValueError()
+        snapshot = UUID(value['snapshot_id'])
+        if str(snapshot) != value['snapshot_id'] or type(value['status']) is not int or not 1 <= value['status'] <= 5:
+            raise ValueError()
+        for key in ('source_hash', 'resource_version'):
+            if not isinstance(value[key], str) or not re.fullmatch('[0-9a-f]{64}', value[key]):
+                raise ValueError()
+        updated = ticket_timestamp(value['updated_at'])
+        digest = ticket_digest(source, run, snapshot, value['source_hash'], ticket_no, value['status'], updated)
+        if not hmac.compare_digest(digest, value['resource_version']):
+            raise ValueError()
+        return TicketStatus(run, source.source_event_id, snapshot, value['source_hash'], ticket_no, value['status'], updated, digest)
+    except (ValueError, TypeError, KeyError, UnicodeError, RecursionError, AttributeError):
         raise PermanentFailure('TICKET_PAYLOAD_INVALID') from None
 
 
 class TicketClient(_CustomerTransport):
     async def read(self, source: RunInput, run_id: UUID, ticket_no: str):
-        if not isinstance(source,RunInput) or not isinstance(ticket_no,str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}',ticket_no):
+        if not isinstance(source, RunInput) or not isinstance(ticket_no, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', ticket_no):
             raise ValueError('Invalid trusted ticket query')
-        run=UUID(str(run_id))
-        status,raw=await self._exchange('GET',source,run,'tickets/'+ticket_no,b'',prefix='TICKET',limit=8192,
-                                        accepted=(200,404,409,410,413,422))
-        return self._decode(status,raw,source,run,ticket_no)
+        run = UUID(str(run_id))
+        status, raw = await self._exchange('GET', source, run, 'tickets/' + ticket_no, b'', prefix='TICKET', limit=8192,
+                                           accepted=(200, 404, 409, 410, 413, 422))
+        return self._decode(status, raw, source, run, ticket_no)
 
     @staticmethod
-    def _decode(status,raw,source,run,ticket_no):
+    def _decode(status, raw, source, run, ticket_no):
         def unique(pairs):
-            result={}
-            for key,value in pairs:
-                if key in result:raise ValueError('Duplicate ticket field')
-                result[key]=value
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError('Duplicate ticket field')
+                result[key] = value
             return result
         try:
-            root=json.loads(raw,object_pairs_hook=unique)
-            if not isinstance(root,dict) or type(root.get('code')) is not int:raise ValueError()
-            if root['code']!=0:
-                codes={40402:(404,'TICKET_SOURCE_REVOKED'),40404:(404,'TICKET_REVOKED'),40902:(409,'TICKET_SOURCE_CHANGED'),
-                       41002:(410,'TICKET_SOURCE_EXPIRED'),41302:(413,'TICKET_SOURCE_TOO_LARGE'),
-                       42202:(422,'TICKET_SOURCE_INVALID'),42204:(422,'TICKET_INVALID_STATE')}
-                expected=codes.get(root['code'])
-                if expected is None or status!=expected[0] or root.get('data') is not None:raise ValueError()
+            root = json.loads(raw, object_pairs_hook=unique)
+            if not isinstance(root, dict) or type(root.get('code')) is not int:
+                raise ValueError()
+            if root['code'] != 0:
+                codes = {40402: (404, 'TICKET_SOURCE_REVOKED'), 40404: (404, 'TICKET_REVOKED'), 40902: (409, 'TICKET_SOURCE_CHANGED'),
+                         41002: (410, 'TICKET_SOURCE_EXPIRED'), 41302: (413, 'TICKET_SOURCE_TOO_LARGE'),
+                         42202: (422, 'TICKET_SOURCE_INVALID'), 42204: (422, 'TICKET_INVALID_STATE')}
+                expected = codes.get(root['code'])
+                if expected is None or status != expected[0] or root.get('data') is not None:
+                    raise ValueError()
                 raise PermanentFailure(expected[1])
-            if status!=200:raise ValueError()
-            return decode_ticket_status(root['data'],source,run,ticket_no)
-        except (ValueError,TypeError,KeyError,UnicodeError,RecursionError,AttributeError):
+            if status != 200:
+                raise ValueError()
+            return decode_ticket_status(root['data'], source, run, ticket_no)
+        except (ValueError, TypeError, KeyError, UnicodeError, RecursionError, AttributeError):
             raise PermanentFailure('TICKET_PAYLOAD_INVALID') from None

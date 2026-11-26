@@ -81,23 +81,23 @@ node website/scripts/serve.mjs
 
 ```powershell
 mvn -B -f backend/pom.xml verify
-python scripts/test-customer-rls.py --with-ai
-python scripts/test-runtime-security.py
+python scripts/verify/test-customer-rls.py --with-ai
+python scripts/verify/test-runtime-security.py
 python -m unittest discover -s scripts/security -p "unit_*.py" -v
-python scripts/test-security-flow.py
+python scripts/verify/test-security-flow.py
 npm --prefix frontend run build
 Push-Location ai-service
 .\.venv\Scripts\python -m pip install pytest
-.\.venv\Scripts\python -m pytest -q
+.\.venv\Scripts\python -m pytest tests/unit -q
 Pop-Location
 node website/scripts/build.mjs
 ```
 
 运行时可检查 `http://localhost:9090/actuator/health`、`http://localhost:9100/api/ai/health`，并从网站渠道发起访客消息，在工作台验证回复与人工接待。模型、附件以及外部渠道需要各自的运行配置。
 
-RLS 和运行权限脚本使用独立的 PostgreSQL 17 容器并自动清理。`test-customer-rls.py --with-ai` 验证真实 JDBC 连接复用、事务回滚和 KB 隔离；`test-runtime-security.py` 验证新库及带历史数据的旧库重复升级、空/PLATFORM 拒绝、历史宽松策略重放、文件迁移和权限最小化。测试用的数据库管理员仅用于准备样本与读取验收结果。
+RLS 和运行权限脚本使用独立的 PostgreSQL 17 容器并自动清理。`scripts/verify/test-customer-rls.py --with-ai` 验证真实 JDBC 连接复用、事务回滚和 KB 隔离；`scripts/verify/test-runtime-security.py` 验证新库及带历史数据的旧库重复升级、空/PLATFORM 拒绝、历史宽松策略重放、文件迁移和权限最小化。测试用的数据库管理员仅用于准备样本与读取验收结果。
 
-完整服务回归另需 `python -m pip install -r scripts/security/requirements.txt`，先完成 Java 打包，再执行 `python scripts/test-security-flow.py`。它分别启动新库和旧库升级后的七个 Java 服务、Python AI、PostgreSQL、RustFS，验证企业申请/审核、文件权限、平台工单、知识入库/双租户检索、访客 WebSocket 与机器人回复。使用随机凭据、合成数据和离线模型，不连接真实模型，不验收外部微信、邮箱或话务系统。需要空闲的 15432、19000、19090、9091–9096、9100 端口；运行期间不要同时启动另一套本地 SupportFlow。日志位于 `.local/security-services/`，场景结束后自动清理测试容器、数据卷和管理员临时口令。
+完整服务回归另需 `python -m pip install -r scripts/security/requirements.txt`，先完成 Java 打包，再执行 `python scripts/verify/test-security-flow.py`。它分别启动新库和旧库升级后的七个 Java 服务、Python AI、PostgreSQL、RustFS，验证企业申请/审核、文件权限、平台工单、知识入库/双租户检索、访客 WebSocket 与机器人回复。使用随机凭据、合成数据和离线模型，不连接真实模型，不验收外部微信、邮箱或话务系统。需要空闲的 15432、19000、19090、9091–9096、9100 端口；运行期间不要同时启动另一套本地 SupportFlow。日志位于 `.local/security-services/`，场景结束后自动清理测试容器、数据卷和管理员临时口令。
 
 ## 已有数据库升级
 
@@ -130,13 +130,13 @@ python scripts/upgrade-runtime-security.py
 
 已有环境先备份并停业务，运行 `python scripts/setup-local-env.py` 补充独立的 `SUPPORTFLOW_BILLING_CUSTOMER_SECRET`，再执行 `python scripts/upgrade-runtime-security.py` 安装 `30-usage-batches.sql` 和最小授权，最后同步部署客服与计费。该密钥只分发给这两个服务；不能用旧无认证/无 batchId 的协议继续累加。新 Compose 空卷自动执行同一迁移。
 
-重放验收：`python scripts/test-usage-batches.py`，另有 `python scripts/test-security-flow.py` 的实际调度、落账及匿名拒绝用例。设计和回滚见 [ADR-0001](decisions/0001-usage-batch-delivery.md)。原始内存计数尚未形成并保存批次时仍可能因进程崩溃丢失；网关的 tenant_usage_daily 请求计数是另一条链路，未因本次计费改造获得去重保证。
+重放验收：`python scripts/verify/test-usage-batches.py`，另有 `python scripts/verify/test-security-flow.py` 的实际调度、落账及匿名拒绝用例。设计和回滚见 [ADR-0001](decisions/0001-usage-batch-delivery.md)。原始内存计数尚未形成并保存批次时仍可能因进程崩溃丢失；网关的 tenant_usage_daily 请求计数是另一条链路，未因本次计费改造获得去重保证。
 
 ## AI 存活与就绪
 
 直接检查内部 AI 服务：`http://localhost:9100/api/ai/health/live` 表示存活；`http://localhost:9100/api/ai/health/ready` 只有登记的 AI/KB 结构与读取权限就绪才返回 200，否则为 503。兼容的 `/api/ai/health` 仍只表示存活，不要用它判定可以接流量。内部身份启动防护仍保持启用。
 
-旧 AUTO_MIGRATE/SCHEMA_DIR 配置不会触发运行期 DDL。结构升级由管理员在应用外执行；缺失时探针和业务 gate 都不会通过放宽权限来修复。`python scripts/test-runtime-security.py --with-ai-readiness` 在新旧两种隔离数据库中注入缺列、缺表、权限撤销并验证恢复，管理员只用于测试准备与故障注入，探测始终使用受限账号。范围及后续任务见 [ADR-0002](decisions/0002-schema-readiness-and-migrations.md)。
+旧 AUTO_MIGRATE/SCHEMA_DIR 配置不会触发运行期 DDL。结构升级由管理员在应用外执行；缺失时探针和业务 gate 都不会通过放宽权限来修复。`python scripts/verify/test-runtime-security.py --with-ai-readiness` 在新旧两种隔离数据库中注入缺列、缺表、权限撤销并验证恢复，管理员只用于测试准备与故障注入，探测始终使用受限账号。范围及后续任务见 [ADR-0002](decisions/0002-schema-readiness-and-migrations.md)。
 
 ## 版本化增量检查
 
@@ -148,7 +148,7 @@ python scripts/upgrade-runtime-security.py
 
 三个模式都只使用新建的隔离容器、合成数据和临时账号。
 
-- `python scripts/test-database-restore.py` 演练两个 PostgreSQL 17 集群之间的六库恢复。[六库恢复设计](decisions/0039-disposable-postgres-restore.md)
+- `python scripts/verify/test-database-restore.py` 演练两个 PostgreSQL 17 集群之间的六库恢复。[六库恢复设计](decisions/0039-disposable-postgres-restore.md)
 - 加 `--with-attachments` 同时创建独立的 RustFS 源桶与目标桶，核对对象、数据库引用和知识库索引。[联合恢复设计](decisions/0075-attachment-and-database-restore.md)
 - 在联合模式再加 `--with-services`。先以 JDK 25 运行 `mvn -B -f backend/pom.xml -pl supportflow-customer-service -am -DskipTests package`，并安装 `scripts/security/requirements.txt`、`ai-service/requirements-test.txt`。这会启动真实客服和 AI 服务，在目标上检查就绪、文件与任务读取，以及结构故障修复后恢复读取。CI 使用同一模式。[应用验收与回退](decisions/0076-restored-service-acceptance.md)
 
@@ -184,10 +184,10 @@ python -m ai.runtime.payload_retention --tenant TENANT_A --limit 100
 
 检查只读 PG 元数据，不读取租户业务行，不执行 DDL。探测使用业务连接池及受限身份；语句 timeout 配置 2 秒，连接池借用 timeout 仍由各服务配置控制。每个请求都会检查，尚未测量负载下的开销；该实现不是全量类型、索引、版本或 RLS 漂移检测。原有启动身份防护保留，启动失败时不能承诺探针已经开放。Gateway/Realtime 没有本地数据库，未安装这道 schema gate，也不代表下游依赖已就绪。
 
-`python scripts/test-security-flow.py` 在新库和历史库两套完整服务中，分别对五个数据库注入缺列、缺表和撤销 SELECT（保留 INSERT）故障，检查存活、就绪、业务拒绝与修复后恢复；仅操作有严格命名校验的隔离验收项目。不要在真实数据库上手动执行故障注入。
+`python scripts/verify/test-security-flow.py` 在新库和历史库两套完整服务中，分别对五个数据库注入缺列、缺表和撤销 SELECT（保留 INSERT）故障，检查存活、就绪、业务拒绝与修复后恢复；仅操作有严格命名校验的隔离验收项目。不要在真实数据库上手动执行故障注入。
 
-AI/User/Tenant/Ops 也已纳入同一清单：首次 migrate 验证基线表/列类型、索引和约束后登记 001，保留数据；后续 baseline 不重放，但 verify 另核对当前结构漂移。不得把首次采纳验证当成持续漂移检测。`python scripts/test-schema-baselines.py` 使用隔离 PG 重现四库采纳及不兼容拒绝。契约生成、权限及回退边界见迁移说明。
+AI/User/Tenant/Ops 也已纳入同一清单：首次 migrate 验证基线表/列类型、索引和约束后登记 001，保留数据；后续 baseline 不重放，但 verify 另核对当前结构漂移。不得把首次采纳验证当成持续漂移检测。`python scripts/verify/test-schema-baselines.py` 使用隔离 PG 重现四库采纳及不兼容拒绝。契约生成、权限及回退边界见迁移说明。
 
-`python scripts/db-migrate.py verify` 的当前结构契约登记六库 87 张应用表、1 个视图和 4 个受控函数，检查实际列类型/默认值、索引/约束、RLS ENABLE/FORCE 与完整策略。额外未知策略也会阻断，不能通过直接覆盖快照放行。`python scripts/test-schema-drift.py` 在隔离 PG 中验证结构/权限策略故障拒绝。范围、合法演进和未覆盖权限项见迁移说明；这不是备份恢复或完整生产验收。
+`python scripts/db-migrate.py verify` 的当前结构契约登记六库 106 张应用表、1 个视图和受控函数，检查实际列类型/默认值、索引/约束、RLS ENABLE/FORCE 与完整策略。额外未知策略也会阻断，不能通过直接覆盖快照放行。`python scripts/verify/test-schema-drift.py` 在隔离 PG 中验证结构/权限策略故障拒绝。范围、合法演进和未覆盖权限项见迁移说明；这不是备份恢复或完整生产验收。
 
 对于不经 Compose 自动初始化的独立空 PostgreSQL，可用 `python scripts/db-migrate.py init` 完成六库结构、版本和实际结构核验。只要目标库任意一个已存在就拒绝覆盖；已有环境使用 migrate/verify。init 不处理运行密码，随后须在同一服务器显式执行 40-runtime-roles.sql，再 verify 后启动受限身份服务。现有本地 Compose 用户继续使用原升级助手；该助手是本地 Compose 专用入口。部分初始化失败不自动删库，处理方式见迁移说明。完整服务验收现在包含默认新库、历史升级和空服务器经 CLI init 三种路径。

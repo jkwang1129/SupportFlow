@@ -93,7 +93,8 @@ def main(argv=None):
     parser.add_argument('--tenant', required=True)
     parser.add_argument('--window-minutes', type=_positive, default=60)
     parser.add_argument('--alert-due-count', type=_positive, help='Alert when the due count reaches this number')
-    parser.add_argument('--alert-due-seconds', type=_positive, help='Alert when the oldest due task reaches this age')
+    parser.add_argument('--alert-due-seconds', type=_positive,
+                        help='Alert when the oldest due task reaches this age')
     args = parser.parse_args(argv)
     if args.window_minutes > MAX_WINDOW_MINUTES:
         parser.error(f'--window-minutes must be at most {MAX_WINDOW_MINUTES}')
@@ -101,7 +102,8 @@ def main(argv=None):
     if not dsn:
         parser.error(f'Set {AI_DSN} for the operator session')
     try:
-        result = snapshot(reader(dsn, ('public.agent_run', 'public.agent_run_event')), args.tenant, args.window_minutes)
+        result = snapshot(reader(dsn, ('public.agent_run', 'public.agent_run_event')),
+                          args.tenant, args.window_minutes)
         backlog = result['backlog']
         alerts = []
         if args.alert_due_count is not None and backlog['due'] >= args.alert_due_count:

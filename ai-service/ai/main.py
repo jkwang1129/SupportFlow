@@ -138,6 +138,7 @@ def create_app() -> FastAPI:
     app.include_router(observability.router, prefix=settings.api_prefix)
     # 模型训练中心：训练任务 / 版本记录 / 灰度切换
     app.include_router(training.router, prefix=settings.api_prefix)
+
     @app.middleware("http")
     async def require_ready(request, call_next):
         probes = {settings.api_prefix + path for path in ("/ai/health", "/ai/health/live", "/ai/health/ready")}

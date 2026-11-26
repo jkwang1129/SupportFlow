@@ -92,6 +92,7 @@ def _json_document(path):
         raw = file.read(_MAX_DOCUMENT_BYTES + 1)
     if len(raw) > _MAX_DOCUMENT_BYTES:
         raise ValueError('Trace document exceeds its byte limit')
+
     def unique(pairs):
         result = dict(pairs)
         if len(result) != len(pairs):

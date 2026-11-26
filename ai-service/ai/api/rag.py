@@ -13,7 +13,7 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field,field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 
 from ..core.trace import require_trace_id
@@ -31,11 +31,11 @@ class AskRequest(BaseModel):
     tenant_code: str = Field(min_length=1, max_length=32)
     question: str = Field(min_length=1, max_length=500)
     top_k: int = Field(default=5, ge=1, le=20)
-    doc_ids: list[int] | None = Field(default=None,max_length=200)
+    doc_ids: list[int] | None = Field(default=None, max_length=200)
 
-    @field_validator('doc_ids',mode='before')
+    @field_validator('doc_ids', mode='before')
     @classmethod
-    def valid_document_scope(cls,value):return document_scope(value)
+    def valid_document_scope(cls, value): return document_scope(value)
 
 
 @router.post("/ask")
@@ -51,7 +51,7 @@ async def ask(body: AskRequest, trace_id: str = Depends(require_trace_id)) -> di
             doc_ids=body.doc_ids,
         )
     except Exception as exc:  # noqa: BLE001
-        logger.error("知识问答失败 trace=%s code=RAG_ANSWER_FAILED errorType=%s",trace_id,type(exc).__name__)
+        logger.error("知识问答失败 trace=%s code=RAG_ANSWER_FAILED errorType=%s", trace_id, type(exc).__name__)
         raise HTTPException(status_code=500, detail="知识问答失败，请稍后重试。") from None
     logger.info("知识问答完成 trace=%s 编排=%s 引用=%d cost=%dms",
                 trace_id, result.get("engine"), len(result.get("citations") or []),

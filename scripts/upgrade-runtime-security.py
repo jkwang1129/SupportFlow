@@ -1,4 +1,11 @@
 """Upgrade an existing local Compose database in place; never remove data volumes."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parent  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 import os
 import subprocess
 from local_env import ROOT, load
@@ -13,7 +20,8 @@ def main():
     keys = [f"SUPPORTFLOW_{role}_DB_PASSWORD" for role in roles]
     passwords = [environment.get(key, "") for key in keys]
     if any(len(p) < 24 for p in passwords) or len(set(passwords + [environment["PGPASSWORD"]])) != 9:
-        raise SystemExit("Configure eight distinct runtime passwords, separate from the administrator, of at least 24 characters")
+        raise SystemExit(
+            "Configure eight distinct runtime passwords, separate from the administrator, of at least 24 characters")
     commands = ["docker", "compose", "exec", "-T", "-e", "PGPASSWORD"]
     for key in keys:
         commands.extend(["-e", key])

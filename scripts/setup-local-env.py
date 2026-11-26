@@ -1,4 +1,11 @@
 """Create missing local runtime secrets; preserve existing values and AI provider keys."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parent  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 from pathlib import Path
 import secrets
 
@@ -10,7 +17,8 @@ def main():
     original = path.read_text(encoding="utf-8") if path.exists() else ""
     names = {line.partition("=")[0] for line in original.splitlines() if "=" in line}
     required = ["SUPPORTFLOW_DB_PASSWORD", "SUPPORTFLOW_JWT_SECRET", "SUPPORTFLOW_RUSTFS_SECRET_KEY"]
-    required += [f"SUPPORTFLOW_{role}_DB_PASSWORD" for role in ("USER", "TENANT", "CUSTOMER", "BILLING", "OPS", "AI", "KB", "CUSTOMER_PLATFORM")]
+    required += [f"SUPPORTFLOW_{role}_DB_PASSWORD" for role in (
+        "USER", "TENANT", "CUSTOMER", "BILLING", "OPS", "AI", "KB", "CUSTOMER_PLATFORM")]
     required += [f"SUPPORTFLOW_AI_{role}_SECRET" for role in ("GATEWAY", "CUSTOMER", "OPS", "TENANT")]
     required += [f"SUPPORTFLOW_CUSTOMER_{role}_SECRET" for role in ("REALTIME", "OPS", "TENANT")]
     required += ["SUPPORTFLOW_BILLING_CUSTOMER_SECRET"]

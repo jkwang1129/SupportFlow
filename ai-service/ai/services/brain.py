@@ -384,8 +384,8 @@ def _bounded_analysis_messages(instructions: str, question: str, history: list[d
 
 
 async def analyze_with_llm(question: str, history: list[dict[str, str]],
-                          intents: list[dict[str, Any]], tenant_code: str,
-                          known_slots: dict[str, str] | None = None) -> dict[str, Any] | None:
+                           intents: list[dict[str, Any]], tenant_code: str,
+                           known_slots: dict[str, str] | None = None) -> dict[str, Any] | None:
     """让模型判意图 + 情绪 + 槽位。没配密钥或调用失败返回 None，由规则结果兜底。"""
     chosen, desc = await asyncio.to_thread(resolve_provider, tenant_code)
     if chosen is None:

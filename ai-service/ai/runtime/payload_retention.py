@@ -31,7 +31,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tenant', required=True)
     parser.add_argument('--limit', type=int, default=100)
-    parser.add_argument('--apply', action='store_true', help='Delete one committed batch; the default is read-only preview')
+    parser.add_argument('--apply', action='store_true',
+                        help='Delete one committed batch; the default is read-only preview')
     args = parser.parse_args(argv)
     dsn = os.environ.get(MAINTENANCE_DSN)
     if not dsn:

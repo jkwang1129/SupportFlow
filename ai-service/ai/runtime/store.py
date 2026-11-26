@@ -12,7 +12,7 @@ from ..core.db import connect
 from .types import (RunInput, Limits, Lease, tenant_code, identifier, fingerprint, reference,
                     RuntimeConflict, LostLease, BudgetExceeded, ModelCapacityBusy, ModelTokenQuotaExceeded,
                     ModelCostRejected, QueueFull, ActionDenied)
-from .payloads import SCHEMAS,StepPayload,encode as encode_payload,decode as decode_payload
+from .payloads import SCHEMAS, StepPayload, encode as encode_payload, decode as decode_payload
 from .model_usage import MODEL_OPERATIONS, payload_usage, summarize as summarize_model_usage
 from .usage_pricing import parse_price_book
 
@@ -37,7 +37,8 @@ class RuntimeStore:
                     connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
                 elif read_committed:
                     connection.execute('SET TRANSACTION ISOLATION LEVEL READ COMMITTED')
-                connection.execute("SELECT set_config('app.tenant_code',%s,true),set_config('lock_timeout','2000',true),set_config('statement_timeout','5000',true)", (tenant,))
+                connection.execute(
+                    "SELECT set_config('app.tenant_code',%s,true),set_config('lock_timeout','2000',true),set_config('statement_timeout','5000',true)", (tenant,))
                 yield connection
 
     def enqueue(self, input: RunInput, limits=Limits()):
@@ -54,29 +55,30 @@ class RuntimeStore:
                     raise RuntimeConflict('Input event content changed')
                 return existing
             if connection.execute('SELECT 1 FROM agent_run WHERE tenant_code=%s AND session_no=%s AND event_seq>=%s LIMIT 1',
-                                  (input.tenant,input.session_no,input.event_seq)).fetchone():
+                                  (input.tenant, input.session_no, input.event_seq)).fetchone():
                 raise RuntimeConflict('Source events must be admitted in increasing session order')
-            pending = connection.execute("SELECT count(*) AS n FROM agent_run WHERE tenant_code=%s AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')", (input.tenant,)).fetchone()['n']
+            pending = connection.execute(
+                "SELECT count(*) AS n FROM agent_run WHERE tenant_code=%s AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED')", (input.tenant,)).fetchone()['n']
             if pending >= self.backlog_limit:
                 raise QueueFull('Tenant runtime backlog is full')
             row = connection.execute("""INSERT INTO agent_run
                 (tenant_code,run_id,source_event_id,session_no,event_seq,message_id,principal_ref,trace_id,runtime_version,input_hash,
                  max_steps,max_model_calls,max_tool_calls,max_retries,deadline_at)
                 VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,clock_timestamp()+%s*interval '1 second')
-                ON CONFLICT DO NOTHING RETURNING *""", (input.tenant,uuid4(),input.source_event_id,input.session_no,input.event_seq,
-                    input.message_id,input.principal_ref,input.trace_id,input.runtime_version,digest,limits.max_steps,
-                    limits.max_model_calls,limits.max_tool_calls,limits.max_retries,limits.wall_seconds)).fetchone()
+                ON CONFLICT DO NOTHING RETURNING *""", (input.tenant, uuid4(), input.source_event_id, input.session_no, input.event_seq,
+                                                        input.message_id, input.principal_ref, input.trace_id, input.runtime_version, digest, limits.max_steps,
+                                                        limits.max_model_calls, limits.max_tool_calls, limits.max_retries, limits.wall_seconds)).fetchone()
             if not row:
                 raise RuntimeConflict('Session event sequence already reserved by another event')
             return row
 
     def get(self, tenant, run_id):
         with self._scope(tenant) as connection:
-            return connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s', (tenant,UUID(str(run_id)))).fetchone()
+            return connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s', (tenant, UUID(str(run_id)))).fetchone()
 
     def steps(self, tenant, run_id):
         with self._scope(tenant) as connection:
-            return connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s ORDER BY step_no', (tenant,UUID(str(run_id)))).fetchall()
+            return connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s ORDER BY step_no', (tenant, UUID(str(run_id)))).fetchall()
 
     def lookup_trace(self, tenant, trace_id):
         """Find candidate runs for one exact trace ID under the supplied tenant."""
@@ -113,11 +115,12 @@ class RuntimeStore:
                               "result_ref->>'error_code' AS error_code") if timeline else sql.SQL('')
             steps = connection.execute(sql.SQL("""SELECT step_no,kind,effect,state,created_at,completed_at{}
                 FROM agent_step WHERE tenant_code=%s AND run_id=%s ORDER BY step_no LIMIT 101""").format(details),
-                (tenant, run['run_id'])).fetchall()
+                                       (tenant, run['run_id'])).fetchall()
             if len(steps) != run['step_count'] or len(steps) > 100:
                 raise RuntimeConflict('Runtime trace steps are inconsistent')
             delivery = {key: run.pop(key) for key in ('source_event_id', 'message_id', 'event_seq')}
-            snapshot = {'trace': {'schema_version': 'runtime-trace-v1', 'run': run, 'steps': steps}, 'delivery': delivery}
+            snapshot = {'trace': {'schema_version': 'runtime-trace-v1',
+                                  'run': run, 'steps': steps}, 'delivery': delivery}
             if timeline:
                 snapshot['approval'] = connection.execute("""SELECT status,requested_at,expires_at,
                         decided_at,closed_at,consumed_at,consumed_step_no FROM agent_approval
@@ -143,7 +146,7 @@ class RuntimeStore:
                     AND p.run_id=s.run_id AND p.step_no=s.step_no AND p.expires_at>statement_timestamp()
                 LEFT JOIN agent_model_usage u ON u.tenant_code=s.tenant_code AND u.run_id=s.run_id AND u.step_no=s.step_no
                 WHERE s.tenant_code=%s AND s.run_id=%s AND s.kind='MODEL' ORDER BY s.step_no LIMIT 101""",
-                (tenant, run_id)).fetchall()
+                                       (tenant, run_id)).fetchall()
         return summarize_model_usage(run, steps, price_book=price_book)
 
     @staticmethod
@@ -160,15 +163,15 @@ class RuntimeStore:
                       input_ref=str(audit['snapshot_id']), arguments_sha256=audit['arguments_sha256'])
         expected = intent.copy()
         if operation == 'session.reply':
-            expected.update(outcome='reply-committed', business_ref='message:'+str(audit['message_id']),
+            expected.update(outcome='reply-committed', business_ref='message:' + str(audit['message_id']),
                             resource_ref=audit['message_no'])
         else:
             if audit['operation'] != operation or audit['schema_version'] != version:
                 raise RuntimeConflict('Ticket reconciliation ledger is inconsistent')
-            expected.update(outcome='ticket-committed', business_ref='ticket:'+str(audit['ticket_id']),
+            expected.update(outcome='ticket-committed', business_ref='ticket:' + str(audit['ticket_id']),
                             resource_ref=audit['ticket_no'])
-        if (run['state'] != 'FAILED' or run['error_code'] != 'SIDE_EFFECT_CONFIRMED'
-                or run['owner'] is not None or run['lease_until'] is not None
+        if (run['state'] != 'FAILED' or run['error_code'] != 'SIDE_EFFECT_CONFIRMED' or
+                run['owner'] is not None or run['lease_until'] is not None
                 or run['fence'] != audit['observed_fence'] + 1 or run['source_event_id'] != audit['source_event_id']
                 or run['runtime_version'] != 'runtime-v1' or run['result_ref'] != expected
                 or not step or step['kind'] != 'TOOL' or step['effect'] != 'WRITE' or step['state'] != 'SUCCEEDED'
@@ -197,7 +200,8 @@ class RuntimeStore:
         from .result import receipt_reference
         if type(candidate) is not ReplyRecoveryCandidate:
             raise ValueError('Typed reply recovery observation required')
-        result = receipt_reference(receipt, candidate.source, candidate.run_id, candidate.snapshot_id, candidate.arguments_sha256)
+        result = receipt_reference(receipt, candidate.source, candidate.run_id,
+                                   candidate.snapshot_id, candidate.arguments_sha256)
         facts = dict(message_id=receipt.message_id, message_no=receipt.message_no, message_seq=receipt.sequence)
         return self._confirm_commit(candidate, result, facts, operator_ref, 'agent_reply_reconciliation')
 
@@ -206,7 +210,8 @@ class RuntimeStore:
         from .ticket_creation import receipt_reference
         if type(candidate) is not TicketRecoveryCandidate:
             raise ValueError('Typed ticket recovery observation required')
-        result = receipt_reference(receipt, candidate.source, candidate.run_id, candidate.snapshot_id, candidate.arguments_sha256)
+        result = receipt_reference(receipt, candidate.source, candidate.run_id,
+                                   candidate.snapshot_id, candidate.arguments_sha256)
         facts = dict(ticket_id=receipt.ticket_id, ticket_no=receipt.ticket_no,
                      operation='ticket.create', schema_version='ticket-create-v1')
         return self._confirm_commit(candidate, result, facts, operator_ref, 'agent_ticket_reconciliation')
@@ -220,7 +225,8 @@ class RuntimeStore:
                                      (tenant, candidate.run_id)).fetchone()
             if not run:
                 raise RuntimeConflict('Recovery run is unavailable')
-            previous = self._confirmed_reconciliation(connection, run, candidate.operation, candidate.version, audit_table)
+            previous = self._confirmed_reconciliation(
+                connection, run, candidate.operation, candidate.version, audit_table)
             if previous is not None:
                 source = RunInput(run['tenant_code'], run['source_event_id'], run['session_no'], run['event_seq'],
                                   run['message_id'], run['principal_ref'], run['trace_id'], run['runtime_version'])
@@ -260,35 +266,36 @@ class RuntimeStore:
             raise ValueError('Invalid queue discovery limit')
         with self.connector() as connection:
             connection.row_factory = dict_row
-            connection.execute("SELECT set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)")
+            connection.execute(
+                "SELECT set_config('statement_timeout','5000',true),set_config('lock_timeout','2000',true)")
             return [row['tenant_code'] for row in connection.execute('SELECT * FROM public.supportflow_agent_due_tenants(%s)', (limit,))]
 
     @staticmethod
     def _unknown(connection, row):
         connection.execute("""UPDATE agent_step SET state='UNKNOWN',completed_at=clock_timestamp(),result_ref='{"error_code":"WORKER_LOST"}'
-            WHERE tenant_code=%s AND run_id=%s AND state='RESERVED'""", (row['tenant_code'],row['run_id']))
+            WHERE tenant_code=%s AND run_id=%s AND state='RESERVED'""", (row['tenant_code'], row['run_id']))
 
     @staticmethod
     def _unknown_write(connection, row):
         return connection.execute("""SELECT 1 FROM agent_step WHERE tenant_code=%s AND run_id=%s
-            AND effect='WRITE' AND state IN ('RESERVED','UNKNOWN') LIMIT 1""", (row['tenant_code'],row['run_id'])).fetchone() is not None
+            AND effect='WRITE' AND state IN ('RESERVED','UNKNOWN') LIMIT 1""", (row['tenant_code'], row['run_id'])).fetchone() is not None
 
     @staticmethod
     def _terminal(connection, row, state, error=None, result=None):
         return connection.execute("""UPDATE agent_run SET state=%s,error_code=%s,result_ref=%s,
             owner=NULL,lease_until=NULL,fence=fence+1,updated_at=clock_timestamp(),finished_at=clock_timestamp()
             WHERE tenant_code=%s AND run_id=%s RETURNING *""",
-            (state,error,Jsonb(result or {}),row['tenant_code'],row['run_id'])).fetchone()
+                                  (state, error, Jsonb(result or {}), row['tenant_code'], row['run_id'])).fetchone()
 
     @staticmethod
     def _owned(connection, lease):
         row = connection.execute("""SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s
             AND state='RUNNING' AND owner=%s AND fence=%s FOR UPDATE""",
-            (lease.tenant,lease.run_id,lease.owner,lease.fence)).fetchone()
+                                 (lease.tenant, lease.run_id, lease.owner, lease.fence)).fetchone()
         # Time predicates are checked AFTER acquiring the row lock. A SELECT's
         # initial predicate can become stale while waiting for another transaction.
         if not row or not connection.execute('SELECT %s>clock_timestamp() AND %s>clock_timestamp() AS valid',
-                                              (row['lease_until'],row['deadline_at'])).fetchone()['valid']:
+                                             (row['lease_until'], row['deadline_at'])).fetchone()['valid']:
             raise LostLease('Execution lease is no longer valid')
         return row
 
@@ -315,94 +322,98 @@ class RuntimeStore:
                     AND earlier.run_id<>r.run_id AND (earlier.state='RUNNING' OR
                        (earlier.event_seq<r.event_seq AND (earlier.state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR earlier.error_code='SIDE_EFFECT_UNKNOWN'))))
                 ORDER BY r.created_at,r.event_seq,r.run_id LIMIT 32""").format(
-                    approval_filter=approval_filters[approval_mode]), (tenant,)).fetchall()
+                approval_filter=approval_filters[approval_mode]), (tenant,)).fetchall()
             for candidate in candidates:
                 row = connection.execute("""SELECT r.*,r.deadline_at<=clock_timestamp() AS timed_out FROM agent_run r
                     WHERE r.tenant_code=%s AND r.run_id=%s AND ((r.state IN ('PENDING','RETRY_WAIT') AND r.ready_at<=clock_timestamp())
                         OR (r.state='RUNNING' AND (r.lease_until<=clock_timestamp() OR r.deadline_at<=clock_timestamp())))
-                    FOR UPDATE SKIP LOCKED""", (tenant,candidate['run_id'])).fetchone()
+                    FOR UPDATE SKIP LOCKED""", (tenant, candidate['run_id'])).fetchone()
                 if not row:
                     continue
                 # Re-read the approval after locking the Run. A concurrent pause
                 # and decision may have returned it to PENDING after discovery.
                 if approval_mode != 'any':
                     approval = connection.execute('SELECT status FROM agent_approval WHERE tenant_code=%s AND run_id=%s',
-                                                  (tenant,row['run_id'])).fetchone()
+                                                  (tenant, row['run_id'])).fetchone()
                     if approval_mode == 'without_approval' and approval is not None:
                         continue
                     if approval_mode == 'approved_only' and (approval is None or approval['status'] not in ('APPROVED', 'CONSUMED')):
                         continue
-                session_lock = int.from_bytes(bytes.fromhex(fingerprint(['session',tenant,row['session_no']]))[:8], 'big', signed=True)
+                session_lock = int.from_bytes(bytes.fromhex(fingerprint(
+                    ['session', tenant, row['session_no']]))[:8], 'big', signed=True)
                 if not connection.execute('SELECT pg_try_advisory_xact_lock(%s) AS locked', (session_lock,)).fetchone()['locked']:
                     continue
                 if row['state'] == 'RUNNING' or row['timed_out']:
-                    self._unknown(connection,row)
-                    if self._unknown_write(connection,row):
-                        self._terminal(connection,row,'FAILED','SIDE_EFFECT_UNKNOWN')
+                    self._unknown(connection, row)
+                    if self._unknown_write(connection, row):
+                        self._terminal(connection, row, 'FAILED', 'SIDE_EFFECT_UNKNOWN')
                         continue
                     if row['timed_out']:
-                        self._terminal(connection,row,'FAILED','DEADLINE_EXCEEDED')
+                        self._terminal(connection, row, 'FAILED', 'DEADLINE_EXCEEDED')
                         continue
                     if row['retry_count'] >= row['max_retries']:
-                        self._terminal(connection,row,'FAILED','RETRY_EXHAUSTED')
+                        self._terminal(connection, row, 'FAILED', 'RETRY_EXHAUSTED')
                         continue
                 blocked = connection.execute("""SELECT 1 FROM agent_run WHERE tenant_code=%s AND session_no=%s AND run_id<>%s
                     AND (state='RUNNING' OR (event_seq<%s AND (state NOT IN ('SUCCEEDED','FAILED','CANCELLED') OR error_code='SIDE_EFFECT_UNKNOWN'))) LIMIT 1""",
-                    (tenant,row['session_no'],row['run_id'],row['event_seq'])).fetchone()
+                                             (tenant, row['session_no'], row['run_id'], row['event_seq'])).fetchone()
                 if blocked:
                     continue
                 return connection.execute("""UPDATE agent_run SET state='RUNNING',owner=%s,fence=fence+1,
                     lease_until=least(deadline_at,clock_timestamp()+%s*interval '1 second'),attempt=attempt+1,
                     retry_count=retry_count+%s,updated_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s RETURNING *""",
-                    (owner,lease_seconds,1 if row['state']=='RUNNING' else 0,tenant,row['run_id'])).fetchone()
+                                          (owner, lease_seconds, 1 if row['state'] == 'RUNNING' else 0, tenant, row['run_id'])).fetchone()
             return None
 
     def heartbeat(self, lease: Lease, *, lease_seconds=30):
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 60:
             raise ValueError('Invalid lease duration')
         with self._scope(lease.tenant) as connection:
-            self._owned(connection,lease)
+            self._owned(connection, lease)
             return connection.execute("""UPDATE agent_run SET lease_until=least(deadline_at,clock_timestamp()+%s*interval '1 second'),
                 updated_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s RETURNING *""",
-                (lease_seconds,lease.tenant,lease.run_id)).fetchone()
+                                      (lease_seconds, lease.tenant, lease.run_id)).fetchone()
 
     def authorize_reply(self, tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash):
-        return self._authorize_action(tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,'session.reply','reply-v1')
+        return self._authorize_action(tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash, 'session.reply', 'reply-v1')
 
     def authorize_ticket_create(self, tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash,
                                 *, require_approval=False):
-        return self._authorize_action(tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,
-                                      'ticket.create','ticket-create-v1',require_approval=require_approval)
+        return self._authorize_action(tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash,
+                                      'ticket.create', 'ticket-create-v1', require_approval=require_approval)
 
-    def _authorize_action(self,tenant,run_id,source_event_id,owner,fence,snapshot_id,arguments_hash,operation,version,
+    def _authorize_action(self, tenant, run_id, source_event_id, owner, fence, snapshot_id, arguments_hash, operation, version,
                           *, require_approval=False):
-        if (operation,version) not in (('session.reply','reply-v1'),('ticket.create','ticket-create-v1')):
+        if (operation, version) not in (('session.reply', 'reply-v1'), ('ticket.create', 'ticket-create-v1')):
             raise ValueError('Unsupported action authority operation')
         identifier(owner)
-        if type(fence) is not int or fence<1 or not isinstance(arguments_hash,str) or len(arguments_hash)!=64 or any(c not in '0123456789abcdef' for c in arguments_hash):
+        if type(fence) is not int or fence < 1 or not isinstance(arguments_hash, str) or len(arguments_hash) != 64 or any(c not in '0123456789abcdef' for c in arguments_hash):
             raise ValueError('Invalid action authority references')
-        run_id, source_event_id, snapshot_id = (UUID(str(value)) for value in (run_id,source_event_id,snapshot_id))
+        run_id, source_event_id, snapshot_id = (UUID(str(value))
+                                                for value in (run_id, source_event_id, snapshot_id))
         with self._scope(tenant) as connection:
-            row=connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR SHARE',(tenant,run_id)).fetchone()
-            if row is None: return None
-            if (row['state']!='RUNNING' or row['cancel_requested'] or row['owner']!=owner or row['fence']!=fence
-                    or row['source_event_id']!=source_event_id or row['runtime_version']!='runtime-v1'):
+            row = connection.execute(
+                'SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR SHARE', (tenant, run_id)).fetchone()
+            if row is None:
+                return None
+            if (row['state'] != 'RUNNING' or row['cancel_requested'] or row['owner'] != owner or row['fence'] != fence
+                    or row['source_event_id'] != source_event_id or row['runtime_version'] != 'runtime-v1'):
                 raise ActionDenied('Action is not authorized')
-            expected=dict(operation=operation,resource_ref=row['principal_ref'],input_ref=str(snapshot_id),
-                          arguments_sha256=arguments_hash,version=version)
+            expected = dict(operation=operation, resource_ref=row['principal_ref'], input_ref=str(snapshot_id),
+                            arguments_sha256=arguments_hash, version=version)
             approval = None
             if operation == 'ticket.create':
                 approval = connection.execute("""SELECT * FROM agent_approval
                     WHERE tenant_code=%s AND run_id=%s FOR SHARE""", (tenant, run_id)).fetchone()
             if require_approval and approval is None:
                 raise ActionDenied('Action approval is not authorized')
-            steps=connection.execute("""SELECT step_key,step_no FROM agent_step WHERE tenant_code=%s AND run_id=%s
+            steps = connection.execute("""SELECT step_key,step_no FROM agent_step WHERE tenant_code=%s AND run_id=%s
                  AND fence=%s AND state='RESERVED' AND kind='TOOL' AND effect='WRITE' AND intent_ref=%s
-                 ORDER BY step_no LIMIT 2 FOR SHARE""",(tenant,run_id,fence,Jsonb(expected))).fetchall()
+                 ORDER BY step_no LIMIT 2 FOR SHARE""", (tenant, run_id, fence, Jsonb(expected))).fetchall()
             # Database time is checked after ALL row locks, so waiting cannot
             # resurrect execution authority. This operation never charges/reset budgets.
-            now=connection.execute('SELECT clock_timestamp() AS now').fetchone()['now']
-            if len(steps)!=1 or row['lease_until']<=now or row['deadline_at']<=now:
+            now = connection.execute('SELECT clock_timestamp() AS now').fetchone()['now']
+            if len(steps) != 1 or row['lease_until'] <= now or row['deadline_at'] <= now:
                 raise ActionDenied('Action is not authorized')
             expires = min(row['lease_until'], row['deadline_at'], now + timedelta(seconds=5))
             if approval is not None:
@@ -413,15 +424,17 @@ class RuntimeStore:
                     raise ActionDenied('Action approval is not authorized')
                 expires = min(expires, approval['expires_at'])
             expires -= timedelta(milliseconds=100)
-            if expires<=now: raise ActionDenied('Action authority is too close to expiry')
-            step=steps[0]
-            return dict(version='action-v2' if require_approval else 'action-v1',tenant_code=tenant,run_id=str(run_id),source_event_id=str(source_event_id),
-                        owner=owner,fence=fence,step_key=step['step_key'],step_no=step['step_no'],operation=operation,
-                        snapshot_id=str(snapshot_id),arguments_sha256=arguments_hash,expires_at_ms=int(expires.timestamp()*1000))
+            if expires <= now:
+                raise ActionDenied('Action authority is too close to expiry')
+            step = steps[0]
+            return dict(version='action-v2' if require_approval else 'action-v1', tenant_code=tenant, run_id=str(run_id), source_event_id=str(source_event_id),
+                        owner=owner, fence=fence, step_key=step['step_key'], step_no=step['step_no'], operation=operation,
+                        snapshot_id=str(snapshot_id), arguments_sha256=arguments_hash, expires_at_ms=int(expires.timestamp() * 1000))
 
     @staticmethod
     def _lock_model_budget(connection, tenant):
-        connection.execute("SELECT pg_advisory_xact_lock(hashtextextended('supportflow:model-capacity:' || %s,0))", (tenant,))
+        connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended('supportflow:model-capacity:' || %s,0))", (tenant,))
 
     @staticmethod
     def _check_model_capacity(connection, tenant, intent):
@@ -441,10 +454,12 @@ class RuntimeStore:
         allowance = quota['tokens_per_attempt']
         if allowance is None:
             return None
-        budget_day = connection.execute("SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date AS day").fetchone()['day']
+        budget_day = connection.execute(
+            "SELECT (clock_timestamp() AT TIME ZONE 'UTC')::date AS day").fetchone()['day']
         daily_limit, monthly_limit = quota['daily_token_limit'], quota['monthly_token_limit']
         if daily_limit is not None or monthly_limit is not None:
-            RuntimeStore._check_token_allowance(connection, tenant, budget_day, allowance, daily_limit, monthly_limit)
+            RuntimeStore._check_token_allowance(connection, tenant, budget_day,
+                                                allowance, daily_limit, monthly_limit)
         price = None
         if quota['price_book'] is not None:
             price = RuntimeStore._check_cost_allowance(connection, tenant, budget_day, intent, quota)
@@ -456,7 +471,7 @@ class RuntimeStore:
         totals = connection.execute('''SELECT coalesce(max(charged_tokens) FILTER (WHERE budget_day=%s),0) AS today,
             coalesce(sum(charged_tokens),0) AS month_to_date
             FROM agent_model_token_day WHERE tenant_code=%s AND budget_day BETWEEN %s AND %s''',
-            (budget_day, tenant, first_day, budget_day)).fetchone()
+                                    (budget_day, tenant, first_day, budget_day)).fetchone()
         if daily_limit is not None and int(totals['today']) + allowance > daily_limit:
             raise ModelTokenQuotaExceeded('Tenant daily model Token allowance is exhausted')
         if monthly_limit is not None and int(totals['month_to_date']) + allowance > monthly_limit:
@@ -478,7 +493,7 @@ class RuntimeStore:
             coalesce(sum(charged_picos),0) AS month_to_date,
             coalesce(bool_or(currency<>%s),false) AS currency_conflict
             FROM agent_model_cost_day WHERE tenant_code=%s AND budget_day BETWEEN %s AND %s''',
-            (budget_day, price.currency, tenant, budget_day.replace(day=1), budget_day)).fetchone()
+                                    (budget_day, price.currency, tenant, budget_day.replace(day=1), budget_day)).fetchone()
         if totals['currency_conflict']:
             raise ModelCostRejected('MODEL_COST_CURRENCY_CONFLICT')
         reserved = price.reserve_picos(quota['tokens_per_attempt'])
@@ -491,36 +506,38 @@ class RuntimeStore:
     def reserve_step(self, lease: Lease, step_key, kind, effect, intent_ref):
         identifier(step_key)
         intent_ref = reference(intent_ref)
-        if kind not in ('MODEL','TOOL','INTERNAL') or effect not in (('READ','WRITE') if kind=='TOOL' else ('NONE',)):
+        if kind not in ('MODEL', 'TOOL', 'INTERNAL') or effect not in (('READ', 'WRITE') if kind == 'TOOL' else ('NONE',)):
             raise ValueError('Invalid step kind/effect')
-        digest = fingerprint({'kind':kind,'effect':effect,'intent':intent_ref})
+        digest = fingerprint({'kind': kind, 'effect': effect, 'intent': intent_ref})
         exhausted = False
         with self._scope(lease.tenant, read_committed=(kind == 'MODEL')) as connection:
-            run = self._owned(connection,lease)
+            run = self._owned(connection, lease)
             existing = connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s AND step_key=%s',
-                                          (lease.tenant,lease.run_id,step_key)).fetchone()
+                                          (lease.tenant, lease.run_id, step_key)).fetchone()
             if existing:
                 if existing['intent_hash'] != digest:
                     raise RuntimeConflict('Step intent changed')
-                return existing,False
+                return existing, False
             approval = None
             if kind == 'TOOL' and effect == 'WRITE' and intent_ref.get('operation') == 'ticket.create':
                 approval = connection.execute("""SELECT * FROM agent_approval
                     WHERE tenant_code=%s AND run_id=%s FOR UPDATE""", (lease.tenant, lease.run_id)).fetchone()
                 if approval is not None:
                     expected_approval = dict(operation=approval['operation'], version=approval['schema_version'],
-                        resource_ref=approval['principal_ref'], input_ref=str(approval['snapshot_id']),
-                        arguments_sha256=approval['arguments_sha256'])
+                                             resource_ref=approval['principal_ref'], input_ref=str(
+                                                 approval['snapshot_id']),
+                                             arguments_sha256=approval['arguments_sha256'])
                     now = connection.execute('SELECT clock_timestamp() AS now').fetchone()['now']
                     if (approval['status'] != 'APPROVED' or intent_ref != expected_approval
                             or approval['principal_ref'] != run['principal_ref']
                             or now >= min(approval['expires_at'], run['lease_until'], run['deadline_at'])):
                         raise ActionDenied('Approval is unavailable for this write')
             if (run['step_count'] >= run['max_steps'] or
-                (kind=='MODEL' and run['model_calls'] >= run['max_model_calls']) or
-                (kind=='TOOL' and run['tool_calls'] >= run['max_tool_calls'])):
-                self._unknown(connection,run)
-                self._terminal(connection,run,'FAILED','SIDE_EFFECT_UNKNOWN' if self._unknown_write(connection,run) else 'BUDGET_EXHAUSTED')
+                (kind == 'MODEL' and run['model_calls'] >= run['max_model_calls']) or
+                    (kind == 'TOOL' and run['tool_calls'] >= run['max_tool_calls'])):
+                self._unknown(connection, run)
+                self._terminal(connection, run, 'FAILED', 'SIDE_EFFECT_UNKNOWN' if self._unknown_write(
+                    connection, run) else 'BUDGET_EXHAUSTED')
                 exhausted = True
             else:
                 token_reservation = None
@@ -530,91 +547,98 @@ class RuntimeStore:
                 updated = connection.execute("""UPDATE agent_run SET step_count=step_count+1,
                     model_calls=model_calls+%s,tool_calls=tool_calls+%s,updated_at=clock_timestamp()
                     WHERE tenant_code=%s AND run_id=%s RETURNING step_count""",
-                    (1 if kind=='MODEL' else 0,1 if kind=='TOOL' else 0,lease.tenant,lease.run_id)).fetchone()
+                                             (1 if kind == 'MODEL' else 0, 1 if kind == 'TOOL' else 0, lease.tenant, lease.run_id)).fetchone()
                 step = connection.execute("""INSERT INTO agent_step(tenant_code,run_id,step_no,step_key,kind,effect,intent_hash,intent_ref,fence)
                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING *""",
-                    (lease.tenant,lease.run_id,updated['step_count'],step_key,kind,effect,digest,Jsonb(intent_ref),lease.fence)).fetchone()
+                                          (lease.tenant, lease.run_id, updated['step_count'], step_key, kind, effect, digest, Jsonb(intent_ref), lease.fence)).fetchone()
                 if token_reservation is not None:
                     budget_day, allowance, price = token_reservation
                     cost_values = (*price, price.reserve_picos(allowance)) if price is not None else (None,) * 6
                     connection.execute('''INSERT INTO agent_model_token_reservation
                         (tenant_code,run_id,step_no,budget_day,reserved_tokens,price_book_version,price_book_sha256,
                          currency,input_rate,output_rate,reserved_cost_picos) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)''',
-                        (lease.tenant, lease.run_id, step['step_no'], budget_day, allowance, *cost_values))
+                                       (lease.tenant, lease.run_id, step['step_no'], budget_day, allowance, *cost_values))
                 if approval is not None:
                     outcome = connection.execute("""UPDATE agent_approval SET status='CONSUMED',consumed_step_no=%s,
                         consumed_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s AND expires_at>clock_timestamp()""",
-                        (step['step_no'], lease.tenant, lease.run_id))
+                                                 (step['step_no'], lease.tenant, lease.run_id))
                     if outcome.rowcount != 1:
                         raise ActionDenied('Approval expired before step reservation')
         # Raise after the terminal transition commits, not inside a rolled-back transaction.
         if exhausted:
             raise BudgetExceeded('Runtime call/step budget exhausted')
-        return step,True
+        return step, True
 
-    def complete_payload_step(self,lease: Lease,step_key,schema,value):
+    def complete_payload_step(self, lease: Lease, step_key, schema, value):
         identifier(step_key)
-        raw,digest=encode_payload(schema,value)
+        raw, digest = encode_payload(schema, value)
         with self._scope(lease.tenant, read_committed=(schema == 'model-output-v1')) as connection:
-            self._owned(connection,lease)
-            step=connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s AND step_key=%s FOR UPDATE',
-                                   (lease.tenant,lease.run_id,step_key)).fetchone()
-            if not step or step['fence']!=lease.fence: raise LostLease('Payload step belongs to another attempt')
-            if (step['kind'],step['effect'])!=SCHEMAS[schema]: raise RuntimeConflict('Payload schema does not match step kind')
-            previous=connection.execute('SELECT * FROM agent_payload WHERE tenant_code=%s AND run_id=%s AND step_no=%s',
-                                         (lease.tenant,lease.run_id,step['step_no'])).fetchone()
-            self._owned(connection,lease)  # Recheck DB time after all row locks.
+            self._owned(connection, lease)
+            step = connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s AND step_key=%s FOR UPDATE',
+                                      (lease.tenant, lease.run_id, step_key)).fetchone()
+            if not step or step['fence'] != lease.fence:
+                raise LostLease('Payload step belongs to another attempt')
+            if (step['kind'], step['effect']) != SCHEMAS[schema]:
+                raise RuntimeConflict('Payload schema does not match step kind')
+            previous = connection.execute('SELECT * FROM agent_payload WHERE tenant_code=%s AND run_id=%s AND step_no=%s',
+                                          (lease.tenant, lease.run_id, step['step_no'])).fetchone()
+            self._owned(connection, lease)  # Recheck DB time after all row locks.
             if previous:
-                result={'resource_ref':'payload:'+str(previous['payload_id'])}
-                if (previous['payload_schema']!=schema or previous['payload_hash']!=digest or previous['payload_json']!=raw
-                        or step['state']!='SUCCEEDED' or step['result_ref']!=result):
+                result = {'resource_ref': 'payload:' + str(previous['payload_id'])}
+                if (previous['payload_schema'] != schema or previous['payload_hash'] != digest or previous['payload_json'] != raw
+                        or step['state'] != 'SUCCEEDED' or step['result_ref'] != result):
                     raise RuntimeConflict('Persisted step payload changed')
                 return result
-            if step['state']!='RESERVED': raise RuntimeConflict('Payload step is not reserved')
+            if step['state'] != 'RESERVED':
+                raise RuntimeConflict('Payload step is not reserved')
             input_tokens = output_tokens = None
             if schema == 'model-output-v1' and step['intent_ref'].get('operation') in MODEL_OPERATIONS:
                 input_tokens, output_tokens = payload_usage(step['intent_ref'], json.loads(raw))
                 if input_tokens is not None and connection.execute('''SELECT 1 FROM agent_model_token_reservation
                     WHERE tenant_code=%s AND run_id=%s AND step_no=%s''',
-                    (lease.tenant,lease.run_id,step['step_no'])).fetchone():
+                                                                   (lease.tenant, lease.run_id, step['step_no'])).fetchone():
                     # Publishing a receipt can decrease or increase this day's charge.
                     self._lock_model_budget(connection, lease.tenant)
                     self._owned(connection, lease)
-            payload_id=uuid4();result={'resource_ref':'payload:'+str(payload_id)}
+            payload_id = uuid4()
+            result = {'resource_ref': 'payload:' + str(payload_id)}
             connection.execute('''INSERT INTO agent_payload(tenant_code,payload_id,run_id,step_no,fence,payload_schema,payload_json,payload_hash)
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s)''',(lease.tenant,payload_id,lease.run_id,step['step_no'],lease.fence,schema,raw,digest))
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s)''', (lease.tenant, payload_id, lease.run_id, step['step_no'], lease.fence, schema, raw, digest))
             if input_tokens is not None:
                 connection.execute("""INSERT INTO agent_model_usage
                     (tenant_code,run_id,step_no,fence,intent_hash,payload_id,payload_hash,input_tokens,chat_output_tokens)
                     VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (lease.tenant, lease.run_id, step['step_no'],
-                    lease.fence, step['intent_hash'], payload_id, digest, input_tokens, output_tokens))
+                                                            lease.fence, step['intent_hash'], payload_id, digest, input_tokens, output_tokens))
             connection.execute("""UPDATE agent_step SET state='SUCCEEDED',result_ref=%s,completed_at=clock_timestamp()
-                WHERE tenant_code=%s AND run_id=%s AND step_no=%s""",(Jsonb(result),lease.tenant,lease.run_id,step['step_no']))
-            self._owned(connection,lease)
+                WHERE tenant_code=%s AND run_id=%s AND step_no=%s""", (Jsonb(result), lease.tenant, lease.run_id, step['step_no']))
+            self._owned(connection, lease)
             return result
 
-    def payload(self,tenant,run_id,payload_id):
+    def payload(self, tenant, run_id, payload_id):
         with self._scope(tenant) as connection:
-            return self._payload(connection,tenant,run_id,payload_id)
+            return self._payload(connection, tenant, run_id, payload_id)
 
     @staticmethod
-    def _payload(connection,tenant,run_id,payload_id):
-        row=connection.execute('''SELECT * FROM agent_payload WHERE tenant_code=%s AND run_id=%s AND payload_id=%s
-            AND expires_at>clock_timestamp()''',(tenant,UUID(str(run_id)),UUID(str(payload_id)))).fetchone()
-        if row is None:return None
-        try:value=decode_payload(row['payload_schema'],row['payload_json'],row['payload_hash'])
-        except (ValueError,TypeError,UnicodeError,RecursionError):raise RuntimeConflict('Persisted payload is invalid') from None
-        return StepPayload(row['payload_id'],row['run_id'],row['step_no'],row['payload_schema'],row['payload_hash'],value,row['created_at'],row['expires_at'])
+    def _payload(connection, tenant, run_id, payload_id):
+        row = connection.execute('''SELECT * FROM agent_payload WHERE tenant_code=%s AND run_id=%s AND payload_id=%s
+            AND expires_at>clock_timestamp()''', (tenant, UUID(str(run_id)), UUID(str(payload_id)))).fetchone()
+        if row is None:
+            return None
+        try:
+            value = decode_payload(row['payload_schema'], row['payload_json'], row['payload_hash'])
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            raise RuntimeConflict('Persisted payload is invalid') from None
+        return StepPayload(row['payload_id'], row['run_id'], row['step_no'], row['payload_schema'], row['payload_hash'], value, row['created_at'], row['expires_at'])
 
     def complete_step(self, lease: Lease, step_key, state, result_ref):
         identifier(step_key)
         result_ref = reference(result_ref)
-        if state not in ('SUCCEEDED','FAILED','UNKNOWN'):
+        if state not in ('SUCCEEDED', 'FAILED', 'UNKNOWN'):
             raise ValueError('Invalid step result')
         with self._scope(lease.tenant) as connection:
-            self._owned(connection,lease)
+            self._owned(connection, lease)
             step = connection.execute('SELECT * FROM agent_step WHERE tenant_code=%s AND run_id=%s AND step_key=%s',
-                                      (lease.tenant,lease.run_id,step_key)).fetchone()
+                                      (lease.tenant, lease.run_id, step_key)).fetchone()
             if not step or step['fence'] != lease.fence:
                 raise LostLease('Step belongs to a different execution attempt')
             if step['state'] != 'RESERVED':
@@ -623,18 +647,18 @@ class RuntimeStore:
                 raise RuntimeConflict('Step result changed')
             return connection.execute("""UPDATE agent_step SET state=%s,result_ref=%s,completed_at=clock_timestamp()
                 WHERE tenant_code=%s AND run_id=%s AND step_key=%s RETURNING *""",
-                (state,Jsonb(result_ref),lease.tenant,lease.run_id,step_key)).fetchone()
+                                      (state, Jsonb(result_ref), lease.tenant, lease.run_id, step_key)).fetchone()
 
     def finish(self, lease: Lease, result_ref):
         result_ref = reference(result_ref)
         with self._scope(lease.tenant) as connection:
-            row = self._owned(connection,lease)
-            if self._unknown_write(connection,row):
-                self._unknown(connection,row)
-                return self._terminal(connection,row,'FAILED','SIDE_EFFECT_UNKNOWN')
-            if connection.execute("SELECT 1 FROM agent_step WHERE tenant_code=%s AND run_id=%s AND state='RESERVED' LIMIT 1", (lease.tenant,lease.run_id)).fetchone():
+            row = self._owned(connection, lease)
+            if self._unknown_write(connection, row):
+                self._unknown(connection, row)
+                return self._terminal(connection, row, 'FAILED', 'SIDE_EFFECT_UNKNOWN')
+            if connection.execute("SELECT 1 FROM agent_step WHERE tenant_code=%s AND run_id=%s AND state='RESERVED' LIMIT 1", (lease.tenant, lease.run_id)).fetchone():
                 raise RuntimeConflict('An execution step is still in progress')
-            return self._terminal(connection,row,'SUCCEEDED',result=result_ref)
+            return self._terminal(connection, row, 'SUCCEEDED', result=result_ref)
 
     def retry(self, lease: Lease, error_code, *, delay_seconds=1):
         identifier(error_code)
@@ -648,27 +672,28 @@ class RuntimeStore:
 
     def _reschedule(self, lease, error_code, delay_seconds, *, consumes_retry):
         with self._scope(lease.tenant) as connection:
-            row = self._owned(connection,lease)
-            self._unknown(connection,row)
-            if self._unknown_write(connection,row):
-                return self._terminal(connection,row,'FAILED','SIDE_EFFECT_UNKNOWN')
+            row = self._owned(connection, lease)
+            self._unknown(connection, row)
+            if self._unknown_write(connection, row):
+                return self._terminal(connection, row, 'FAILED', 'SIDE_EFFECT_UNKNOWN')
             if consumes_retry and row['retry_count'] >= row['max_retries']:
-                return self._terminal(connection,row,'FAILED','RETRY_EXHAUSTED')
+                return self._terminal(connection, row, 'FAILED', 'RETRY_EXHAUSTED')
             return connection.execute("""UPDATE agent_run SET state='RETRY_WAIT',retry_count=retry_count+%s,error_code=%s,
                 owner=NULL,lease_until=NULL,fence=fence+1,ready_at=least(deadline_at,clock_timestamp()+%s*interval '1 second'),
                 updated_at=clock_timestamp() WHERE tenant_code=%s AND run_id=%s RETURNING *""",
-                (int(consumes_retry),error_code,delay_seconds,lease.tenant,lease.run_id)).fetchone()
+                                      (int(consumes_retry), error_code, delay_seconds, lease.tenant, lease.run_id)).fetchone()
 
     def fail(self, lease: Lease, error_code):
         identifier(error_code)
         with self._scope(lease.tenant) as connection:
-            row = self._owned(connection,lease)
-            self._unknown(connection,row)
-            return self._terminal(connection,row,'FAILED','SIDE_EFFECT_UNKNOWN' if self._unknown_write(connection,row) else error_code)
+            row = self._owned(connection, lease)
+            self._unknown(connection, row)
+            return self._terminal(connection, row, 'FAILED', 'SIDE_EFFECT_UNKNOWN' if self._unknown_write(connection, row) else error_code)
 
     def cancel(self, tenant, run_id):
         with self._scope(tenant) as connection:
-            row = connection.execute('SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR UPDATE', (tenant,UUID(str(run_id)))).fetchone()
+            row = connection.execute(
+                'SELECT * FROM agent_run WHERE tenant_code=%s AND run_id=%s FOR UPDATE', (tenant, UUID(str(run_id)))).fetchone()
             if not row or row['state'] in TERMINAL:
                 return row
             return self._cancel_locked(connection, row, 'system:run-cancel')
@@ -678,7 +703,8 @@ class RuntimeStore:
         if row['result_ref'].get('outcome') == 'waiting-approval':
             connection.execute("""UPDATE agent_approval SET status='CANCELLED',closed_by=%s,closed_at=clock_timestamp()
                 WHERE tenant_code=%s AND run_id=%s AND status IN ('PENDING','APPROVED')""", (actor, tenant, run_id))
-        connection.execute('UPDATE agent_run SET cancel_requested=true WHERE tenant_code=%s AND run_id=%s', (tenant, run_id))
+        connection.execute(
+            'UPDATE agent_run SET cancel_requested=true WHERE tenant_code=%s AND run_id=%s', (tenant, run_id))
         self._unknown(connection, row)
         unknown = self._unknown_write(connection, row)
         return self._terminal(connection, row, 'FAILED' if unknown else 'CANCELLED',

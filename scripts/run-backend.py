@@ -1,4 +1,11 @@
 """Run the seven packaged Java services from a single terminal."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parent  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 
 import os
 from pathlib import Path
@@ -45,12 +52,14 @@ def main() -> None:
         for module, jar in jars.items():
             log_path = logs / f"{module}.log"
             with log_path.open("wb") as log:
-                children[module] = subprocess.Popen([java, "-jar", str(jar)], cwd=ROOT, env=runtime_environment(module), stdout=log, stderr=subprocess.STDOUT)
+                children[module] = subprocess.Popen(
+                    [java, "-jar", str(jar)], cwd=ROOT, env=runtime_environment(module), stdout=log, stderr=subprocess.STDOUT)
             print(f"Started {module}. Log: {log_path}", flush=True)
         while True:
             for module, child in children.items():
                 if child.poll() is not None:
-                    raise SystemExit(f"{module} exited with code {child.returncode}. Check {logs / (module + '.log')}.")
+                    raise SystemExit(
+                        f"{module} exited with code {child.returncode}. Check {logs / (module + '.log')}.")
             time.sleep(1)
     except KeyboardInterrupt:
         pass

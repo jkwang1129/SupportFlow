@@ -13,7 +13,7 @@ def tenant_code(value):
 
 
 def identifier(value, limit=64):
-    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,' + str(limit-1) + '}', value):
+    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,' + str(limit - 1) + '}', value):
         raise ValueError('Invalid runtime reference')
     return value
 
@@ -23,8 +23,9 @@ def fingerprint(value):
 
 
 def reference(value):
-    allowed = {'operation','resource_ref','input_ref','version','model','arguments_sha256','business_ref','outcome','error_code'}
-    if not isinstance(value, dict) or set(value)-allowed:
+    allowed = {'operation', 'resource_ref', 'input_ref', 'version', 'model',
+               'arguments_sha256', 'business_ref', 'outcome', 'error_code'}
+    if not isinstance(value, dict) or set(value) - allowed:
         raise ValueError('Only runtime reference fields are permitted')
     for item in value.values():
         identifier(item, 128)
@@ -40,7 +41,7 @@ class Limits:
     wall_seconds: int = 120
 
     def __post_init__(self):
-        for field, upper, lower in [('max_steps',100,1),('max_model_calls',100,0),('max_tool_calls',100,0),('max_retries',10,0),('wall_seconds',3600,1)]:
+        for field, upper, lower in [('max_steps', 100, 1), ('max_model_calls', 100, 0), ('max_tool_calls', 100, 0), ('max_retries', 10, 0), ('wall_seconds', 3600, 1)]:
             value = getattr(self, field)
             if type(value) is not int or not lower <= value <= upper:
                 raise ValueError('Invalid runtime limit')
@@ -60,7 +61,7 @@ class RunInput:
     def __post_init__(self):
         tenant_code(self.tenant)
         object.__setattr__(self, 'source_event_id', UUID(str(self.source_event_id)))
-        for name, maximum in [('session_no',64),('principal_ref',96),('trace_id',64),('runtime_version',32)]:
+        for name, maximum in [('session_no', 64), ('principal_ref', 96), ('trace_id', 64), ('runtime_version', 32)]:
             identifier(getattr(self, name), maximum)
         for value in (self.event_seq, self.message_id):
             if type(value) is not int or not 1 <= value <= 9223372036854775807:
@@ -69,7 +70,7 @@ class RunInput:
     def hash(self, limits):
         data = asdict(self)
         data['source_event_id'] = str(self.source_event_id)
-        return fingerprint({'input':data,'limits':asdict(limits)})
+        return fingerprint({'input': data, 'limits': asdict(limits)})
 
     @classmethod
     def from_run(cls, run):
@@ -89,16 +90,35 @@ class Lease:
         return cls(run['tenant_code'], run['run_id'], run['owner'], run['fence'])
 
 
-class RuntimeConflict(RuntimeError): pass
-class ActionDenied(RuntimeConflict): pass
-class LostLease(RuntimeError): pass
-class BudgetExceeded(RuntimeError): pass
-class ModelCapacityBusy(RuntimeError): pass
-class ModelTokenQuotaExceeded(RuntimeError): pass
+class RuntimeConflict(RuntimeError):
+    pass
+
+
+class ActionDenied(RuntimeConflict):
+    pass
+
+
+class LostLease(RuntimeError):
+    pass
+
+
+class BudgetExceeded(RuntimeError):
+    pass
+
+
+class ModelCapacityBusy(RuntimeError):
+    pass
+
+
+class ModelTokenQuotaExceeded(RuntimeError):
+    pass
 
 
 class ModelCostRejected(RuntimeError):
     def __init__(self, code):
         self.code = identifier(code)
         super().__init__(self.code)
-class QueueFull(RuntimeError): pass
+
+
+class QueueFull(RuntimeError):
+    pass

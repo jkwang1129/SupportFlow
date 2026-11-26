@@ -1,4 +1,11 @@
 """Fault injection for the report gate, not fabricated application evaluation results."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parents[1]  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 import json
 from pathlib import Path
 import subprocess
@@ -26,7 +33,7 @@ class RagContractReportTest(unittest.TestCase):
             for marker in ("two_digit", "three_digit", "unicode_digits", "oversized"):
                 for engine in ("linear", "langgraph"):
                     ET.SubElement(suite, "testcase", {"classname": "tests.test_rag_failure_modes",
-                        "name": f"test_invalid_citation_withholds_generated_answer[{marker}-{engine}]"})
+                                                      "name": f"test_invalid_citation_withholds_generated_answer[{marker}-{engine}]"})
             for name in ("test_generated_in_range_citation_is_preserved",
                          "test_no_model_excerpt_keeps_literal_document_number_and_original_source"):
                 ET.SubElement(suite, "testcase", {"classname": "tests.test_rag_failure_modes", "name": name})
@@ -34,14 +41,14 @@ class RagContractReportTest(unittest.TestCase):
             for case in EXTRACTIVE["cases"]:
                 for engine in ("linear", "langgraph"):
                     ET.SubElement(suite, "testcase", {"classname": "tests.test_rag_extractive",
-                        "name": f"test_rag_extractive_support_compares_paired_outputs[{case['id']}-{engine}]"})
+                                                      "name": f"test_rag_extractive_support_compares_paired_outputs[{case['id']}-{engine}]"})
         if mutation:
             mutation(suite)
         with tempfile.TemporaryDirectory(prefix="supportflow-report-test-") as directory:
             directory = Path(directory)
             junit, output = directory / "input.xml", directory / "report.json"
             ET.ElementTree(suite).write(junit, encoding="utf-8")
-            process = subprocess.run([sys.executable, str(ROOT / "scripts/report-rag-contract.py"),
+            process = subprocess.run([sys.executable, str(ROOT / "scripts/benchmarks/report-rag-contract.py"),
                                       "--junit", str(junit), "--output", str(output),
                                       *(["--require-citations"] if citations else []),
                                       *(["--require-extractive"] if extractive else [])], cwd=ROOT,
@@ -66,7 +73,8 @@ class RagContractReportTest(unittest.TestCase):
         self.assertFalse(report["gate_passed"])
 
     def test_failure_is_rejected_with_reason_preserved(self):
-        code, report = self.report(lambda suite: ET.SubElement(suite[0], "failure", message="injected wrong routing"))
+        code, report = self.report(lambda suite: ET.SubElement(
+            suite[0], "failure", message="injected wrong routing"))
         self.assertEqual(1, code)
         self.assertEqual("injected wrong routing", report["cases"][0]["failure"])
 

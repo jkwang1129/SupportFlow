@@ -5,6 +5,7 @@ from .usage_pricing import format_amount
 
 MODEL_OPERATIONS = ('model.chat', 'model.embedding')
 
+
 def checkpoint_usage(usage, *, chat):
     if type(usage) is not dict or type(usage.get('available')) is not bool:
         raise ValueError('Invalid checkpoint usage')

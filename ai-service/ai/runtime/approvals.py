@@ -39,7 +39,8 @@ class TicketApprovals:
         expected = dict(title=title, content=content, snapshot_id=str(snapshot_id), arguments_sha256=digest)
         # Persist original arguments with the existing atomic payload/step contract.
         # A crash before the pause transaction can re-use this successful step.
-        checked = context.payload_step(_CHECKPOINT, 'INTERNAL', 'NONE', intent, 'working-state-v1', lambda: expected)
+        checked = context.payload_step(_CHECKPOINT, 'INTERNAL', 'NONE', intent,
+                                       'working-state-v1', lambda: expected)
         if checked != expected:
             raise RuntimeConflict('Approval checkpoint changed')
         with self.store._scope(lease.tenant) as connection:
@@ -56,7 +57,7 @@ class TicketApprovals:
                 WHERE s.tenant_code=%s AND s.run_id=%s AND left(s.step_key,%s)=%s AND s.state='SUCCEEDED'
                     AND s.intent_hash=%s AND p.payload_schema='working-state-v1' AND p.expires_at>clock_timestamp()
                     AND s.result_ref->>'resource_ref'='payload:'||p.payload_id::text""",
-                (lease.tenant, lease.run_id, len(step_prefix), step_prefix, expected_hash)).fetchone()
+                                            (lease.tenant, lease.run_id, len(step_prefix), step_prefix, expected_hash)).fetchone()
             if checkpoint is None:
                 raise RuntimeConflict('Approval checkpoint is unavailable')
             now = self._clock(connection)
@@ -67,13 +68,13 @@ class TicketApprovals:
             connection.execute("""INSERT INTO agent_approval(tenant_code,run_id,approval_id,principal_ref,snapshot_id,
                 tool_name,operation,schema_version,purpose,arguments_sha256,requested_at,expires_at)
                 VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                (lease.tenant, lease.run_id, approval_id, run['principal_ref'], snapshot_id,
-                 _TOOL, _OPERATION, _VERSION, _PURPOSE, digest, now, expires))
+                               (lease.tenant, lease.run_id, approval_id, run['principal_ref'], snapshot_id,
+                                _TOOL, _OPERATION, _VERSION, _PURPOSE, digest, now, expires))
             refs = dict(outcome='waiting-approval', operation=_OPERATION, version=_VERSION,
                         input_ref=checkpoint['result_ref']['resource_ref'], resource_ref=str(approval_id), arguments_sha256=digest)
             connection.execute("""UPDATE agent_run SET state='WAITING_APPROVAL',owner=NULL,lease_until=NULL,
                 fence=fence+1,error_code=NULL,result_ref=%s,updated_at=%s WHERE tenant_code=%s AND run_id=%s""",
-                (Jsonb(refs), now, lease.tenant, lease.run_id))
+                               (Jsonb(refs), now, lease.tenant, lease.run_id))
         raise ApprovalPending()
 
     def get(self, tenant, run_id):
@@ -86,7 +87,7 @@ class TicketApprovals:
         with self.store._scope(tenant) as connection:
             run = connection.execute("""SELECT * FROM agent_run
                 WHERE tenant_code=%s AND run_id=%s AND source_event_id=%s FOR SHARE""",
-                (tenant, run_id, source_event_id)).fetchone()
+                                     (tenant, run_id, source_event_id)).fetchone()
             if run is None:
                 return None
             row = connection.execute('SELECT * FROM agent_approval WHERE tenant_code=%s AND run_id=%s',
@@ -156,7 +157,8 @@ class TicketApprovals:
             else:
                 run = self.store._cancel_locked(connection, run, reviewer)
                 write_status = _WRITE_STATUS.get(run['error_code'])
-        result = {key: run[key] for key in ('tenant_code', 'run_id', 'source_event_id', 'state', 'attempt', 'step_count')}
+        result = {key: run[key]
+                  for key in ('tenant_code', 'run_id', 'source_event_id', 'state', 'attempt', 'step_count')}
         return result | dict(snapshot_id=snapshot_id, write_status=write_status)
 
     def event_page(self, tenant, run_id, source_event_id, snapshot_id, after_seq):
@@ -174,11 +176,11 @@ class TicketApprovals:
                 raise RuntimeConflict('Event cursor exceeds the committed journal')
             rows = connection.execute("""SELECT seq,event_type,occurred_at,step_no,outcome FROM agent_run_event
                 WHERE tenant_code=%s AND run_id=%s AND seq>%s ORDER BY seq LIMIT %s""",
-                (tenant, run_id, after_seq, _EVENT_PAGE_SIZE+1)).fetchall()
+                                      (tenant, run_id, after_seq, _EVENT_PAGE_SIZE + 1)).fetchall()
         events = rows[:_EVENT_PAGE_SIZE]
         return dict(schema_version='agent-run-events-v1', tenant_code=tenant, run_id=run_id,
                     source_event_id=source_event_id, snapshot_id=snapshot_id,
-                    next_seq=events[-1]['seq'] if events else after_seq, has_more=len(rows)>_EVENT_PAGE_SIZE, events=events)
+                    next_seq=events[-1]['seq'] if events else after_seq, has_more=len(rows) > _EVENT_PAGE_SIZE, events=events)
 
     def decide(self, tenant, run_id, approval_id, reviewer, *, approve, expected=None):
         if type(approve) is not bool:
@@ -219,7 +221,7 @@ class TicketApprovals:
             if row['status'] == 'CONSUMED':
                 step = connection.execute("""SELECT kind,effect,state,intent_ref FROM agent_step
                     WHERE tenant_code=%s AND run_id=%s AND step_no=%s FOR SHARE""",
-                    (lease.tenant, lease.run_id, row['consumed_step_no'])).fetchone()
+                                          (lease.tenant, lease.run_id, row['consumed_step_no'])).fetchone()
                 expected = dict(operation=_OPERATION, version=_VERSION, resource_ref=run['principal_ref'],
                                 input_ref=str(row['snapshot_id']), arguments_sha256=row['arguments_sha256'])
                 if step != dict(kind='TOOL', effect='WRITE', state='SUCCEEDED', intent_ref=expected):
@@ -239,7 +241,7 @@ class TicketApprovals:
         try:
             payload_ref = refs['input_ref']
             payload_id = UUID(payload_ref.removeprefix('payload:'))
-            if payload_ref != 'payload:'+str(payload_id):
+            if payload_ref != 'payload:' + str(payload_id):
                 raise ValueError()
         except (KeyError, TypeError, ValueError, AttributeError):
             raise RuntimeConflict('Approval checkpoint reference is invalid') from None
@@ -338,7 +340,7 @@ class TicketApprovals:
             raise RuntimeConflict('An uncertain write must be reconciled separately')
         updated = connection.execute("""UPDATE agent_approval SET status=%s,closed_by=%s,closed_at=%s
             WHERE tenant_code=%s AND run_id=%s RETURNING *""",
-            (status, actor, now, approval['tenant_code'], approval['run_id'])).fetchone()
+                                     (status, actor, now, approval['tenant_code'], approval['run_id'])).fetchone()
         self.store._unknown(connection, run)
-        self.store._terminal(connection, run, 'FAILED', 'APPROVAL_'+status, run['result_ref'])
+        self.store._terminal(connection, run, 'FAILED', 'APPROVAL_' + status, run['result_ref'])
         return updated

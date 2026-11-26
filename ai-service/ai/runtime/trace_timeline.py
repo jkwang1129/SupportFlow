@@ -63,7 +63,8 @@ def correlate(tenant, delivery, snapshot):
 
     customer = None
     if delivery is not None:
-        customer = {key: delivery[key] for key in ('state', 'attempts', 'error_code', 'created_at', 'ready_at', 'delivered_at')}
+        customer = {key: delivery[key] for key in (
+            'state', 'attempts', 'error_code', 'created_at', 'ready_at', 'delivered_at')}
         customer['elapsed_to_receipt_ms'] = _elapsed(delivery['created_at'], delivery['delivered_at'])
     runtime = None
     if trace is not None:

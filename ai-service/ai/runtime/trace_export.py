@@ -29,7 +29,8 @@ def main(argv=None):
     target.add_argument('--run', type=UUID, help='Export one task and its ordered steps')
     target.add_argument('--trace-id', help='Find up to 20 newest tasks for one exact request ID')
     parser.add_argument('--model-usage', action='store_true', help='Export observed provider usage for one task')
-    parser.add_argument('--price-book', type=Path, help='Estimate the priced portion of observed usage using an explicit price book')
+    parser.add_argument('--price-book', type=Path,
+                        help='Estimate the priced portion of observed usage using an explicit price book')
     args = parser.parse_args(argv)
     if args.model_usage and args.run is None:
         parser.error('--model-usage requires --run')

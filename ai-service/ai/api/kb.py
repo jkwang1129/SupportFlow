@@ -21,7 +21,7 @@ import logging
 import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field,field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.alias_generators import to_camel
 from uuid import UUID
 
@@ -49,11 +49,11 @@ class SearchRequest(BaseModel):
     tenant_code: str = Field(min_length=1, max_length=32)
     query: str = Field(min_length=1, max_length=500)
     top_k: int = Field(default=5, ge=1, le=20)
-    doc_ids: list[int] | None = Field(default=None,max_length=200)
+    doc_ids: list[int] | None = Field(default=None, max_length=200)
 
-    @field_validator('doc_ids',mode='before')
+    @field_validator('doc_ids', mode='before')
     @classmethod
-    def valid_document_scope(cls,value):return document_scope(value)
+    def valid_document_scope(cls, value): return document_scope(value)
 
 
 def _fail(exc: Exception) -> HTTPException:
@@ -61,9 +61,9 @@ def _fail(exc: Exception) -> HTTPException:
     from ..rag.parser import ParseError
 
     if isinstance(exc, ParseError):
-        logger.warning("知识库解析失败 code=KB_PARSE_FAILED errorType=%s",type(exc).__name__)
+        logger.warning("知识库解析失败 code=KB_PARSE_FAILED errorType=%s", type(exc).__name__)
         return HTTPException(status_code=400, detail="文件解析失败，请检查文件格式和内容。")
-    logger.error("知识库接口失败 code=KB_OPERATION_FAILED errorType=%s",type(exc).__name__)
+    logger.error("知识库接口失败 code=KB_OPERATION_FAILED errorType=%s", type(exc).__name__)
     return HTTPException(status_code=500, detail="知识库处理失败，请稍后重试。")
 
 
@@ -238,7 +238,7 @@ def _vector_quality(tenant_code: str, *, include_document_ids: bool = False) -> 
                 (tenant_code,),
             ).fetchall()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("读取切片向量来源失败 code=KB_DIAGNOSTIC_FAILED errorType=%s",type(exc).__name__)
+        logger.warning("读取切片向量来源失败 code=KB_DIAGNOSTIC_FAILED errorType=%s", type(exc).__name__)
         return {"chunkVectorModels": [], "vectorQualityHint": "读取切片向量来源失败"}
     models = [{"model": row["model"], "chunks": int(row["chunks"])} for row in rows]
     degraded = [item for item in models if item["model"] in fallback]
@@ -260,7 +260,7 @@ def _vector_quality(tenant_code: str, *, include_document_ids: bool = False) -> 
                     ).fetchall()
                 ]
         except Exception as exc:  # noqa: BLE001
-            logger.warning("统计兜底向量文档失败 code=KB_REPAIR_DIAGNOSTIC_FAILED errorType=%s",type(exc).__name__)
+            logger.warning("统计兜底向量文档失败 code=KB_REPAIR_DIAGNOSTIC_FAILED errorType=%s", type(exc).__name__)
     if degraded:
         hint = (f"有 {sum(item['chunks'] for item in degraded)} 个切片用的是本地兜底向量"
                 "（没有语义，检索会退化成关键词匹配）。"

@@ -31,7 +31,7 @@ from uuid import UUID
 from ..config import get_settings
 from ..core.trace import get_trace_id
 from . import embedding as embedding_module
-from .document_scope import document_scope,published_policy
+from .document_scope import document_scope, published_policy
 from . import llama_engine
 from . import parser as parser_module
 from . import splitter as splitter_module
@@ -185,22 +185,24 @@ def _builtin_index_text(
     )
 
 
-def search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | None = None,*,published_only: bool=False) -> dict:
+def search(tenant_code: str, query: str, top_k: int = 5, doc_ids: list[int] | None = None, *, published_only: bool = False) -> dict:
     """检索：两种引擎共用向量化，向量命中不足时退回关键词。"""
-    doc_ids=document_scope(doc_ids)
-    published_only=published_policy(published_only)
-    if doc_ids==[]:return {"query":query,"results":[],"mode":"empty-scope","vector_source":"none"}
+    doc_ids = document_scope(doc_ids)
+    published_only = published_policy(published_only)
+    if doc_ids == []:
+        return {"query": query, "results": [], "mode": "empty-scope", "vector_source": "none"}
     if llama_engine.available():
-        return llama_engine.search(tenant_code, query, top_k=top_k, doc_ids=doc_ids,published_only=published_only)
-    return _builtin_search(tenant_code, query, top_k=top_k, doc_ids=doc_ids,published_only=published_only)
+        return llama_engine.search(tenant_code, query, top_k=top_k, doc_ids=doc_ids, published_only=published_only)
+    return _builtin_search(tenant_code, query, top_k=top_k, doc_ids=doc_ids, published_only=published_only)
 
 
 def _builtin_search(tenant_code: str, query: str, top_k: int = 5,
-                    doc_ids: list[int] | None = None,*,published_only: bool=False) -> dict:
+                    doc_ids: list[int] | None = None, *, published_only: bool = False) -> dict:
     """内置实现：先用向量找语义相近的，没配密钥（向量不靠谱）就退回关键词匹配。"""
-    doc_ids=document_scope(doc_ids)
-    published_only=published_policy(published_only)
-    if doc_ids==[]:return {"query":query,"results":[],"mode":"empty-scope","vector_source":"none"}
+    doc_ids = document_scope(doc_ids)
+    published_only = published_policy(published_only)
+    if doc_ids == []:
+        return {"query": query, "results": [], "mode": "empty-scope", "vector_source": "none"}
     query = (query or "").strip()
     if not query:
         return {"query": query, "results": [], "vector_source": "none", "mode": "empty"}
@@ -212,13 +214,16 @@ def _builtin_search(tenant_code: str, query: str, top_k: int = 5,
     # 本地兜底向量只有字面匹配能力：拿它做余弦检索会返回一堆"看着像但没关系"的切片，
     # 比"没结果"更误导人。所以这种情况直接走关键词检索，并在返回里标出来。
     if source == "local-hash":
-        results = store.keyword_search(tenant_code, query, top_k=top_k,doc_ids=doc_ids,published_only=published_only)
+        results = store.keyword_search(tenant_code, query, top_k=top_k,
+                                       doc_ids=doc_ids, published_only=published_only)
         mode = "keyword-local-vector"
     elif vectors and vectors[0] and any(value != 0 for value in vectors[0]):
-        results = store.search(tenant_code, vectors[0], top_k=top_k, doc_ids=doc_ids,published_only=published_only)
+        results = store.search(tenant_code, vectors[0], top_k=top_k,
+                               doc_ids=doc_ids, published_only=published_only)
 
     if not results:
-        results = store.keyword_search(tenant_code, query, top_k=top_k,doc_ids=doc_ids,published_only=published_only)
+        results = store.keyword_search(tenant_code, query, top_k=top_k,
+                                       doc_ids=doc_ids, published_only=published_only)
         mode = "keyword"
 
     warn_if_degraded(mode, source, query)

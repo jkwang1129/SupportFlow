@@ -1,4 +1,11 @@
 """Protect the context benchmark's evidence and failure accounting."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parents[1]  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 from pathlib import Path
 import sys
 import tempfile
@@ -52,16 +59,19 @@ class BrainContextBenchmarkTest(unittest.TestCase):
 
     def test_excluded_memory_fails_if_it_enters_prompt_or_result(self):
         case, row = self.example('absent-local-memory', 2048, content='CTX-FOREIGN2')
-        self.assertIn('foreign, neighboring or deleted session memory observed', benchmark.assess(case, 2048, row)['failures'])
+        self.assertIn('foreign, neighboring or deleted session memory observed',
+                      benchmark.assess(case, 2048, row)['failures'])
         case, row = self.example('deleted-session-memory', 2048, content='没有记忆')
         row.update(order='CTX-DELETED1', persisted_order='CTX-DELETED1')
-        self.assertIn('foreign, neighboring or deleted session memory observed', benchmark.assess(case, 2048, row)['failures'])
+        self.assertIn('foreign, neighboring or deleted session memory observed',
+                      benchmark.assess(case, 2048, row)['failures'])
 
     def test_configured_budget_blocks_forced_model_execution_on_oversize(self):
         case, row = self.example('mandatory-input-over-budget', 2048)
         self.assertEqual([], benchmark.assess(case, 2048, row)['failures'])
         case, invoked = self.example(case['id'], 4096, content='ignored limit')
-        self.assertIn('oversized required context invoked model', benchmark.assess(case, 4096, invoked)['failures'])
+        self.assertIn('oversized required context invoked model',
+                      benchmark.assess(case, 4096, invoked)['failures'])
         self.assertIn('unexpected model failure or skip', benchmark.assess(case, 0, row)['failures'])
 
     def test_corrected_order_must_be_restored_and_protected_from_model_override(self):

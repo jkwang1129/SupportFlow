@@ -1,3 +1,10 @@
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parents[1]  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 import json
 from pathlib import Path
 import tempfile
@@ -8,17 +15,18 @@ from service_diagnostics import capture, structural_events
 
 class ServiceDiagnosticsTest(unittest.TestCase):
     def test_logback_artifact_suffixes_are_removed_but_source_frames_are_kept(self):
-        result=structural_events([
+        result = structural_events([
             '\tat io.supportflow.customer.TicketService.format(TicketService.java:1506) ~[classes/:na]\n',
             '\tat io.supportflow.customer.PlatformTicketService.claim(PlatformTicketService.java:218) [synthetic-secret.jar:synthetic-secret]\n',
             '\tat io.supportflow.customer.Secret.run(Secret.java:1) Authorization: synthetic-secret\n',
             '\tat external.Secret.run(Secret.java:1) ~[classes/:na]\n',
         ])
-        self.assertEqual(result,[
-            {'line':1,'frame':'io.supportflow.customer.TicketService.format(TicketService.java:1506)'},
-            {'line':2,'frame':'io.supportflow.customer.PlatformTicketService.claim(PlatformTicketService.java:218)'},
+        self.assertEqual(result, [
+            {'line': 1, 'frame': 'io.supportflow.customer.TicketService.format(TicketService.java:1506)'},
+            {'line': 2,
+                'frame': 'io.supportflow.customer.PlatformTicketService.claim(PlatformTicketService.java:218)'},
         ])
-        self.assertNotIn('synthetic-secret',json.dumps(result))
+        self.assertNotIn('synthetic-secret', json.dumps(result))
 
     def test_messages_sql_and_credentials_are_never_copied(self):
         result = structural_events([

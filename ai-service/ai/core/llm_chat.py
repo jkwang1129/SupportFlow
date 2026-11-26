@@ -63,21 +63,24 @@ async def call_chat(chosen: dict[str, str], payload: dict[str, Any], timeout: in
     trace = get_trace_id() or "-"
     started = time.perf_counter()
     try:
-        data = await _send_chat_json(chosen,payload,timeout,transport=_transport)
+        data = await _send_chat_json(chosen, payload, timeout, transport=_transport)
     except ModelCallFailure as failure:
-        logger.warning("模型调用失败 trace=%s code=%s status=%s",trace,failure.code,failure.status_code or "-")
+        logger.warning("模型调用失败 trace=%s code=%s status=%s", trace, failure.code, failure.status_code or "-")
         if meter_usage and failure.attempted:
-            _meter(tenant_code=tenant_code,chosen=chosen,scene=scene,latency_ms=int((time.perf_counter()-started)*1000),success=False)
+            _meter(tenant_code=tenant_code, chosen=chosen, scene=scene,
+                   latency_ms=int((time.perf_counter() - started) * 1000), success=False)
         raise
     latency_ms = int((time.perf_counter() - started) * 1000)
     if meter_usage:
-        _meter(tenant_code=tenant_code or get_tenant_code() or None,chosen=chosen,scene=scene,latency_ms=latency_ms,data=data)
-    logger.info("模型调用完成 trace=%s latencyMs=%d",trace,latency_ms)
+        _meter(tenant_code=tenant_code or get_tenant_code() or None,
+               chosen=chosen, scene=scene, latency_ms=latency_ms, data=data)
+    logger.info("模型调用完成 trace=%s latencyMs=%d", trace, latency_ms)
     return data
 
 
 def _meter(**values):
-    try: record_chat_usage(**values)
+    try:
+        record_chat_usage(**values)
     except Exception:
         logger.warning("MODEL_USAGE_UNAVAILABLE")
 

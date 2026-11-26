@@ -17,7 +17,8 @@ KB_SOURCE = "backend/deploy/db-init/customer_db.sql"
 KB_STAGE_SOURCE = "backend/deploy/migrations/sql/customer_db_010_kb_chunk_stage.sql"
 REQUIRED_TABLES = dict.fromkeys(("bot_intent", "bot_model", "bot_setting", "bot_dialogue",
                                 "bot_version", "training_job", "ai_usage_record", "bot_intent_sample"), AI_SOURCE)
-REQUIRED_COLUMNS = {f"{table}.{column}": AI_SOURCE for table in REQUIRED_TABLES for column in ("id", "tenant_code")}
+REQUIRED_COLUMNS = {
+    f"{table}.{column}": AI_SOURCE for table in REQUIRED_TABLES for column in ("id", "tenant_code")}
 REQUIRED_COLUMNS.update({name: AI_SOURCE for name in (
     "bot_intent.escalate", "bot_setting.brand_name", "bot_setting.avatar_url",
     "bot_setting.reception_enabled", "bot_setting.transfer_on_anger", "bot_setting.transfer_after_unresolved",
@@ -43,7 +44,8 @@ MODEL_COST_BUDGET_SOURCE = 'backend/deploy/migrations/sql/ai_db_014_agent_model_
 RUN_EVENT_SOURCE = 'backend/deploy/migrations/sql/ai_db_015_agent_run_events.sql'
 MODEL_TOKEN_POLICY_COLUMNS = ('daily_token_limit', 'tokens_per_attempt')
 MODEL_COST_POLICY_COLUMNS = ('daily_cost_limit_picos', 'monthly_cost_limit_picos', 'price_book')
-MODEL_COST_RESERVATION_COLUMNS = ('price_book_version', 'price_book_sha256', 'currency', 'input_rate', 'output_rate', 'reserved_cost_picos')
+MODEL_COST_RESERVATION_COLUMNS = ('price_book_version', 'price_book_sha256',
+                                  'currency', 'input_rate', 'output_rate', 'reserved_cost_picos')
 RUNTIME_COLUMNS = {
     'agent_run_event': ('tenant_code', 'run_id', 'seq', 'event_type', 'occurred_at', 'step_no', 'outcome'),
     'agent_run': ('tenant_code run_id source_event_id session_no event_seq message_id principal_ref trace_id runtime_version input_hash '
@@ -57,9 +59,9 @@ RUNTIME_COLUMNS = {
     'agent_model_token_day': ('tenant_code', 'budget_day', 'charged_tokens'),
     'agent_model_cost_day': ('tenant_code', 'budget_day', 'currency', 'charged_picos'),
     'agent_reply_reconciliation': ('tenant_code run_id step_no observed_fence source_event_id snapshot_id arguments_sha256 intent_hash '
-                                  'message_id message_no message_seq operator_ref original_error_code original_step_result confirmed_at').split(),
+                                   'message_id message_no message_seq operator_ref original_error_code original_step_result confirmed_at').split(),
     'agent_ticket_reconciliation': ('tenant_code run_id step_no observed_fence source_event_id snapshot_id operation schema_version arguments_sha256 intent_hash '
-                                   'ticket_id ticket_no operator_ref original_error_code original_step_result confirmed_at').split(),
+                                    'ticket_id ticket_no operator_ref original_error_code original_step_result confirmed_at').split(),
     'agent_approval': ('tenant_code run_id approval_id principal_ref snapshot_id tool_name operation schema_version purpose arguments_sha256 '
                        'status requested_at expires_at decided_by decided_at closed_by closed_at consumed_step_no consumed_at').split(),
 }
@@ -99,7 +101,8 @@ def _missing() -> dict[str, str]:
     columns = _columns(connect)
     tables = {name.split(".", 1)[0] for name in columns}
     missing = {f"ai_db.{table}": source for table, source in REQUIRED_TABLES.items() if table not in tables}
-    missing.update({f"ai_db.{column}": source for column, source in REQUIRED_COLUMNS.items() if column not in columns})
+    missing.update({f"ai_db.{column}": source for column,
+                   source in REQUIRED_COLUMNS.items() if column not in columns})
     if get_settings().runtime_api_enabled:
         missing.update(runtime_missing(columns))
     kb = _columns(_kb_connect)

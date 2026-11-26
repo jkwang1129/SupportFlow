@@ -1,5 +1,13 @@
 # 可靠性改造验收记录
 
+> **阅读导航**：本文按实施顺序保留 `A0` 至 `E27` 各批次的本地复现环境、测试命令、样本分母与报告指纹。
+> - **A 阶段 & PR-7（并发、幂等、计费与六库迁移基线）**：`A0`、`A1/PR-3`、`A2/PR-4`、`A3/PR-5`、`A6/PR-12`、`A4/PR-6`、`PR-7 子批次 1–6`
+> - **B 阶段（持久化 Runtime、受控工具与 HITL 审批）**：`B1–B3`（详见 [历史批次归档](archive/batch-changelog-a0-e27.md) 与对应章节）
+> - **C / D 阶段（上下文预算、RAG 原文核查、跨服务追踪、回放与浏览器回归）**：`C1–C7`、`D1–D26`
+> - **E 阶段（模型网关、Token/金额配额、六库+附件恢复演练与知识库回滚/混检对照）**：`E1–E27`
+> - *注：仓库目录整理后，历史命令中的 `scripts/test-*.py` 已归类至 `scripts/verify/`，评测脚本归类至 `scripts/benchmarks/`，Python 测试归类至 `ai-service/tests/unit/` 与 `ai-service/tests/postgres/`。*
+
+
 基线 `dca4b8e614adbce7ade8ba72323b2a4e6da4470e`；2026-11-19，Windows、Temurin JDK 25.0.5、Maven 3.9.16、隔离 PostgreSQL 17 + pgvector。测试使用合成数据/模型 Stub，无线上客户或收费模型调用。路线与完整能力矩阵见 [工程计划](agent-engineering-plan.md)。未提交变更的报告以本地工作区为准。
 
 ## A0：本轮基线

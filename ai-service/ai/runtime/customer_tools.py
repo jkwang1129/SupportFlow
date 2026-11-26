@@ -64,11 +64,11 @@ def current_message_tool(client: SourceClient, *, timeout_seconds=3):
 
     def verify(identity, arguments, result, grant):
         proof = grant.references
-        return (result['source_event_id'] == str(identity.source.source_event_id)
-                and result['run_id'] == str(identity.run_id)
-                and result['snapshot_id'] == proof.get('resource_ref')
-                and result['payload_hash'] == proof.get('input_ref') and proof.get('version') == 'source-v1'
-                and hashlib.sha256(result['text'].encode()).hexdigest() == proof.get('arguments_sha256'))
+        return (result['source_event_id'] == str(identity.source.source_event_id) and
+                result['run_id'] == str(identity.run_id) and
+                result['snapshot_id'] == proof.get('resource_ref') and
+                result['payload_hash'] == proof.get('input_ref') and proof.get('version') == 'source-v1' and
+                hashlib.sha256(result['text'].encode()).hexdigest() == proof.get('arguments_sha256'))
 
     return ReadTool('get_current_message', 'source-v1', 'session:read', CurrentMessageArguments,
                     CurrentMessageResult, authorize, invoke, verify, timeout_seconds)
@@ -85,39 +85,39 @@ class TicketResult(ToolModel):
     snapshot_id: str = Field(pattern=UUID_PATTERN)
     source_hash: str = Field(pattern=r'^[0-9a-f]{64}$')
     ticket_no: str = Field(pattern=r'^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$')
-    status: int = Field(ge=1,le=5)
+    status: int = Field(ge=1, le=5)
     updated_at: str = Field(max_length=26)
     resource_version: str = Field(pattern=r'^[0-9a-f]{64}$')
 
 
 def ticket_status_tool(client: TicketClient, *, timeout_seconds=3, mcp_client=None):
-    if not isinstance(client,TicketClient):
+    if not isinstance(client, TicketClient):
         raise ValueError('Configured authenticated TicketClient required')
     if mcp_client is not None and not isinstance(mcp_client, McpTicketClient):
         raise ValueError('Configured MCP ticket client required')
 
-    def load(backend,identity,arguments,deadline):
+    def load(backend, identity, arguments, deadline):
         async def bounded():
             async with asyncio.timeout(deadline.remaining()):
-                return await backend.read(identity.source,identity.run_id,arguments['ticket_no'])
+                return await backend.read(identity.source, identity.run_id, arguments['ticket_no'])
         return asyncio.run(bounded())
 
-    def authorize(identity,arguments,deadline):
-        value=load(client,identity,arguments,deadline)
-        return ReadAuthorization({'resource_ref':value.ticket_no,'input_ref':str(value.snapshot_id),
-                                  'version':'ticket-status-v1','arguments_sha256':value.resource_version,'business_ref':value.source_hash})
+    def authorize(identity, arguments, deadline):
+        value = load(client, identity, arguments, deadline)
+        return ReadAuthorization({'resource_ref': value.ticket_no, 'input_ref': str(value.snapshot_id),
+                                  'version': 'ticket-status-v1', 'arguments_sha256': value.resource_version, 'business_ref': value.source_hash})
 
-    def invoke(identity,arguments,deadline):
-        return load(mcp_client or client,identity,arguments,deadline).result()
+    def invoke(identity, arguments, deadline):
+        return load(mcp_client or client, identity, arguments, deadline).result()
 
-    def verify(identity,arguments,result,grant):
-        proof=grant.references
-        return (result['source_event_id']==str(identity.source.source_event_id) and result['run_id']==str(identity.run_id)
-                and result['ticket_no']==arguments['ticket_no']==proof.get('resource_ref')
-                and result['snapshot_id']==proof.get('input_ref') and result['source_hash']==proof.get('business_ref')
-                and proof.get('version')=='ticket-status-v1' and result['resource_version']==proof.get('arguments_sha256')
-                and ticket_digest(identity.source,identity.run_id,result['snapshot_id'],result['source_hash'],result['ticket_no'],
-                                  result['status'],result['updated_at'])==result['resource_version'])
+    def verify(identity, arguments, result, grant):
+        proof = grant.references
+        return (result['source_event_id'] == str(identity.source.source_event_id) and result['run_id'] == str(identity.run_id) and
+                result['ticket_no'] == arguments['ticket_no'] == proof.get('resource_ref') and
+                result['snapshot_id'] == proof.get('input_ref') and result['source_hash'] == proof.get('business_ref') and
+                proof.get('version') == 'ticket-status-v1' and result['resource_version'] == proof.get('arguments_sha256') and
+                ticket_digest(identity.source, identity.run_id, result['snapshot_id'], result['source_hash'], result['ticket_no'],
+                                  result['status'], result['updated_at']) == result['resource_version'])
 
-    return ReadTool('get_ticket_status','ticket-status-v2','ticket:read',TicketArguments,TicketResult,
-                    authorize,invoke,verify,timeout_seconds,cache_policy='current-version')
+    return ReadTool('get_ticket_status', 'ticket-status-v2', 'ticket:read', TicketArguments, TicketResult,
+                    authorize, invoke, verify, timeout_seconds, cache_policy='current-version')

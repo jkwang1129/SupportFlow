@@ -29,59 +29,59 @@ jobs:
             scripts/security/requirements.txt
       - name: Validate the frozen RAG quality evaluation dataset
         run: |
-          python scripts/rag_quality_dataset.py
-          python scripts/rag_quality_dataset.py --suite holdout
+          python scripts/benchmarks/rag_quality_dataset.py
+          python scripts/benchmarks/rag_quality_dataset.py --suite holdout
       - name: Install API test dependencies
         run: python -m pip install -r scripts/security/requirements.txt -r ai-service/requirements-test.txt
       - name: Verify all Java modules
         run: mvn -B -f backend/pom.xml verify
       - name: Verify PostgreSQL tenant isolation and knowledge store
-        run: python scripts/test-customer-rls.py --with-ai
+        run: python scripts/verify/test-customer-rls.py --with-ai
       - name: Verify bounded knowledge staging maintenance
-        run: python scripts/test-kb-stage-retention.py
+        run: python scripts/verify/test-kb-stage-retention.py
       - name: Verify immutable ticket creation receipt storage
-        run: python scripts/test-ticket-receipts.py
+        run: python scripts/verify/test-ticket-receipts.py
       - name: Verify PostgreSQL usage batch ledger and outbox
-        run: python scripts/test-usage-batches.py
+        run: python scripts/verify/test-usage-batches.py
       - name: Verify runtime recovery and Java-to-AI durable delivery
-        run: python scripts/test-agent-runtime.py --with-java-delivery
+        run: python scripts/verify/test-agent-runtime.py --with-java-delivery
       - name: Require agent input and permission boundary regressions
-        run: python scripts/agent_boundary_report.py --reports .local/verification --output .local/verification/agent-boundary-contract.json
+        run: python scripts/benchmarks/agent_boundary_report.py --reports .local/verification --output .local/verification/agent-boundary-contract.json
       - name: Verify versioned SQL migrations and rollback
-        run: python scripts/test-versioned-migrations.py
+        run: python scripts/verify/test-versioned-migrations.py
       - name: Verify four database baseline adoption and incompatibility rejection
-        run: python scripts/test-schema-baselines.py
+        run: python scripts/verify/test-schema-baselines.py
       - name: Verify actual schema, index and RLS drift rejection
-        run: python scripts/test-schema-drift.py
+        run: python scripts/verify/test-schema-drift.py
       - name: Verify fresh initialization and refusal to overwrite existing databases
-        run: python scripts/test-database-init.py
+        run: python scripts/verify/test-database-init.py
       - name: Rehearse backup, restore and application reads on a disposable target
-        run: python scripts/test-database-restore.py --with-attachments --with-services
+        run: python scripts/verify/test-database-restore.py --with-attachments --with-services
       - name: Verify AI service authorization
         working-directory: ai-service
         run: python -m pytest -q --junitxml=../.local/verification/ai-tests.xml
       - name: Verify RAG abstention, citation and extractive support gates
-        run: python scripts/report-rag-contract.py --junit .local/verification/ai-tests.xml --require-citations --require-extractive --output .local/verification/rag-contract.json
+        run: python scripts/benchmarks/report-rag-contract.py --junit .local/verification/ai-tests.xml --require-citations --require-extractive --output .local/verification/rag-contract.json
       - name: Compare single-pass and Agentic RAG on the frozen corpus
-        run: python scripts/rag_quality_benchmark.py --output .local/verification/rag-quality-benchmark.json
+        run: python scripts/benchmarks/rag_quality_benchmark.py --output .local/verification/rag-quality-benchmark.json
       - name: Verify grounded RAG replies against the same retrieved evidence
-        run: python scripts/rag_quality_benchmark.py --comparison grounding --output .local/verification/rag-grounding-benchmark.json
+        run: python scripts/benchmarks/rag_quality_benchmark.py --comparison grounding --output .local/verification/rag-grounding-benchmark.json
       - name: Verify model-independent safety contracts on the RAG holdout
-        run: python scripts/rag_quality_benchmark.py --suite holdout --comparison grounding --output .local/verification/rag-holdout-benchmark.json
+        run: python scripts/benchmarks/rag_quality_benchmark.py --suite holdout --comparison grounding --output .local/verification/rag-holdout-benchmark.json
       - name: Verify policy review decisions on the RAG holdout
-        run: python scripts/rag_quality_benchmark.py --suite holdout --comparison policy-review --output .local/verification/rag-policy-review-benchmark.json
+        run: python scripts/benchmarks/rag_quality_benchmark.py --suite holdout --comparison policy-review --output .local/verification/rag-policy-review-benchmark.json
       - name: Compare scoped keyword, dense and hybrid retrieval
-        run: python scripts/rag_retrieval_benchmark.py --output .local/verification/rag-retrieval-benchmark.json
+        run: python scripts/benchmarks/rag_retrieval_benchmark.py --output .local/verification/rag-retrieval-benchmark.json
       - name: Compare intent context budgets and session recovery on the frozen corpus
-        run: python scripts/brain_context_benchmark.py --output .local/verification/brain-context-benchmark.json
+        run: python scripts/benchmarks/brain_context_benchmark.py --output .local/verification/brain-context-benchmark.json
       - name: Verify evaluation gate negative cases
         run: python -m unittest discover -s scripts/tests -p 'test_*.py' -v
       - name: Verify fresh and legacy runtime database privileges
-        run: python scripts/test-runtime-security.py --with-ai-readiness
+        run: python scripts/verify/test-runtime-security.py --with-ai-readiness
       - name: Verify runtime credential distribution
         run: python -m unittest discover -s scripts/security -p 'unit_*.py' -v
       - name: Verify actual service flows with restricted identities
-        run: python scripts/test-security-flow.py
+        run: python scripts/verify/test-security-flow.py
       - name: Preserve Java test reports
         if: always()
         uses: actions/upload-artifact@v4

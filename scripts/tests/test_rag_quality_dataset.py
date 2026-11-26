@@ -1,4 +1,11 @@
 """Verify fixture integrity and reject regressions in source or outcome annotations."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parents[1]  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -72,7 +79,8 @@ class RagQualityDatasetTest(unittest.TestCase):
             validate_dataset(self.data)
 
     def test_handoff_cannot_be_annotated_as_having_answer_facts(self):
-        self.case('conflicting-repair-policy')['expected']['facts'] = self.case('return-window')['expected']['facts']
+        self.case(
+            'conflicting-repair-policy')['expected']['facts'] = self.case('return-window')['expected']['facts']
         with self.assertRaisesRegex(DatasetError, 'outcome disagrees with facts'):
             validate_dataset(self.data)
 

@@ -31,7 +31,8 @@ class PolicyReview(Enum):
 
 
 def build_input(question: str, citations: list[dict]) -> str:
-    sources = [{key: citation[key] for key in ('index', 'doc_title', 'chunk_no', 'content')} for citation in citations]
+    sources = [{key: citation[key]
+                for key in ('index', 'doc_title', 'chunk_no', 'content')} for citation in citations]
     return json.dumps({'question': question, 'sources': sources}, ensure_ascii=False, separators=(',', ':'))
 
 

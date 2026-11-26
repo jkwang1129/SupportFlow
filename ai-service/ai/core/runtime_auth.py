@@ -62,20 +62,20 @@ class RuntimeAuthMiddleware:
         if not hmac.compare_digest(signature, expected):
             return await reject(401, 'Invalid runtime service credential')
         path = scope['path'][len(self.prefix):]
-        allowed = ((scope['method'] == 'POST' and path == '/ai/v1/runtime/runs')
-                   or (scope['method'] == 'POST' and path in (
-                       '/ai/v1/runtime/runs/ticket-approval-active', '/ai/v1/runtime/runs/ticket-approval-latest-progress'))
-                   or (scope['method'] == 'GET' and RUN_PATH.fullmatch(path))
-                   or (scope['method'] == 'POST' and path.endswith('/authorize') and RUN_PATH.fullmatch(path[:-10]))
-                   or (scope['method'] == 'POST' and path.endswith('/review-ticket-approval')
-                       and RUN_PATH.fullmatch(path.removesuffix('/review-ticket-approval')))
-                   or (scope['method'] == 'POST' and path.endswith('/ticket-approval-preview')
-                       and RUN_PATH.fullmatch(path.removesuffix('/ticket-approval-preview')))
-                   or (scope['method'] == 'POST' and path.endswith('/ticket-approval-events')
-                       and RUN_PATH.fullmatch(path.removesuffix('/ticket-approval-events')))
-                   or (scope['method'] == 'POST' and path.endswith('/ticket-approval-cancel')
-                       and RUN_PATH.fullmatch(path.removesuffix('/ticket-approval-cancel')))
-                   or (scope['method'] == 'POST' and path.endswith('/cancel') and RUN_PATH.fullmatch(path[:-7])))
+        allowed = ((scope['method'] == 'POST' and path == '/ai/v1/runtime/runs') or
+                   (scope['method'] == 'POST' and path in (
+                       '/ai/v1/runtime/runs/ticket-approval-active', '/ai/v1/runtime/runs/ticket-approval-latest-progress')) or
+                   (scope['method'] == 'GET' and RUN_PATH.fullmatch(path)) or
+                   (scope['method'] == 'POST' and path.endswith('/authorize') and RUN_PATH.fullmatch(path[:-10])) or
+                   (scope['method'] == 'POST' and path.endswith('/review-ticket-approval') and
+                       RUN_PATH.fullmatch(path.removesuffix('/review-ticket-approval'))) or
+                   (scope['method'] == 'POST' and path.endswith('/ticket-approval-preview') and
+                       RUN_PATH.fullmatch(path.removesuffix('/ticket-approval-preview'))) or
+                   (scope['method'] == 'POST' and path.endswith('/ticket-approval-events') and
+                       RUN_PATH.fullmatch(path.removesuffix('/ticket-approval-events'))) or
+                   (scope['method'] == 'POST' and path.endswith('/ticket-approval-cancel') and
+                       RUN_PATH.fullmatch(path.removesuffix('/ticket-approval-cancel'))) or
+                   (scope['method'] == 'POST' and path.endswith('/cancel') and RUN_PATH.fullmatch(path[:-7])))
         if caller != 'customer' or not allowed or query or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,15}', tenant) or tenant.upper() == 'PLATFORM':
             return await reject(403, 'Runtime operation is not authorized')
         if scope['method'] == 'GET':

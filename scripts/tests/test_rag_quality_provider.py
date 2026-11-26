@@ -1,4 +1,11 @@
 """The live benchmark's spending and receipt contracts, without provider access."""
+import sys as _sys
+from pathlib import Path as _Path
+_SCRIPTS_DIR = _Path(__file__).resolve().parents[1]  # SUPPORTFLOW_SCRIPT_PATHS
+for _sub in ("lib", "benchmarks", "verify/fixtures"):
+    _p = str(_SCRIPTS_DIR / _sub)
+    if _p not in _sys.path:
+        _sys.path.insert(0, _p)
 import asyncio
 from pathlib import Path
 import sys
@@ -75,7 +82,8 @@ class QwenGenerationTest(unittest.TestCase):
                'retrievals': [], 'scores': {'recall_at_5': 0, 'citation_pairs': [], 'outcome_match': False,
                                             'unauthorized_document_ids': [], 'forbidden_output_markers': []}}
         result = aggregate([row, row | {'provider_tokens': self.response['usage']}], live=True)['provider_tokens']
-        self.assertEqual({'attempted': 2, 'with_usage': 1, 'unknown': 1, 'observed': self.response['usage']}, result)
+        self.assertEqual({'attempted': 2, 'with_usage': 1, 'unknown': 1,
+                         'observed': self.response['usage']}, result)
 
 
 class QwenEmbeddingTest(unittest.TestCase):
@@ -91,7 +99,8 @@ class QwenEmbeddingTest(unittest.TestCase):
         vector = [1.0] + [0.0] * (provider.EMBEDDING_DIM - 1)
         response = {'data': [{'index': 0, 'embedding': vector}], 'usage': {'total_tokens': 4}}
         with patch.object(provider, '_send_embedding_json', new=AsyncMock(return_value=response)) as send:
-            groups, receipts = asyncio.run(provider.encode_qwen_groups({'docs': ['sample']}, 'fixture-private-key'))
+            groups, receipts = asyncio.run(provider.encode_qwen_groups(
+                {'docs': ['sample']}, 'fixture-private-key'))
         self.assertEqual({'docs': [vector]}, groups)
         self.assertEqual(4, receipts[0]['total_tokens'])
         self.assertEqual(64, len(receipts[0]['vector_sha256']))

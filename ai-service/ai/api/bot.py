@@ -21,6 +21,7 @@ router = APIRouter(prefix="/ai/v1/bot", tags=["bot"])
 class ApiModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
 
+
 DEFAULT_INTENTS = [
     ("查询物流", "我的快递到哪了\n帮我查一下订单物流\n订单什么时候发货"),
     ("退款售后", "我要退款\n怎么申请售后\n商品有问题怎么退"),
@@ -172,7 +173,8 @@ class ModelUpdate(ApiModel):
 def list_intents(x_tenant_code: Optional[str] = Header(default=None)):
     tenant = require_tenant(x_tenant_code)
     with connect() as conn:
-        count = conn.execute("SELECT COUNT(1) FROM bot_intent WHERE tenant_code=%s AND is_deleted=FALSE", (tenant,)).fetchone()
+        count = conn.execute(
+            "SELECT COUNT(1) FROM bot_intent WHERE tenant_code=%s AND is_deleted=FALSE", (tenant,)).fetchone()
         if count and count["count"] == 0:
             conn.cursor().executemany(
                 """INSERT INTO bot_intent
@@ -232,7 +234,9 @@ def update_intent(intent_id: int, body: IntentUpdate, x_tenant_code: Optional[st
     sets.append("update_time=CURRENT_TIMESTAMP")
     params += [intent_id, tenant]
     with connect() as conn, conn.cursor() as cur:
-        cur.execute(f"UPDATE bot_intent SET {', '.join(sets)} WHERE id=%s AND tenant_code=%s AND is_deleted=FALSE", params)
+        cur.execute(
+            f"UPDATE bot_intent SET {', '.join(sets)} WHERE id=%s AND tenant_code=%s AND is_deleted=FALSE",
+            params)
         conn.commit()
     return ok()
 
@@ -356,7 +360,8 @@ def update_model(body: ModelUpdate, x_tenant_code: Optional[str] = Header(defaul
                              model_type=EXCLUDED.model_type, temperature=%s,
                              is_enabled=TRUE, update_time=CURRENT_TIMESTAMP
                RETURNING id, tenant_code, model_key, model_name, provider, model_type, temperature, is_enabled""",
-            (new_id(), tenant, body.model_key, body.model_name or body.model_key, provider, body.model_type, body.temperature, body.temperature),
+            (new_id(), tenant, body.model_key, body.model_name or body.model_key,
+             provider, body.model_type, body.temperature, body.temperature),
         ).fetchone()
         cur.execute(
             """UPDATE bot_setting SET model_key=%s, temperature=%s, update_time=CURRENT_TIMESTAMP

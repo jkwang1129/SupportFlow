@@ -89,7 +89,7 @@ async def _read_envelope(response):
             continue
         while (end := buffer.find(b'\n')) >= 0:
             line = bytes(buffer[:end]).rstrip(b'\r')
-            del buffer[:end+1]
+            del buffer[:end + 1]
             if line.startswith(b'data:'):
                 event.append(line[5:].removeprefix(b' '))
             elif not line and event:

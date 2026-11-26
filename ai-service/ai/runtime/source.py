@@ -24,7 +24,7 @@ def credential(secret, method, raw_path, tenant, body, *, expires=None):
     key = secret.encode('utf-8')
     if len(key) < 32:
         raise ValueError('Runtime source credential is not configured')
-    expiry = str(int(time.time())+30 if expires is None else expires)
+    expiry = str(int(time.time()) + 30 if expires is None else expires)
     digest = hashlib.sha256(body).hexdigest()
     canonical = '\n'.join((AUDIENCE, 'ai', expiry, method, raw_path, '', tenant, digest))
     signature = hmac.digest(key, canonical.encode(), 'sha256').hex()
@@ -44,7 +44,7 @@ class SourceSnapshot:
 
 class _CustomerTransport:
     def __init__(self, base_url, secret, *, deadline=10, transport=None):
-        if not isinstance(base_url,str) or '?' in base_url or '#' in base_url:
+        if not isinstance(base_url, str) or '?' in base_url or '#' in base_url:
             raise ValueError('Invalid customer service base URL')
         try:
             url = urlsplit(base_url)
@@ -57,20 +57,23 @@ class _CustomerTransport:
             raise ValueError('Invalid customer service context path')
         if len(secret.encode()) < 32 or type(deadline) not in (int, float) or not .05 <= deadline <= 10:
             raise ValueError('Invalid runtime source configuration')
-        self.base_url, self._secret, self.deadline, self.transport = base_url.rstrip('/'), secret, deadline, transport
+        self.base_url, self._secret, self.deadline, self.transport = base_url.rstrip(
+            '/'), secret, deadline, transport
 
     async def _exchange(self, method, source, run_id, resource, body, *, prefix, limit=MAX_RESPONSE, accepted=(200,)):
-        legacy = (resource,prefix) in (('snapshot','SOURCE'),('reply','REPLY')) and method in ('GET','POST')
-        ticket = (isinstance(resource,str) and re.fullmatch(r'tickets/[A-Za-z0-9][A-Za-z0-9_-]{0,63}',resource)
-                  and prefix=='TICKET' and method=='GET' and body==b'')
-        knowledge = resource=='knowledge/search' and prefix=='KNOWLEDGE' and method=='POST'
-        ticket_create = resource=='ticket-create' and prefix=='TICKET_CREATE' and (method=='POST' or method=='GET' and body==b'')
+        legacy = (resource, prefix) in (('snapshot', 'SOURCE'), ('reply', 'REPLY')) and method in ('GET', 'POST')
+        ticket = (isinstance(resource, str) and re.fullmatch(r'tickets/[A-Za-z0-9][A-Za-z0-9_-]{0,63}', resource)
+                  and prefix == 'TICKET' and method == 'GET' and body == b'')
+        knowledge = resource == 'knowledge/search' and prefix == 'KNOWLEDGE' and method == 'POST'
+        ticket_create = resource == 'ticket-create' and prefix == 'TICKET_CREATE' and (
+            method == 'POST' or method == 'GET' and body == b'')
         if not (legacy or ticket or knowledge or ticket_create):
             raise ValueError('Unsupported customer runtime operation')
-        if not isinstance(body,bytes) or len(body)>(65536 if resource in ('reply','knowledge/search','ticket-create') else 8192):
+        if not isinstance(body, bytes) or len(body) > (65536 if resource in ('reply', 'knowledge/search', 'ticket-create') else 8192):
             raise ValueError('Customer runtime request too large')
         run_id = UUID(str(run_id))
-        target = self.base_url+f'/api/customer/internal/runtime/events/{source.source_event_id}/runs/{run_id}/{resource}'
+        target = self.base_url + \
+            f'/api/customer/internal/runtime/events/{source.source_event_id}/runs/{run_id}/{resource}'
         raw_path = httpx.URL(target).raw_path.decode('ascii')
         headers = {HEADER: credential(self._secret, method, raw_path, source.tenant, body),
                    'X-Tenant-Code': source.tenant, 'X-Request-Id': source.trace_id,
@@ -80,29 +83,29 @@ class _CustomerTransport:
             # asyncio.run() loops. All I/O and body completion share this deadline.
             async with asyncio.timeout(self.deadline):
                 async with httpx.AsyncClient(transport=self.transport, trust_env=False, follow_redirects=False,
-                                            timeout=httpx.Timeout(min(5,self.deadline), connect=min(2,self.deadline))) as client:
+                                             timeout=httpx.Timeout(min(5, self.deadline), connect=min(2, self.deadline))) as client:
                     async with client.stream(method, target, headers=headers, content=body) as response:
                         if response.status_code in (408, 425, 429) or response.status_code >= 500:
-                            raise TransientFailure(prefix+'_UNAVAILABLE')
+                            raise TransientFailure(prefix + '_UNAVAILABLE')
                         if response.status_code in (401, 403):
-                            raise PermanentFailure(prefix+'_AUTHORIZATION_DENIED')
+                            raise PermanentFailure(prefix + '_AUTHORIZATION_DENIED')
                         if response.status_code not in accepted:
-                            raise PermanentFailure(prefix+'_PROTOCOL_ERROR')
+                            raise PermanentFailure(prefix + '_PROTOCOL_ERROR')
                         types = response.headers.get_list('content-type')
                         if len(types) != 1 or types[0].split(';')[0].strip().lower() != 'application/json':
-                            raise PermanentFailure(prefix+'_PROTOCOL_ERROR')
+                            raise PermanentFailure(prefix + '_PROTOCOL_ERROR')
                         if response.headers.get('content-encoding', 'identity').lower() != 'identity':
-                            raise PermanentFailure(prefix+'_PROTOCOL_ERROR')
+                            raise PermanentFailure(prefix + '_PROTOCOL_ERROR')
                         content = bytearray()
                         async for chunk in response.aiter_raw():
-                            if len(content)+len(chunk) > limit:
-                                raise PermanentFailure(prefix+'_RESPONSE_TOO_LARGE')
+                            if len(content) + len(chunk) > limit:
+                                raise PermanentFailure(prefix + '_RESPONSE_TOO_LARGE')
                             content.extend(chunk)
         except (TimeoutError, httpx.TimeoutException):
-            raise TransientFailure(prefix+'_TIMEOUT') from None
+            raise TransientFailure(prefix + '_TIMEOUT') from None
         except httpx.RequestError:
-            raise TransientFailure(prefix+'_NETWORK_ERROR') from None
-        return response.status_code,bytes(content)
+            raise TransientFailure(prefix + '_NETWORK_ERROR') from None
+        return response.status_code, bytes(content)
 
 
 class SourceClient(_CustomerTransport):
@@ -117,53 +120,63 @@ class SourceClient(_CustomerTransport):
         return value
 
     async def _request(self, method, source, run_id):
-        _,content=await self._exchange(method,source,run_id,'snapshot',b'{}' if method=='POST' else b'',prefix='SOURCE')
-        return self._decode(content,source,UUID(str(run_id)))
+        _, content = await self._exchange(method, source, run_id, 'snapshot', b'{}' if method == 'POST' else b'', prefix='SOURCE')
+        return self._decode(content, source, UUID(str(run_id)))
 
     @staticmethod
     def _decode(content, source, run_id):
         def unique(pairs):
             result = {}
             for key, value in pairs:
-                if key in result: raise ValueError('Duplicate JSON field')
+                if key in result:
+                    raise ValueError('Duplicate JSON field')
                 result[key] = value
             return result
         try:
             root = json.loads(content, object_pairs_hook=unique)
-            if not isinstance(root,dict) or type(root.get('code')) is not int:
+            if not isinstance(root, dict) or type(root.get('code')) is not int:
                 raise ValueError()
             if root['code'] != 0:
                 code = root['code']
-                if code == 503: raise TransientFailure('SOURCE_UNAVAILABLE')
-                codes = {40402:'SOURCE_REVOKED',40902:'SOURCE_CHANGED',41002:'SOURCE_EXPIRED',41302:'SOURCE_TOO_LARGE',42202:'SOURCE_INVALID_INPUT'}
-                raise PermanentFailure(codes.get(code,'SOURCE_REJECTED'))
+                if code == 503:
+                    raise TransientFailure('SOURCE_UNAVAILABLE')
+                codes = {40402: 'SOURCE_REVOKED', 40902: 'SOURCE_CHANGED', 41002: 'SOURCE_EXPIRED',
+                         41302: 'SOURCE_TOO_LARGE', 42202: 'SOURCE_INVALID_INPUT'}
+                raise PermanentFailure(codes.get(code, 'SOURCE_REJECTED'))
             value = root['data']
-            fields = {'tenant_code','source_event_id','run_id','snapshot_id','schema_version','payload_json','payload_hash','created_at','expires_at'}
-            if not isinstance(value,dict) or set(value)!=fields or value['tenant_code']!=source.tenant or value['source_event_id']!=str(source.source_event_id) or value['run_id']!=str(run_id):
+            fields = {'tenant_code', 'source_event_id', 'run_id', 'snapshot_id',
+                      'schema_version', 'payload_json', 'payload_hash', 'created_at', 'expires_at'}
+            if not isinstance(value, dict) or set(value) != fields or value['tenant_code'] != source.tenant or value['source_event_id'] != str(source.source_event_id) or value['run_id'] != str(run_id):
                 raise ValueError()
-            if value['schema_version']!='source-v1' or not isinstance(value['payload_json'],str) or len(value['payload_json'].encode())>65536:
+            if value['schema_version'] != 'source-v1' or not isinstance(value['payload_json'], str) or len(value['payload_json'].encode()) > 65536:
                 raise ValueError()
             raw = value['payload_json']
             digest = value['payload_hash']
-            if not isinstance(digest,str) or not re.fullmatch('[0-9a-f]{64}',digest) or not hmac.compare_digest(hashlib.sha256(raw.encode()).hexdigest(),digest):
+            if not isinstance(digest, str) or not re.fullmatch('[0-9a-f]{64}', digest) or not hmac.compare_digest(hashlib.sha256(raw.encode()).hexdigest(), digest):
                 raise ValueError()
-            payload = json.loads(raw,object_pairs_hook=unique)
-            if set(payload)!={'schema_version','trusted_source','untrusted_input'} or payload['schema_version']!='source-v1': raise ValueError()
+            payload = json.loads(raw, object_pairs_hook=unique)
+            if set(payload) != {'schema_version', 'trusted_source', 'untrusted_input'} or payload['schema_version'] != 'source-v1':
+                raise ValueError()
             trusted, untrusted = payload['trusted_source'], payload['untrusted_input']
-            expected = dict(tenant_code=source.tenant, source_event_id=str(source.source_event_id),run_id=str(run_id),
-                            session_no=source.session_no,message_id=str(source.message_id),event_seq=source.event_seq,principal_ref=source.principal_ref)
-            if not isinstance(trusted,dict) or set(trusted)!=set(expected)|{'customer_ref'} or any(trusted[k]!=v for k,v in expected.items()) or type(trusted['event_seq']) is not int:
+            expected = dict(tenant_code=source.tenant, source_event_id=str(source.source_event_id), run_id=str(run_id),
+                            session_no=source.session_no, message_id=str(source.message_id), event_seq=source.event_seq, principal_ref=source.principal_ref)
+            if not isinstance(trusted, dict) or set(trusted) != set(expected) | {'customer_ref'} or any(trusted[k] != v for k, v in expected.items()) or type(trusted['event_seq']) is not int:
                 raise ValueError()
             customer = trusted['customer_ref']
-            if customer is not None and (not isinstance(customer,str) or not re.fullmatch('[1-9][0-9]{0,18}',customer) or int(customer)>9223372036854775807): raise ValueError()
-            if not isinstance(untrusted,dict) or set(untrusted)!={'role','content'} or untrusted['role']!='user': raise ValueError()
+            if customer is not None and (not isinstance(customer, str) or not re.fullmatch('[1-9][0-9]{0,18}', customer) or int(customer) > 9223372036854775807):
+                raise ValueError()
+            if not isinstance(untrusted, dict) or set(untrusted) != {'role', 'content'} or untrusted['role'] != 'user':
+                raise ValueError()
             text = untrusted['content']
-            if not isinstance(text,str) or not text.strip() or len(text.encode())>8192: raise ValueError()
+            if not isinstance(text, str) or not text.strip() or len(text.encode()) > 8192:
+                raise ValueError()
             snapshot_id = UUID(value['snapshot_id'])
-            if str(snapshot_id)!=value['snapshot_id']: raise ValueError()
-            created = datetime.fromisoformat(value['created_at'].replace('Z','+00:00'))
-            expires = datetime.fromisoformat(value['expires_at'].replace('Z','+00:00'))
-            if created.tzinfo is None or expires.tzinfo is None or expires<=created: raise ValueError()
-            return SourceSnapshot(snapshot_id,digest,raw,text,customer,created,expires)
+            if str(snapshot_id) != value['snapshot_id']:
+                raise ValueError()
+            created = datetime.fromisoformat(value['created_at'].replace('Z', '+00:00'))
+            expires = datetime.fromisoformat(value['expires_at'].replace('Z', '+00:00'))
+            if created.tzinfo is None or expires.tzinfo is None or expires <= created:
+                raise ValueError()
+            return SourceSnapshot(snapshot_id, digest, raw, text, customer, created, expires)
         except (ValueError, TypeError, KeyError, UnicodeError, RecursionError, AttributeError):
             raise PermanentFailure('SOURCE_PAYLOAD_INVALID') from None

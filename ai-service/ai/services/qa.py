@@ -166,7 +166,7 @@ def _parse_llm_json(content: str) -> dict[str, Any]:
             text = text[4:]
     start, end = text.find("{"), text.rfind("}")
     if start >= 0 and end > start:
-        text = text[start : end + 1]
+        text = text[start: end + 1]
     parsed = json.loads(text)
 
     score_raw = _pick(parsed, _SCORE_KEYS)

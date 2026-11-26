@@ -95,14 +95,17 @@ class RecordedCalls:
 def replay_tape(tape):
     fields = {'schema_version', 'loop_version', 'policy_sha256', 'catalog', 'source_text', 'max_turns',
               'canonical_history', 'events', 'expected'}
-    _require(isinstance(tape, dict) and tape.get('schema_version') in (TAPE_VERSION, VERSIONED_TAPE), 'INVALID_TAPE')
+    _require(isinstance(tape, dict) and tape.get('schema_version')
+             in (TAPE_VERSION, VERSIONED_TAPE), 'INVALID_TAPE')
     versioned = tape['schema_version'] == VERSIONED_TAPE
     _require(tape.keys() == (fields | {'prompt_version'} if versioned else fields), 'INVALID_TAPE')
     _require(identifier(tape['loop_version']) == LOOP_VERSION, 'LOOP_VERSION_CHANGED')
-    text, turns, catalog, events, expected = (tape[key] for key in ('source_text', 'max_turns', 'catalog', 'events', 'expected'))
+    text, turns, catalog, events, expected = (tape[key] for key in (
+        'source_text', 'max_turns', 'catalog', 'events', 'expected'))
     _require(isinstance(text, str) and text.strip() and len(text.encode('utf-8')) <= 8192 and '\0' not in text,
              'INVALID_TAPE_SOURCE')
-    _require(type(turns) is int and 1 <= turns <= 4 and type(tape['canonical_history']) is bool, 'INVALID_TAPE_LIMITS')
+    _require(type(turns) is int and 1 <= turns <= 4 and type(
+        tape['canonical_history']) is bool, 'INVALID_TAPE_LIMITS')
     _require(isinstance(catalog, list) and len(catalog) == 1 and isinstance(catalog[0], dict)
              and (catalog[0].get('name'), catalog[0].get('version')) == TICKET_READ
              and catalog[0].get('effect') == 'READ' and catalog[0].get('scope') == 'ticket:read', 'INVALID_REPLAY_CATALOG')
@@ -127,7 +130,8 @@ def replay_tape(tape):
     _require(calls.cursor == len(events), 'UNUSED_RECORDED_CALLS')
     result = {'outcome': outcome, 'error_code': error, 'ticket_status': status,
               'model_calls': calls.model_calls, 'ticket_reads': calls.ticket_reads}
-    differences = sorted(key for key in expected if type(expected[key]) is not type(result[key]) or expected[key] != result[key])
+    differences = sorted(key for key in expected if type(
+        expected[key]) is not type(result[key]) or expected[key] != result[key])
     output = {'passed': not differences, 'loop_version': LOOP_VERSION, 'policy_sha256': fingerprint(policy),
               'observed': result, 'differences': differences}
     if versioned:

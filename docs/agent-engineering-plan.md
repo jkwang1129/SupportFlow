@@ -1,273 +1,47 @@
-# Agent 工程能力盘点与实施计划
+# SupportFlow Agent 工程能力矩阵与收官路线
 
-核查日期：2026-11-19。基线：`dca4b8e614adbce7ade8ba72323b2a4e6da4470e`，分支 `codex/p1-reliability`。本文记录本地源码核查；历史 CI 不等于本轮测试。输入为原代码审查清单和生产级 Agent 补充方案，已完整阅读。没有把方案中的目标当成现有实现。
+> **项目定位**：SupportFlow — 多租户 SaaS 智能客服 Agent 平台（*Multi-tenant Customer Service Agent Platform*）
+> **当前核查基线**：分支 `codex/p1-reliability`，提交 `b9f46b1`（已完成 A0–E27 共 145 次提交、86 份 ADR、六库 106 张表）。
+> **关联文档**：历史逐批推进日志见 [批次归档（A0–E27）](archive/batch-changelog-a0-e27.md)；实测命令与报告哈希见 [可靠性改造验收记录](reliability-verification.md)；设计决策见 [ADR 索引](decisions/README.md)。
 
-工作区原有未跟踪的评测脚本、报告、简历及两份输入文档保持原样；它们不是本轮新增成果，也不自动纳入提交。无仓库或上级 `AGENTS.md`。本阶段不引入新服务、消息中间件或云平台，不调用收费模型，不修改现有生产数据。
+---
 
-## 原 PR 能力矩阵
+## 1. 六大核心工程支柱现状总览
 
-“已实现”只针对该行范围。历史验证与当前运行结果分开；后者见 [阶段验收](reliability-verification.md)。路径均相对仓库根。
-
-| 项目 | 当前状态 | 源码、测试或历史证据 | 缺口与优先级 |
-| --- | --- | --- | --- |
-| PR-0 基线/CI | 已实现，需持续扩展 | `.github/workflows/verification.yml`；Java `src/test`、`ai-service/tests`；`scripts/test-customer-rls.py`、`test-runtime-security.py`、`test-security-flow.py` | 当前变更重跑专项及业务回归；新增可靠性门禁。A |
-| PR-1 RLS/运行账号 | 已实现，本轮安全回归通过 | `customer/config/TenantRlsConfig.java`、`RuntimeDatabaseGuard.java`、`security/PlatformAccess.java`；`customer_db_runtime_security.sql`；`backend/deploy/db-init/40-runtime-roles.sql`；真实 PG 与新/旧库服务回归 | 复用受限账号与 fail-closed，不另建隔离机制；不能防御凭据失窃后任意 SQL。A |
-| PR-2 内部认证 | 已实现，本轮安全回归通过 | `ai-service/ai/core/internal_auth.py`；网关 `AiGatewayAccessTest`；`ai-service/tests/test_internal_auth.py`；新/旧库真实 HTTP 与服务权限回归 | 当前签名机制不等于未来写工具的主体/参数授权、防重放；写工具阶段补充。A/B |
-| PR-3 会话串行 | 本轮已实现且专项/全量验证通过 | `BotBrainService`、`SessionSerialExecutor`；`BotBrainConcurrencyTest`、`SessionSerialExecutorTest` 共 6 项 | 旧代码固定调度最大并发 2；修复后为 1。仅单进程互斥，跨 Worker 顺序仍归 PR-8。A1 完成 |
-| PR-4 消息幂等 | 本轮已实现且真实 PG 验证通过 | `SessionService#appendMessage`、两个 Mapper；`SessionMessagePostgresTest` 7 项 | 原 25P02、回滚计费问题已复现后修复；含关闭竞争、跨租户和软删除键。持久化计量/任务仍在 PR-6/8。A2 完成 |
-| PR-5 原子认领 | 本轮已实现且真实 PG 验证通过 | `SessionService#claimSession`、`SessionMapper#claimUnassigned`；`SessionClaimPostgresTest` 5 项 | 原先双胜者/双事件、同人并发、关闭竞争、无效 ID 已复现修复。A3 完成 |
-| PR-6 计费去重 | 客服计费链路已实现且真 PG/实际服务验证通过 | UsageBatch、UsageMeterService 批次账本、BillingUsageOutbox；14 项 PG、签名/HTTP/计数测试、新旧库实际上报 | 原始未入批次计数仍为 best-effort；网关 tenant_usage_daily 为独立链路，留后续扩展。A4 客服批次完成 |
-| PR-7 版本化迁移 | 本地范围已实现并验证：Ready、六库 init/migrate/verify | 只读 gate；manifest/SQL Runner/history/checksum/事务/锁，接入原升级入口和新旧库实际服务验收 | 当前97表/索引/RLS；customer009、AI007及既有数据升级保护。生产备份/运维属M12。A5本地完成并随迁移回归 |
-| PR-8 持久化 Run | 部分实现：单租户可信登记、投递与只读 Loop 实际连通 | Run/Step/Worker、事务 Outbox、签名 API、固定运营 Profile、真实进程接管及受控回复回执；默认关闭的影子入口 | 待扩展租户策略管理、自动批准执行宿主及业务回复切换策略。B1 试点已验 |
-| PR-9 Tool Calling | 部分实现：只读工具/受控回复与幂等建单WRITE | `ai/runtime/tools.py`严格Registry/Executor、可信主体/Scope、当前ACL/结果绑定/预算；知识Java窄API/SDK/每次重读工具、Embedding共享预算与实际JAR联调；有界工单Loop | 幂等建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE与知识决策Loop仍缺；回复由宿主核验报告发布，非通用模型WRITE工具。已接固定工单只读 MCP 客户端。B2 |
-| PR-10 Checkpoint/HITL | 工单链路已实现并本地验收，其他写操作分批 | 原子检查点和原预算恢复、访客显式提案、限时审批、一次性消费、坐席角色与来源重验、同会话查询后审批建单、回执丢失恢复及未知写核销 | 自然语言提案和访客交互待评测；其他写操作需各自回执。B3 |
-| PR-11 Eval/Replay/Trace | 部分实现，交付跨服务时间线、离线回归和工单只读规划回放 | Java Outbox 与 Python Run/Step/审批联合查询、元数据回放、25 题 RAG 对照和逐题报告、4 个联调录制案例 | 扩充语义评测、运营展示与跨尝试及跨业务链路回放。A/D |
-| PR-12 RAG | 部分完成：证据不足、越界引用拒答、结构化证据及人工核验建议 | 24 项拒答与 10 项引用契约；发布就绪过滤；真实模型对照；同口径数值冲突零生成调用，并复用现有转人工动作 | 政策条件完整性、可信来源排序及更广的冲突仍需独立样本验收。A6/C |
-
-Java 表中省略前缀的路径位于 `backend/supportflow-customer-service/src/main/java/io/supportflow/`；Mapper XML 位于对应服务 `src/main/resources/mapper`。
-
-## 新增模块能力矩阵
-
-| 模块 | 当前状态 | 可复用实现/证据 | 必须补齐及依赖 |
-| --- | --- | --- | --- |
-| M01 Reliable Runtime | 部分实现，已验单租户可选工单闭环 | Run/Step/Worker、签名访客登记、跨进程恢复、坐席审批、实际回复和工单回执、同会话查询后建单及确认丢失恢复 | 多租户运营策略、默认业务切换、其他写操作与独立回执待补。B |
-| M02 Context Engineering | 部分实现，已完成意图上下文三组实测 | 工单检查点及结构化规划历史、意图字节预算、同会话状态恢复和订单号更正、真实模型 Token 与意图质量对照 | 用留出集验证压缩和长输入兜底，继续验收大工具结果、更多记忆字段和过期策略。C |
-| M03 Tool Calling/MCP | 部分实现：实际受控业务工具层 | Registry/Executor、来源/工单/知识工具与签名SDK，实际Worker/受限PG核权/刷新/共享Embedding预算；有界工单Loop；宿主报告原子发布与回执核销；固定工单 MCP 客户端 | 原子建单事务/签名API已验，建单SDK/WRITE执行已验，模型WRITE/知识决策Loop、通用未知写及 MCP 服务端部署和更广接入待完善。B |
-| M04 Permission/Guardrails | 部分实现，已接固定输入和授权回归 | PR-1/2、附件权限、受限 DB 与 RLS；工具 Scope、资源核权、操作许可、审批和回执；访客结构化输入及 10 项 PostgreSQL 边界门禁 | 增加独立模型语义样本、其他写操作的审批和防重放、链路日志与审计保留。A/B/D |
-| M05 RAG Engineering | 部分实现，访客来源复核、结构化答复、人工核验、知识索引回滚及检索排序实测 | pgvector、关键词降级、改写、租户及发布过滤、逐句原文核查；真实向量对照关键词、向量与混检，真实 PostgreSQL 验证版本冲突与回滚 | 可信来源排序、更大语料的混检评测、多版本与生产保留策略待推进。A/C |
-| M06 Evaluation | 部分实现，配对基线、独立合成留出集与确定性工程门禁 | 原 25 题和留出 12 题、Token 回执与逐题复评分、拒答及引用契约、故障轨迹与只读模型和工具回放 | 增加独立人工复核、真实业务样本、模型评审器一致性及多轮尝试回归。A/D |
-| M07 Trace/Observability | 部分实现，跨服务查询、只读回放与租户指标已验 | 按租户关联 Java 投递、Python Run/Step 和审批，记录队列及延迟，正文到期清理后保留脱敏轨迹及用量回执 | 完善浏览器展示、服务覆盖、持续采集和轨迹元数据保留策略。A/B/D |
-| M08 Model Gateway/Prompt | 部分实现：共用有界模型传输，旧客服 Chat 按租户路由，工单 Prompt 按租户试用 | 单次 HTTP、稳定错误、Chat 供应商选择和本地降级、视觉请求限额、旧知识库向量校验、显式租户 Profile、工单 Prompt 版本固定及回退、MODEL 检查点和持久化 Token 回执 | 扩大模型路由与 Prompt 发布覆盖，验收流量比例、真实模型质量、供应商数据处理区域和备选权限、视觉与批量向量兼容性及金额结算。E |
-| M09 Streaming/交互 | 工单链路覆盖进度恢复、取消和跨节点通知 | 聊天 seq/ACK、工单通知与补拉、断线恢复、取消与完成竞争、已提交写入核查、双节点联调和首读耗时记录 | 节点地址按部署配置管理。目标环境下的网络条件及长期负载仍待验证。依赖 B、M07。E |
-| M10 Multi-Agent/Sandbox | 当前不适用，按需评估 | 当前核心业务不需不可信代码执行；尚无单 Agent 收益基线 | 不是必做缺陷；有明确任务与对照收益再建，MCP 动态发现亦非当前必需。F |
-| M11 资源/成本治理 | 部分实现 | 有界线程池、网关限流、计费日聚合与月预算告警/降级/暂停；旧客服预算读取失败时降级或保留已知暂停；Runtime 有跨 Worker 租约、Run 预算、租户积压上限、模型并发额度和按日、月的 Token 与金额预留及结算 | 真实账单对账与生产并发容量待验收。旧客服按已落账用量判断，单独验收并发消费上界。计费去重 A4，运行预算随 M01。B/E |
-| M12 Production Operations | 部分实现，联合恢复及附件专项就绪已通过本地演练 | Compose、CI、新旧库验收、停写备份、受限客服和 AI 在恢复目标上读取，实际验证结构和存储故障及同进程恢复 | 生产部署、流量切换、连续写入期间的跨库和对象一致性、WAL、远端保留及生产 RPO/RTO 和 SLO 演练待验收。A5/E |
-
-## 分阶段计划与退出条件
-
-每批开工时，分别按当前实现和已有验收证据估算两份文档的百分比。文档内对必做项等权，综合值对实现与验收等权，两份综合值的平均用于跟踪总览。M10 属于按需建设。重叠交付仍只实施一次。估算用于对照阶段进度。
-
-| 顺序 | 工作范围 | 退出条件 |
+| 核心支柱 | 已落地能力（有源码与自动化回归支撑） | 待收官补齐项（下一阶段目标） |
 | --- | --- | --- |
-| A0 盘点与基线 | 本矩阵；当前 Java/Python/PG 安全回归；登记现有评测与 Trace | 区分历史记录/当前实测、复现命令和隔离环境；确认不重复 P0 改造 |
-| A1 PR-3 | 只修会话锁生命周期 | 旧代码固定 A/B/C 调度失败；新代码同键最大并发 1、异键并发、异常/中断无泄漏 |
-| A2 PR-4 | PG 消息幂等 | 真 PG 同 ID/seq、单次消息及副作用、回滚、无 25P02 |
-| A3 PR-5 | 原子认领 | 真 PG 一名胜者、一套事件和提示；关闭拒绝、同人幂等 |
-| A4 PR-6 | 稳定计费批次 | 增量与去重同事务；并发、丢响应重试、批次内容冲突；发送端保留批次 |
-| A5 PR-7 | 权威版本迁移/readiness | 新建、旧库升级、重复执行、失败回滚、数据/RLS/角色不退化 |
-| A6 PR-12 首批 | 低证据终止生成；初始质量回归与节点轨迹 | LangGraph/linear 一致；正负例、改写预算、不调用模型；事实支持另立验收 |
-| B1 PR-8/M01/M11 | 先 ADR/状态机、持久化事件与 Worker，后 bounded loop | 领取/心跳/fencing/取消、预算、重启恢复；同会话跨 Worker 串行，重复事件无副作用 |
-| B2 PR-9/M03/M04 | 工单查询、知识查询、幂等创建工单；最小 Step Trace | Schema/Scope/归属/超时/错误分类/结果核验；Java 再鉴权；实际本地 API 与 Stub 都通过 |
-| B3 PR-10 | Checkpoint、限时审批与恢复 | 参数摘要/主体/资源绑定、撤销/过期、重鉴权、未知写结果查询；故障注入不重复写 |
-| C M02/M05 | 上下文预算/压缩/恢复、RAG 事实支持及知识生命周期 | 固定版本/预算对照；质量与 Token 同报，保留失败样本，选择有证据的检索改进 |
-| D PR-11/M06/M07 | 完善版本化评测、安全回放、Trace 查询与 CI 门禁 | 有可复现改进对照，注入错误能使门禁失败，回放不执行写工具，跨租户不可见 |
-| E M08/M09/M11/M12 | 统一模型和 Prompt、Run 进度、预算/公平性、部署与运维 | 故障供应商/429/超时、并发预算、租户公平、重连/取消、升级/备份恢复/回滚实测 |
-| F M10 | 可选编排/代码隔离 | 有业务需求且相比单 Agent 可解释收益才启用；不阻塞核心版本 |
-
-A6 可在 A2～A5 之间独立实施，不与 DB/Runtime 改造混在一个批次。M06/M07 从 A 开始收集基线，B 把 run/step 关联作为结构的一部分，D 才完善展示和治理。PR-8 的表和迁移必须沿用 A5 权威路径。
-
-## 设计决策与交付规则
-
-1. Java 保留业务事实、事务、资源权限和最终写操作；Python 在现有 AI 服务内部新增 Runtime 模块。先以本地工单业务完成工具闭环，不虚构订单/退款集成。
-2. 优先 PostgreSQL 原子状态迁移/持久化任务，是否需要 MQ 以故障和吞吐证据决定；不能用 `@Async` 替代可靠投递。
-3. PR-3 选择带引用计数的每键互斥，引用覆盖执行者和等待者；不用固定全局锁阻塞无关租户，也不用只改 `remove(key, value)` 的无效修复。分布式领取在 PR-8 解决。
-4. 现有鉴权、账号、RLS、WebSocket、模型调用、知识库、评测脚本优先复用；新增关键选型在编码前补 ADR。
-5. 每批必须先复现或明确可测不变量，再实现和负面测试。报告修改文件、原始日志、环境/版本/模式、命令、实际结果、迁移/回滚、未验证边界。`NOT_MEASURED` 优于填入目标值。
-6. 本地原始日志保存在 `.local/implementation/`；必要的公开工程说明放在 `docs/`。仅使用合成数据和隔离数据库，默认离线模型。性能与质量数据必须注明样本和环境。
-7. 不以完成计划代替完成项目；不因单批测试通过宣称全阶段、生产或所有模块验收通过。每批完成后更新本矩阵及验收记录，再进入下一批。
-
-## 当前执行位置（2026-11-22，C 阶段上下文与 RAG）
-
-阶段 A 已完成退出条件，B1/B2/B3 仍部分实现。现有默认客服流程继续运行。Runtime 已有预算、租约、Outbox、签名 API、正文检查点与进程恢复、有界 Loop 和报告发布。回复与建单支持按回执核销，缺回执继续阻断。工单限时审批已接等待、恢复与决定，可信触发、提案发现和坐席交互待交付。
-
-3d644cb的[CI 44854145977](https://github.com/jkwang1129/SupportFlow/actions/runs/44854145977)两个job全部成功。文档范围/空选集、诊断内容排除和访客发布/索引就绪策略已完成本地/远端验收；该批为Customer008/AI004、94表/1视图/5函数，新增KB列读取不授正文/文档修改。
-
-ad66e75的[CI 44856556934](https://github.com/jkwang1129/SupportFlow/actions/runs/44856556934)两个job全部成功。Runtime查询Embedding已具MODEL共享预算、原子向量Checkpoint与恢复，旧RAG尚未迁入。新50项单元/14项PG、645项AI普通/228项Runtime以及完整默认服务都已在该精确提交CI核实。
-
-本批在既有customer增加窄POST知识API，当前来源/发布就绪/同租户/模型标签与有限结果同事务核验，查询后再次核DB时钟TTL；复用服务签名/read-tools默认关闭。新6项Java单元/9项真实PG，客服PG共112项与Python KB19项通过；228项Runtime及实际JAR签名知识查询/原全部Loop/发布/核销回归通过。响应绑定请求SHA与投影Hash（不是全库版本），无业务副作用/模型调用。三套默认服务验收结果见reliability-verification。本批未注册Python知识工具。证据/边界/回滚见ADR-0019。
-
-914767a的[CI 44859565743](https://github.com/jkwang1129/SupportFlow/actions/runs/44859565743)两个job全部成功。当前新增KnowledgeClient复用固定CustomerTransport，严格类型/字段/来源/请求/查询/投影Hash/片段/范围核验；91项新SDK单元含3例真实TCP及实际Java外层long字符串兼容。AI普通736项通过/233条件skip/1原xfail，24项拒答门禁保持。228项Runtime及原全部实际组合/新产品SDK→真实JAR/受限PG联调通过；证据/回滚见reliability-verification/ADR-0020，SDK本身尚非预算工具。
-
-85c0b89的[CI 44861323394](https://github.com/jkwang1129/SupportFlow/actions/runs/44861323394)两个job全部成功。当前知识Registry工具已接来源/签名SDK/共享MODEL预算，模型仅传query/top_k/doc_ids；每个Run固定Profile/策略，每次来源重验/知识重读，向量可原Checkpoint复用，空范围0模型/知识请求。工具26+新截止9+原Embedding50共85项通过；AI普通771通过/246条件skip/1原xfail，24项拒答门禁保持；新13项PG随241项专项/原全部实际组合保持。7例真实Worker→Embedding TCP→知识SDK/Java/受限PG通过，恢复下线命中1→0且总4Tools/1Model/1Retry。证据/设计/回滚见reliability-verification与ADR-0021。不是完整知识模型决策Loop或自动业务触发。
-
-1dc48d6的[CI 44862361047](https://github.com/jkwang1129/SupportFlow/actions/runs/44862361047)两个job全部成功。当前先交付Customer009不可变建单回执存储，按tenant/run唯一并绑定同租户来源/工单，SI权限/强制RLS；六库95表，旧工单等字段不变。38项真实角色存储、迁移17项/漂移/初始化、三套完整实际服务和112项客服PG+19项KB通过。ADR-0022及reliability-verification记录设计/夹具失败/真实结果/回滚；只有存储不等于已完成Agent建单。
-
-45151c6的[CI 44876389932](https://github.com/jkwang1129/SupportFlow/actions/runs/44876389932)两个job全部成功。当前新增操作专属许可：只允许reply/ticket两个固定操作版本配对，建单授权独立默认关闭，Java有效MAC跨操作也不能写回复；原回复签名字面向量保持。AI普通784通过/262条件skip/1原xfail、24项拒答门禁，新16项Runtime PG随257项/原全部实际组合、新1项客服PG随113项+19 KB、全Java构建和三套完整服务通过。ADR-0023与reliability-verification记录设计/证据/回滚，只有许可不等于业务建单。
-
-610ad79的[CI 44878260746](https://github.com/jkwang1129/SupportFlow/actions/runs/44878260746)两个job全部成功，操作专属许可本地/远端退出条件完成。当前复用TicketService完成Java原子建单及只读回执：固定策略与来源客户/会话，实际结果核验，工单/事件/客户统计/回执同事务，旧渠道行为保留。新4项参数单元/16项PG通过，客服专项共129项与KB19项通过，全模块构建通过；8路同Run只生效一次，未作性能外推。ADR-0024与验收记录保留夹具失败及边界。原子业务子批次2e5cd53的[CI 44880321165](https://github.com/jkwang1129/SupportFlow/actions/runs/44880321165)两个job全部成功。当前新增独立ticket-create签名POST/GET：写开关默认关闭、GET复用read-tools，授权RPC在事务外，匹配回执先查、实际创建同事务再核。新7项权限单元（连旧共34）/10项PG（共139客服+19 KB）与全模块构建通过；3例实际JAR→AI许可/受限PG确认1张工单、终态确认、丢弃确认后GET、来源接管0副作用。保留UNKNOWN不冒充核销，ADR-0025/验收记录保留边界/失败/回滚。6799b6c的[CI 44881610275](https://github.com/jkwang1129/SupportFlow/actions/runs/44881610275)两个job全部成功，受控API本地/远端退出条件完成。
-
-当前建单SDK具备精确原文摘要/固定签名路径、冻结回执/绑定与int64核验、只读回执查询、单次HTTP总期限且无隐式POST重试。新97项SDK单元（含3例真实TCP，连旧共316）/Java4项共享向量通过；AI普通881通过/262条件skip/1原xfail、RAG24项通过；257项Runtime及原全部实际组合保持，产品SDK首个建单POST/3例实际JAR→AI→受限PG通过，UNKNOWN保留。ADR-0026/验收记录保留夹具失败/边界/回滚。8f65bf2的[CI 44882505302](https://github.com/jkwang1129/SupportFlow/actions/runs/44882505302)两个job全部成功，建单SDK本地/远端退出条件完成。
-
-当前ADR-0027将固定create_ticket接入既有Registry/Executor，Scope/闭合参数/来源重验、原共享预算、操作意图与引用结果、单次不确定写GET确认均实现；ReadTool旧路径保持。每Run每操作冻结参数/服务策略，换call key不能改正文，成功写恢复只GET。新42项工具单元（连原63共105）、AI普通923通过/281条件skip/1原xfail、RAG24项通过。Runtime首轮275过/1夹具协议错误，修正后新增19项全部通过、旧257首轮通过，精确CI仍全跑276；10例实际Worker→WRITE工具/SDK→Java→AI许可/受限PG/TCP故障通过。正常3Steps/2Tools、丢确认4Steps/3Tools且仅1POST、重启只GET/1Retry，缺回执/预算不足/取消保持UNKNOWN与后续任务阻断。ADR-0027/验收记录保留分轮证据、边界、风险与回滚。模型WRITE决策Loop、可信触发/Profile Resolver、HITL/工单UNKNOWN终态核销尚未完成；不能把本批宿主选工具说成模型自主规划建单。知识用户级ACL/版本与在途输出最终核验仍未全部完成；可信登记路由/Profile Resolver/HITL、上下文/Eval/Trace/Token金额/运维继续按B～E依赖推进。无生产规模、付费模型质量/Token成本或业务收益成果。
-
-
-b703d4f 的 [CI 44883937143](https://github.com/jkwang1129/SupportFlow/actions/runs/44883937143) 前后端任务全部成功，包括 276 项 Runtime。B3 已增加 AI005 工单核销审计账本，强制租户隔离、同租户步骤外键及不可变权限。25 项真实 PG 新用例、17 项迁移测试、96 表结构和三套完整服务均通过。004 → 005 保留原任务、步骤、正文和回复核销记录。工单终态核销入口按 ADR-0029 交付，HITL 审批仍待后续接入。
-
-
-工单终态核销已通过本地验收。可信宿主读取匹配的历史回执后，持久化审计、解除同会话任务阻断，保留失败状态、取消标记、历史完成时间及预算。65 项定向数据库用例和真实服务 10 例通过，其中两例各用一次 GET 确认既成工单，缺回执仍阻断。下一阶段实施 ADR-0030 的限时审批，先接 AI006 等待状态和审批数据，再接恢复、审批消费及权限。
-
-AI006 已增加 WAITING_APPROVAL 与持久化审批记录。18 项审批存储、17 项迁移、97 表契约和三套完整服务通过。下一批接暂停、决定和按原检查点恢复，随后将审批消费、当前来源核权和业务写许可绑定。验收详见 ADR-0030。
-
-审批暂停、决定与原检查点恢复已通过本地验收。定向 32 项数据库用例通过，其中 16 项新增审批生命周期。真实 Java/AI/PG 拒绝已通过但未消费的写权限，业务工单和回执均为零。下一批把审批一次性消费与写步骤预留放入同一事务，再验真正执行及过期后的行为。
-
-审批一次性消费与正式工单执行通过本地验收。真实服务三案显示获批产生一张工单、一条事件和一条回执，批准后来源撤权或过期均零写入。数据库验证步骤、预算和消费三者原子提交。下一批接现有 Worker 到期发现，随后接可信坐席审查入口。
-
-AI007 将未消费的过期审批加入既有 Worker 发现及领取。77 项审批与 Worker 定向 PostgreSQL 测试、17 项迁移和 97 表结构通过。已暂停任务和审计在升级前后逐字段一致。坐席审查按 ADR-0032 分别接 AI 内部协议和原客服权限。
-
-独立默认关闭的内部审批审查协议通过 15 项新单元、5 项实际 PostgreSQL 用例和三条真实服务审批路径。坐席审查从签名服务收到来源、审批及参数摘要并在锁后重验。下一批接 Java 坐席权限和状态兼容。
-
-1e278f4 的 [CI 44892566490](https://github.com/jkwang1129/SupportFlow/actions/runs/44892566490) 全部通过。客服侧已接登录态、当前管理员或主管角色、短事务核验来源和签名审批决定。受限数据库测试 145 项通过，另有 19 项知识库测试。待审 Run 的重复投递可以确认。坐席需要通过原提案预览取得审批 ID 和摘要，再提交决定。
-
-AI 内部签名预览已通过测试。它绑定租户、来源、Run、原检查点和有效期。59 项审批数据库用例以及 945 项普通 AI 测试通过。客服侧将复核当前来源及提案摘要后向已授权坐席返回正文。
-
-客服预览与决定已在真实 Java/AI/受限 PostgreSQL 三条流程中连通，受限客服数据库测试共 148 项通过。已有可信事件和 Run 的坐席可调用接口查看原提案并决定。待审任务发现、坐席界面和业务入口仍待交付。
-
-运营侧可按指定租户和现有供应商配置启动只读工单 Worker。真实独立进程验证配置关闭时保留任务，开启后只消费指定租户并生成一份内部报告。已通过 82 项定向测试、44 项 Runtime 数据库用例和 10 条实际工单读取路径。下一批接客服端受控事件调度，随后核对访客消息登记的事务及故障边界。
-
-客服已验证显式单租户调度，默认关闭。只读 Worker 与客服调度分别限定同一运营侧租户。下一批从已可信的访客文本入口登记 Outbox，确保重发、回滚、已接管会话和队列不可用时行为符合原消息契约。
-
-显式试点已用真实签名消息 API 验证从访客发送、Outbox、自动投递到独立 Worker 报告。重复消息复用同一事件与任务，共 153 项客服数据库测试通过。原客服闭环继续运行，影子链路目前只生成内部报告。接回 B3 的坐席会话审批发现，并继续上下文、工具与评测工程。
-
-AI 已增加签名会话审批发现。返回有效审批的事件和任务引用，不读取提案正文。13 项定向数据库测试和 959 项普通 AI 测试通过。下一批客服侧核对当前坐席角色、同会话来源与快照后提供查询。
-
-客服会话审批发现、原提案预览和审查决定已组合通过真实 Java、AI 和受限 PostgreSQL 的三条路径。受限客服数据库测试共 156 项通过。接下来将已鉴权接口接入当前会话的坐席操作。
-
-坐席工作台已接会话审批，前端构建及 5 组实际浏览器断言通过。界面只传原提案引用和固定决定，业务写入仍走现有运行时许可。后续先隔离只读 Worker 与审批 Run 的领取，再接显式批准执行宿主。
-
-只读工单 Worker 已排除有审批记录的任务，53 项实际数据库测试和 17 项迁移回归通过。独立会话仍可读，原审批与接管资格留给可信执行端。
-
-已批准执行 Worker 在隔离真实服务下通过 3 条运行路径：正常批准一次建单，批准后接管或过期零写入。普通任务保留。运营可显式启动，待设计可信业务提案生成入口。另启动 C 阶段的确定性上下文策略对照，先复用工单 Loop 已有结构化事实与检查点。
-
-C1 已交付可选工单规划历史压缩。18 项定向单元、17 项 Runtime PostgreSQL 和 10 条实际工单读取路径通过。合成格式样本的规划文本在下一轮从 4,907 字节减至 120 字节，原工单事实和调用次数一致。后续评测长会话的槽位保留和真实模型消耗。
-
-C2 已交付生成回答越界引用拒答。AI 全量 972 项通过，引用和拒答门禁合计 34 项通过。检索原文和旧的基线调用方式保持兼容。下一阶段继续单句事实支持和来源版本评测。
-
-D1 可从受限数据库导出单个 Runtime 轨迹，2 项真实数据库验证包含独立命令、跨租户和不完整记录拒绝。离线回放使用这份版本化元数据核对步骤与结果。
-
-D2 离线回放可校验步骤序列、未知写入和确认结果，并对照预期状态与调用计数。11 项定向单元和 3 项真实数据库测试通过。修改实际导出轨迹的副本能令门禁失败。模型与工具重演为独立后续批次。
-
-B2 的 PR-9/M03 已增加可选 MCP 工单只读客户端。固定工具仍复用原权限、预算与结果核验，真实链路使用受信测试端和签名客服服务。可信 MCP 服务部署、更多业务工具与写入接入分批评估。设计和回滚见 [ADR-0036](decisions/0036-bounded-ticket-mcp.md)。
-
-E1 的 M08/M11 可按租户核查单个 Run 的已观测 Chat 和 Embedding Token 与未知用量次数。复用原子检查点与模型预留，无新增写入。合计首先用于评测和故障排查。金额对账、租户并发配额和账本保留单独验收。见 [ADR-0037](decisions/0037-runtime-observed-model-usage.md)。
-
-B3 已打通明确访客请求、提案暂停、坐席审核和独立 Worker 按原快照建单的本地链路。启用及回滚见 [ADR-0038](decisions/0038-explicit-ticket-proposal.md)。自然语言触发、访客提交入口及业务默认切换仍需独立验收。
-
-D3 将取消、模型超时、工具拒绝和写确认丢失的实际 Run 元数据与版本化基线纳入同一离线门禁。步骤独立复核预算计数，遗漏用例直接失败。当前基线覆盖工程故障和副作用约束，RAG 语义质量及模型交互还需各自评测。
-
-E2 完成 PostgreSQL 17 独立集群六库恢复，校验迁移历史、当前表结构、Outbox 与 Run 关联和受限账号范围。CI 已接演练步骤。环境和边界见 [ADR-0039](decisions/0039-disposable-postgres-restore.md)。
-
-C3 提供默认关闭的 RAG 原文核查。十个配对合成输出验证了具体拒答收益和正确转述损失。两种编排均纳入 CI，语义相关性、时效和生产数据仍单独验收。见 [ADR-0040](decisions/0040-rag-extractive-claims.md)。
-
-B3 补齐由签名访客消息和原事务 Outbox 入站的本地正例。重复消息只登记一次，提案和批准依赖独立进程，等待阶段未写工单。两条接管和过期负例继续保留。
-
-E3 为当前授权的审核员提供对应会话任务的状态、轮次和步骤数，复用已有 Runtime 查询及权限。真实服务对照等待审批与执行后终态。见 [ADR-0041](decisions/0041-authenticated-runtime-progress.md)。
-
-工作台接入已批准任务的手动进度查询，显示终态并撤下旧操作。实际浏览器使用合成 HTTP 结果通过。持久化订阅和重连跟随后续推进。
-
-C4 在发送访客问答前再次核对原租户、发布与索引状态，以及原文切片。生成期间下线、删除、索引失败或内容替换会阻止原结果返回。设计与回滚见 [ADR-0042](decisions/0042-rag-publication-recheck.md)。
-
-E4 给现有按租户积压限制和单租户 Worker 增加真实数据库的双租户竞争回归。运行策略没有增加新的费用或调度规则。共享 Worker 池的公平策略和全局硬额度继续独立验证。
-
-C5 为客服意图分析加入可选消息字节预算，保留当前问题和既有可用槽位。实际 PostgreSQL 验证同名会话按租户恢复，软删除后不再使用。配对样本测得序列化消息 13,638 字节降至 1,632 字节。边界与回滚见 [ADR-0043](decisions/0043-bounded-brain-analysis-context.md)。
-
-C6 修正客服大脑入口的回合选择。历史在当前有效客户提问的位置截断，后续坐席回复及空消息不会进入这次分析。同文字的历史询问仍按原顺序保留。
-
-M04 补齐 Python 客服大脑与 Java 接待服务所测路径的日志边界。排查保留 Trace、计数、HTTP 状态和错误类型。Java 人工兜底、回复推送和意图状态保持原有行为。附件识别、质检、知识库客户端与基础设施日志继续按链路核对。
-
-D4 为 Java 异步客服接待保留提交时已有的合法请求号，直到 AI HTTP 请求。并行会话各用自己的请求号。缺失和无效编号使用本地生成值。更早的图像识别线程及其他异步入口单独核对。
-
-D5 在真实 Java 投递、独立 Python Worker 和受限 PostgreSQL 的工单验收中验证原请求号。重复访客请求使用不同请求号，Outbox 和 Run 仍保留第一次的关联号。查询、接管失败、审批等待和恢复后可按原有导出入口观察步骤，外租户读不到轨迹。
-
-M04 接着处理 Java 知识库客户端。文件名、检索请求、回答、预览片段及上游错误原文从所测应用日志移除，索引和问答继续返回原业务结果。索引、检索和问答错误按原业务错误码及稳定提示返回。
-
-D6 让 Python Worker 在每次处理时使用持久化 Run 的请求号。模型 503、另一租户的成功和原任务恢复分别记录正确的关联号，处理结束后自动恢复调用方上下文。该编号用于内部排障，模型供应商 HTTP 请求仍沿用原有协议。
-
-D7 复用受限命令行入口，可按租户和请求号定位任务，再导出步骤或观察用量。新索引支持精确匹配和结果排序。运维页面、统一跨服务查询与 Span 瀑布图仍待验收。
-
-C7 支持客户在当前回合明确更正一个订单号，先更新模型看到的结构化记忆，再经原流程保存。歧义、否定及超长业务编号沿用普通回合处理；测试覆盖同会话号的双租户记录以及下一轮读取。
-
-E5 将模型步骤的已知 Token 保存为独立回执，在正文检查点过期或清理后仍可核对。Chat 和 Embedding 共用原子提交，历史检查点继续兼容。已核对回滚、重试、租户权限、旧库升级和六库恢复。接下来的费用规则需处理单价版本、并发额度和未知用量。见 [ADR-0044](decisions/0044-durable-model-usage-receipts.md)。
-
-E6 提供按显式价目快照核查单个任务已知用量的费用估算。记录费率版本与文件摘要，分别列出已计价、缺费率和缺用量的调用。沿用原模型回执和租户权限。租户硬额度、价格发布与真实账单对账单独验收。见 [ADR-0045](decisions/0045-versioned-runtime-cost-estimates.md)。
-
-E7 为租户增加数据库模型并发配额，预留、Run 调用计数和步骤创建原子提交。达到上限时短暂重新排队，既有截止时间继续有效。真实 Token 与金额预留、日月用量上限和生产调度容量继续独立验收。见 [ADR-0046](decisions/0046-tenant-model-concurrency.md)。
-
-E8 新增可选的 UTC 每日 Token 额度，Chat 和 Embedding 按租户共用预留，已知用量按持久回执结算，未知占用保留至当日结束。原 Run 预算及并发上限继续生效。待完善月度额度、按模型预留估计、金额和账单对账。配置与回滚见 [ADR-0047](decisions/0047-tenant-daily-token-budget.md)。
-
-E9 第一批从原始预留和用量回执建立按租户和 UTC 日期的汇总，迁移回填并检查逐日账目一致性。写入汇总与追加明细同事务。月度调用额度使用下一批接入的准入检查。见 [ADR-0048](decisions/0048-model-token-day-accounting.md)。
-
-E9 第二批在预留前核对可选的 UTC 月度额度。每日和月度判断共用 E9 日汇总，最多读取 31 个日期。已有任务继续按原预留日期进行结算。金额预留与实际供应商账单对账单独推进。配置和回滚见 [ADR-0049](decisions/0049-tenant-monthly-model-token-quota.md)。
-
-E10 在调用前按显式价目预留日度和月度估算金额，结算使用该次调用绑定的费率。配置、审核和回滚见 [ADR-0050](decisions/0050-tenant-model-cost-reservations.md)。真实供应商账单的导入与对账独立推进。
-
-E11 收紧旧客服 AI 月预算闸门。Ops 读取当前预算和用量，客服在无法确认时跳过模型或保留已知暂停。见 [ADR-0070](decisions/0070-legacy-ai-cost-guard.md) 和 [本地验收](reliability-verification.md#e11-旧客服-ai-月预算闸门2026-11-24)。
-
-E12 将视觉模型接入共用有界传输，按业务保留图片请求上限，补齐租户用量归属并收敛视觉日志。见 [ADR-0071](decisions/0071-bounded-vision-model-transport.md) 和 [本地验收](reliability-verification.md#e12-视觉模型有界传输与计量2026-11-24)。
-
-E13 两种旧知识库引擎与训练向量化接入共用有界传输。按批验证向量顺序和结构，失败时统一降级，同文档切片写入保持原子事务。见 [ADR-0072](decisions/0072-bounded-legacy-embedding.md) 和 [本地验收](reliability-verification.md#e13-旧知识库向量传输与并发写入2026-11-25)。
-
-E14 工单只读 Worker 增加显式 Prompt 版本发布。新任务按租户 Worker 配置绑定，历史任务按持久化版本恢复，并支持带版本的离线回放。见 [ADR-0073](decisions/0073-ticket-planner-prompt-release.md) 和 [本地验收](reliability-verification.md#e14-工单-prompt-版本发布与回退2026-11-25)。
-
-E15 统一旧客服 Chat 的租户供应商选择。租户选择不可用时使用业务已有的本地处理，只有确认未设置模型的租户才使用平台默认。见 [ADR-0074](decisions/0074-legacy-chat-provider-routing.md) 和 [本地验收](reliability-verification.md#e15-旧客服-chat-供应商路由2026-11-25)。
-
-E16 将 RustFS 对象和附件元数据核验并入六库恢复演练，测量停写合成样本的备份和恢复耗时。见 [ADR-0075](decisions/0075-attachment-and-database-restore.md) 和 [本地验收](reliability-verification.md#e16-六库与附件联合恢复2026-11-25)。
-
-E17 在联合恢复目标上启动客服与 AI，读取附件和持久任务，并在同一组进程上验证共享结构故障与修复。见 [ADR-0076](decisions/0076-restored-service-acceptance.md) 和 [本地验收](reliability-verification.md#e17-恢复后的客服与-ai-读取2026-11-25)。
-
-E18 增加附件专项就绪探测和存储不可用响应。在同一恢复目标上暂停 RustFS，验证纯文本聊天继续可用、文件读取返回 503、存储恢复后原文件继续可读。见 [ADR-0077](decisions/0077-attachment-readiness.md) 和 [本地验收](reliability-verification.md#e18-附件就绪与-rustfs-故障恢复2026-11-25)。
-
-E19 提供按租户的 Runtime 积压、审批和终态延迟检查。复用只读轨迹连接和首次领取事件，支持用配置阈值生成告警。见 [ADR-0078](decisions/0078-runtime-queue-metrics.md) 和 [本地验收](reliability-verification.md#e19-runtime-积压与延迟快照2026-11-25)。
-
-E20 通过 AI 016 和独立维护身份，按租户预览并清理已确定终态的过期检查点。审计轨迹和 Token 回执可继续读取，执行中、审批等待和写入结果未知的数据保留。见 [ADR-0079](decisions/0079-expired-checkpoint-retention.md) 和 [本地验收](reliability-verification.md#e20-过期-agent-检查点清理2026-11-25)。
-
-E21 冻结 12 题政策冲突、人工核验和证据不足留出集。复用现有真实检索、引用契约和逐题语义对照。见 [ADR-0080](decisions/0080-rag-policy-holdout.md) 和 [本地验收](reliability-verification.md#e21-rag-政策留出集2026-11-25)。
-
-E22 在可选访客模式中区分数字冲突、原文要求人工处理和普通知识不足。利用 E21 的固定样本复跑真实模型和 CI 替身，真实对照命中 4/4 道人工核验题，其余 8 题无误触发。见 [ADR-0081](decisions/0081-rag-policy-review-routing.md) 和 [本地验收](reliability-verification.md#e22-rag-政策冲突与人工核验2026-11-25)。
-
-E23 按租户和文档串行化知识库写入判断。并发重新索引读取已提交的新正文，发布重新核对当前索引状态，删除标记和切片清理同事务提交。见 [ADR-0082](decisions/0082-kb-document-write-serialization.md) 和 [本地验收](reliability-verification.md#e23-知识库写入与检索版本竞争2026-11-25)。
-
-E24 在隔离暂存表中生成切片，以原文档事务切换生效切片。响应丢失和失败重试期间保留原知识版本。见 [ADR-0083](decisions/0083-kb-index-staging.md) 和 [本地验收](reliability-verification.md#e24-知识索引暂存与原子切换2026-11-25)。
-
-E25 通过独立维护身份为闲置租户预览和清理超 24 小时的索引暂存切片。Java 拒绝切换过期切片，既有检索继续读取原生效版本。见 [ADR-0084](decisions/0084-kb-stage-retention.md) 和 [本地验收](reliability-verification.md#e25-闲置租户知识索引暂存清理2026-11-25)。
-
-E26 在成功重索引时保存一份上一版索引，通过受租户限制的版本 UUID 回滚正文与向量。回滚消费快照，同版本重复请求和过时版本均拒绝。见 [ADR-0085](decisions/0085-kb-previous-index-rollback.md) 和 [本地验收](reliability-verification.md#e26-上一版知识索引回滚2026-11-25)。
-
-E27 用 37 道固定题对照关键词、真实向量与 RRF。混检在基准集的排序和数据库尾延迟落后于向量单路，在留出集无排序收益。混检进入评测门禁。见 [ADR-0086](decisions/0086-rag-retrieval-comparison.md) 和 [本地验收](reliability-verification.md#e27-关键词向量与混合检索对照2026-11-25)。
-
-D8 固定 RAG 质量对照语料和 25 题标注，覆盖拒答、转人工、事实与原文引用、租户和发布状态。内容摘要与负面校验纳入 CI。对照运行和质量结果在后续批次交付。数据及口径见 [ADR-0051](decisions/0051-fixed-rag-quality-dataset.md)。
-
-D9 使用同一张生产 RAG 图、隔离 PostgreSQL 的实际关键词检索和固定生成替身完成 25 题配对运行，逐轮检索、引用、拒答及预算结果可复现，报告进入 CI。后续批次测量真实模型答案质量和已观测用量，并按人工事实标注校准语义评分。见 [ADR-0052](decisions/0052-paired-rag-benchmark.md) 和 [本地验收](reliability-verification.md#d9-单次检索与-agentic-rag-对照运行2026-11-23)。
-
-D10 复用同一固定样本，完成 `qwen-plus` 的 25 题配对试跑、33 次用量回执和 50 条逐题语义复核。结构引用均通过，两组仍有 3 条引用不能支撑结论。把程序的回答状态与正文拒答或建议人工分开报告。已测范围和剩余风险见 [ADR-0053](decisions/0053-live-rag-evaluation.md) 和 [本地验收](reliability-verification.md#d10-真实模型配对与语义复核2026-11-23)。
-
-D11 用 9 道固定题对照原版、2 KiB 和 4 KiB 意图上下文策略。`qwen-plus` 共返回 25 份用量回执。共同执行的 8 题中，4 KiB 保留 8/8 的意图与订单号结果，合计 Token 减少 14.63%。2 KiB 丢失一个早期话题。两个预算均保留超长当前问题场景的订单号，但该场景的意图兜底未命中。见 [ADR-0054](decisions/0054-brain-context-qualification.md) 和 [本地验收](reliability-verification.md#d11-客服意图上下文预算与会话恢复2026-11-23)。
-
-D12 在相同检索下对照原版 Agentic RAG 与可选的访客结构化答复。接口应拒答命中从 8/10 到 10/10，应答题逐题复核从 9/13 到 12/13。合计 Token 增加 43.22%，政策冲突题仍需核验清晰的人工路由。后续还需独立样本与可信来源类型。见 [ADR-0055](decisions/0055-grounded-visitor-rag-replies.md) 和 [本地验收](reliability-verification.md#d12-访客结构化答复和原文引用对照2026-11-23)。
-
-D13 为可选的访客结构化模式分离系统规则、问题及资料字段，固定 10 项工单和知识权限回归，绑定实际 PostgreSQL 测试报告。新覆盖访客数据、工具返回说明、只读能力范围及不可见资料排除，门禁能识别实际结果漏跑。其后继续完善跨服务追踪与受控回放。见 [ADR-0056](decisions/0056-agent-input-permission-boundaries.md) 和 [本地验收](reliability-verification.md#d13-agent-输入与权限边界回归2026-11-23)。
-
-D14 统一读取 Java 事件、Python Run/Step 和审批状态，按事件、任务或原请求号查询。10 份时间点覆盖投递前、回执等待、模型失败后重试、资源撤权、进程接管及审批等待到消费。见 [ADR-0057](decisions/0057-cross-service-trace-timeline.md) 和 [本地验收](reliability-verification.md#d14-java-与-python-跨服务时间线2026-11-23)。
-
-D15 线上的只读工单 Loop 与离线入口共用规划逻辑。组合验收录制 4 个合成会话，离线匹配 7 次模型决策、6 次逻辑读取及对应状态或错误。篡改一条调用摘要后回放门禁返回失败。审批、写操作和真实重试由现有联调验收，回放范围为单次只读规划尝试。见 [ADR-0058](decisions/0058-controlled-ticket-planner-replay.md) 和 [本地验收](reliability-verification.md#d15-工单模型与只读工具受控回放2026-11-23)。
-
-D16 从签名访客入口验收同一会话查询历史工单后提交新申请。真实客服服务与独立 Worker 执行审批和建单，验收将 Run 结果与业务回执及数据库记录逐项核对。确认丢失时由只读回执恢复，接管、过期及撤回审批后无业务写入。工作台和访客 Widget 的浏览器交互仍独立验收。见 [ADR-0059](decisions/0059-signed-ticket-journey.md) 和 [本地验收](reliability-verification.md#d16-访客查询与审批建单闭环2026-11-23)。
-
-D17 修复工作台刷新后丢失终态进度，以及迟到的会话响应覆盖当前选择。真实浏览器验证审批提交、刷新与重开、审批预览竞态、403/404、断线重查和会话切换。进度恢复复用受限 HTTP 接口，浏览器回归纳入 CI。见 [ADR-0060](decisions/0060-workspace-approval-progress.md) 和 [本地验收](reliability-verification.md#d17-坐席审批与执行进度浏览器回归2026-11-23)。
-
-D18 修复访客 Widget 的消息补拉。复用已认证的 WebSocket，按当前连接身份读取访客可见的会话消息。浏览器检查在线漏帧、重连顺序、分批补拉及同客户端消息号重发。实际服务核查内部备注过滤、会话绑定和游标校验。见 [ADR-0061](decisions/0061-visitor-message-catchup.md) 和 [本地验收](reliability-verification.md#d18-访客-widget-消息补拉2026-11-23)。
-
-D19 在显式启用的租户中，把获批工单的确认消息、工单及回执放入同一事务。审批许可和存储事务分别验收。访客通过既有历史或补拉读取确认结果。见 [ADR-0062](decisions/0062-approved-ticket-visitor-notice.md) 和 [本地验收](reliability-verification.md#d19-获批工单的访客确认消息2026-11-24)。
-
-D20 客服提交后签发工单确认的消息引用。实时服务回读已提交记录，只对同租户同会话的在线访客发送。推送失败时用原聊天补拉恢复。见 [ADR-0063](decisions/0063-online-approved-ticket-notice.md) 和 [本地验收](reliability-verification.md#d20-获批工单的在线访客通知2026-11-24)。
-
-D21 工作台支持整页刷新后按当前会话恢复最近的已审批终态。客服服务重新核验角色、会话、投递事件及来源快照，浏览器只收到状态与执行计数。活动提案优先显示。见 [ADR-0064](decisions/0064-session-terminal-approval-progress.md) 和 [本地验收](reliability-verification.md#d21-整页刷新后恢复工单任务终态2026-11-24)。
-
-D22 将整页恢复扩展到审批已消费的执行中和等待重试状态。复用原会话查询、权限范围和三字段响应，坐席可手动刷新到终态。见 [ADR-0065](decisions/0065-consumed-approval-progress.md) 和 [本地验收](reliability-verification.md#d22-整页刷新后恢复执行中的已审批工单任务2026-11-24)。
-
-D23 在 AI 数据库以同事务记录任务与步骤事件，并提供已知工单任务的坐席补拉接口。每页最多 16 条，根据提交顺序推进游标并重新核验来源。浏览器自动续传留待后续。见 [ADR-0066](decisions/0066-approval-run-event-cursor.md) 和 [本地验收](reliability-verification.md#d23-工单任务事件与序号补拉2026-11-24)。
-
-D24 工作台自动补拉任务事件，离线期间暂停并在重连后从当前游标继续，关闭窗口或切换会话时取消旧请求。整页刷新可重新定位授权任务。见 [ADR-0067](decisions/0067-workspace-approval-event-recovery.md) 和 [本地验收](reliability-verification.md#d24-坐席工作台任务事件自动补拉2026-11-24)。
-
-D25 坐席可取消已批准工单任务。Runtime 以原任务行锁处理取消与完成竞争，反馈终态或脱敏写入状态，并保留已提交工单与回执供核查。见 [ADR-0068](decisions/0068-staff-ticket-task-cancellation.md) 和 [本地验收](reliability-verification.md#d25-坐席取消已批准工单任务2026-11-24)。
-
-D26 工单确认通知支持向指定实时节点分别发送签名引用。某节点失败时，其他节点继续送达，受影响连接可按消息序号补拉。验收记录两组首事件和终态读取耗时。见 [ADR-0069](decisions/0069-multi-node-ticket-notices.md) 和 [本地验收](reliability-verification.md#d26-多节点工单通知与进度延迟2026-11-24)。
+| **1. Agent Runtime**<br/>自主工具调用与可靠执行 | 持久化 `Run/Step/Payload`、Java 事务 `Outbox`、数据库租约/心跳/跨进程接管、限时 HITL 审批、任务进度事件游标补拉与取消、基于不可变回执的未知写核销。 | 解除 `TicketReadLoop` 单工具与 `/ticket-request` 限制，落地 `Workflow + Agent Loop` 条件路由（`Intent Router`）与多工具动态选择、自然语言建单提案。 |
+| **2. Context Engineering**<br/>上下文管理与压缩 | 系统规则与不可信 JSON 数据隔离、工单规划历史压缩（`4,907B -> 120B`）、客服意图字节预算（`4 KiB` 省 `14.63%` Token）、回合锚定截断、当前轮订单号更正。 | 长多轮会话滚动摘要压缩、大工具输出分页/白名单裁剪，以及在多轮任务集上实测单任务平均模型成本降幅。 |
+| **3. AI Security**<br/>工具权限与多租户安全 | 8 个非超级用户受限 DB 角色 + 严格 `FORCE RLS`、服务间 HMAC 签名、操作专属短期写许可、工具闭合 Schema + Scope + 资源归属复核、参数绑定单次审批。 | 新增客户资料（脱敏）与历史会话只读工具的权限边界，将越权与直接/间接 Prompt Injection 自动化回归扩充至 ≥50 项。 |
+| **4.Agentic RAG & 知识治理**<br/>高可靠企业知识检索 | `pgvector` HNSW、查询改写、低分拒答、逐句原文支撑校验、数值冲突拦截与人工核验路由、索引暂存原子切换、过期清理、上一版索引回滚及 37 题离线/在线混检对照。 | 服务端可信来源权威分级（正式政策 vs 参考资料）、将 `Hybrid Search + RRF + Reranking` 接入线上可选检索链路并在高区分度语料上实测 `Recall@5` 提升。 |
+| **5. Evaluation**<br/>自动化评测与质量回归 | 25 题主集 + 12 题政策留出集 + 9 题意图集 + 10 题边界集 + 故障轨迹与只读规划回放，全部接入 GitHub Actions CI。 | 构建覆盖六大类的 **200 条 Golden Dataset**，接入 `LLM-as-a-Judge` 与人工一致性校准，补齐 ≥50 项故障注入恢复测试。 |
+| **6. Observability & LLMOps**<br/>追踪定位、路由与成本治理 | 异步请求号贯穿、跨库执行时间线、无副作用回放、积压延迟告警；有界模型传输、租户供应商路由、工单 Prompt 版本发布/回退、租户并发配额及日/月 Token 与金额预留。 | 接入 `OpenTelemetry + Langfuse` 实现标准 `Run/Step/Span` 追踪导出；在 `Model Gateway` 增加按供应商滑动窗口熔断器（`Circuit Breaker`）；补运维 `Runbook`。 |
+
+---
+
+## 2. 原代码审查清单（PR-0 ～ PR-12）状态矩阵
+
+| 编号 | 模块范围 | 当前状态 | 核心源码与测试证据 | 剩余收口点 |
+| --- | --- | --- | --- | --- |
+| **PR-0** | 测试基线与 CI | **已完成（持续演进）** | `.github/workflows/verification.yml`；63 个 Java 测试类、80 个 Python 测试文件、Playwright 浏览器回归 | 随后续新能力同步扩充 CI 门禁 |
+| **PR-1** | RLS fail-closed 与受限账号 | **已完成** | `TenantRlsConfig.java`、`RuntimeDatabaseGuard.java`、`40-runtime-roles.sql`、`test-runtime-security.py` | 保持非超级用户与严格 RLS 基线不退化 |
+| **PR-2** | AI 内部接口鉴权 | **已完成** | `ai/core/internal_auth.py`、`AiGatewayAccess.java`、`CustomerInternalAccess.java` | 新增内部工具端点继续沿用签名与租户绑定 |
+| **PR-3** | 会话串行锁生命周期 | **已完成** | `SessionSerialExecutor.java`、`BotBrainConcurrencyTest`（6 项并发/中断回归） | 无（跨进程顺序由 PR-8 保障） |
+| **PR-4** | PostgreSQL 消息幂等 | **已完成** | `SessionService#appendMessage`、`SessionMessagePostgresTest`（7 项真实 PG 回归，消除 `25P02`） | 无 |
+| **PR-5** | 坐席原子认领 | **已完成** | `SessionMapper#claimUnassigned`、`SessionClaimPostgresTest`（5 项竞态回归） | 无 |
+| **PR-6** | 计费用量批次去重 | **已完成** | `BillingUsageOutbox`、`30-usage-batches.sql`、`test-usage-batches.py`（14 项真实 PG 回归） | 网关独立日统计保持现有边界 |
+| **PR-7** | 版本化迁移与 Readiness | **已完成** | `db-migrate.py`、`manifest.json`（六库 106 表）、`SchemaReadiness`、`test-schema-drift.py` | 新表变更严格走版本化迁移与漂移校验 |
+| **PR-8** | 持久化 Agent Run | **核心完成（~80%）** | `ai/runtime/{store,worker,payloads}.py`、`AgentEventOutbox`、`test-agent-runtime.py` | 接入 `Intent Router` 打通复杂客服请求分流 |
+| **PR-9** | Tool Registry 与受控执行 | **部分完成（~75%）** | `ai/runtime/tools.py`、知识/工单读写工具及 `mcp_ticket.py` | 补齐客户资料、历史会话工具及多工具联合规划循环 |
+| **PR-10** | Checkpoint / Resume / HITL | **工单闭环完成（~80%）** | `ai/runtime/approvals.py`、工作台审批/进度补拉/取消组件、`ticket_create_receipt` | 支持自然语言建单提案触发及 ≥50 项故障恢复统计 |
+| **PR-11** | Evaluation / Replay / Trace | **部分完成（~75%）** | `scripts/benchmarks/`、`trace_timeline.py`、`ticket_replay.py` | 扩充至 200 条 Golden Dataset + Judge 校准 + OTel/Langfuse |
+| **PR-12** | RAG Grounding 与拒答 | **主体完成（~90%）** | `ai/rag/{graph,grounded_reply,stage_retention}.py`、`KbService.java` | 补可信来源权威分级、线上 Hybrid RRF + Reranking 及难例基准 |
+
+---
+
+## 3. 工程交付基本准则
+
+1. **边界清晰**：Java 管理确定性业务事实、权限校验、事务与副作用回执；Python 管理编排、检索、上下文压缩与受控工具决策。
+2. **安全底线**：禁止使用超级用户或 `BYPASSRLS` 运行业务；新增任何工具或接口必须具备闭合 Schema、可信身份租户绑定与负面越权测试。
+3. **证据导向**：所有评测、延迟、Token 与恢复指标必须来自可复现脚本、明确样本分母与原始 JSON 报告，未测项标记 `NOT_MEASURED`，严禁编造数据。
+4. **整洁可维护**：遵守标准 Python（PEP 8）与 Java 代码排版规范，禁止单行分号堆砌与无空格压缩写法；脚本、测试与文档按职责分层归档。

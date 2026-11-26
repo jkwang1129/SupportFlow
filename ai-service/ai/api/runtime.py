@@ -65,7 +65,7 @@ class TicketApprovalReviewRequest(TicketApprovalSource):
     approval_id: StrictStr = Field(min_length=36, max_length=36)
     arguments_sha256: StrictStr = Field(pattern=r'^[0-9a-f]{64}$')
     reviewer_ref: StrictStr = Field(pattern=r'^staff:[1-9][0-9]{0,18}$')
-    decision: Literal['approve','deny','revoke']
+    decision: Literal['approve', 'deny', 'revoke']
 
     @field_validator('approval_id')
     @classmethod
@@ -114,37 +114,39 @@ class TicketApprovalSession(BaseModel):
 
 class ActionRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    tenant_code: StrictStr = Field(min_length=1,max_length=16)
-    source_event_id: StrictStr = Field(min_length=36,max_length=36)
-    owner: StrictStr = Field(min_length=1,max_length=64)
-    fence: StrictInt = Field(gt=0,le=9223372036854775807)
-    snapshot_id: StrictStr = Field(min_length=36,max_length=36)
+    tenant_code: StrictStr = Field(min_length=1, max_length=16)
+    source_event_id: StrictStr = Field(min_length=36, max_length=36)
+    owner: StrictStr = Field(min_length=1, max_length=64)
+    fence: StrictInt = Field(gt=0, le=9223372036854775807)
+    snapshot_id: StrictStr = Field(min_length=36, max_length=36)
     arguments_sha256: StrictStr = Field(pattern=r'^[0-9a-f]{64}$')
-    operation: Literal['session.reply','ticket.create'] = 'session.reply'
-    version: Literal['reply-v1','ticket-create-v1'] = 'reply-v1'
+    operation: Literal['session.reply', 'ticket.create'] = 'session.reply'
+    version: Literal['reply-v1', 'ticket-create-v1'] = 'reply-v1'
     require_approval: StrictBool = False
 
     @model_validator(mode='after')
     def operation_version_pair(self):
-        if (self.operation,self.version) not in (('session.reply','reply-v1'),('ticket.create','ticket-create-v1')):
+        if (self.operation, self.version) not in (
+                ('session.reply', 'reply-v1'), ('ticket.create', 'ticket-create-v1')):
             raise ValueError('Unsupported action operation/version pair')
         if self.require_approval and self.operation != 'ticket.create':
             raise ValueError('Approval-bound action requires ticket creation')
         return self
 
-    @field_validator('source_event_id','snapshot_id')
+    @field_validator('source_event_id', 'snapshot_id')
     @classmethod
-    def canonical_uuid(cls,value):
-        if str(UUID(value))!=value: raise ValueError('Canonical UUID required')
+    def canonical_uuid(cls, value):
+        if str(UUID(value)) != value:
+            raise ValueError('Canonical UUID required')
         return value
 
     @field_validator('owner')
     @classmethod
-    def opaque_owner(cls,value): return identifier(value)
+    def opaque_owner(cls, value): return identifier(value)
 
     @field_validator('tenant_code')
     @classmethod
-    def trusted_tenant(cls,value): return tenant_code(value)
+    def trusted_tenant(cls, value): return tenant_code(value)
 
 
 def runtime_store():
@@ -157,7 +159,7 @@ def status(row):
     if row is None:
         raise HTTPException(404, 'Run not found')
     return {key: row[key] for key in ('tenant_code', 'run_id', 'source_event_id', 'state', 'attempt',
-                                     'step_count', 'model_calls', 'tool_calls', 'retry_count', 'error_code')}
+                                      'step_count', 'model_calls', 'tool_calls', 'retry_count', 'error_code')}
 
 
 def database_operation(action):
@@ -194,25 +196,28 @@ def cancel(run_id: UUID, body: EmptyRequest, request: Request, store=Depends(run
 
 @router.post('/{run_id}/authorize')
 def authorize(run_id: UUID, body: ActionRequest, request: Request, store=Depends(runtime_store)):
-    tenant=request.state.runtime_tenant
-    if body.tenant_code!=tenant: raise HTTPException(403,'Runtime tenant mismatch')
-    if body.operation=='ticket.create' and not get_settings().runtime_ticket_actions_enabled:
-        raise HTTPException(503,'Ticket action authority is disabled')
+    tenant = request.state.runtime_tenant
+    if body.tenant_code != tenant:
+        raise HTTPException(403, 'Runtime tenant mismatch')
+    if body.operation == 'ticket.create' and not get_settings().runtime_ticket_actions_enabled:
+        raise HTTPException(503, 'Ticket action authority is disabled')
     try:
-        authorize=store.authorize_reply if body.operation=='session.reply' else store.authorize_ticket_create
+        authorize = store.authorize_reply if body.operation == 'session.reply' else store.authorize_ticket_create
         approval_policy = {'require_approval': True} if body.require_approval else {}
-        grant=authorize(tenant,run_id,body.source_event_id,body.owner,body.fence,body.snapshot_id,body.arguments_sha256,
-                        **approval_policy)
-        if grant is None: raise HTTPException(404,'Run not found')
-        return sign_authority(grant,get_settings().customer_secret.get_secret_value())
+        grant = authorize(tenant, run_id, body.source_event_id, body.owner, body.fence, body.snapshot_id, body.arguments_sha256,
+                          **approval_policy)
+        if grant is None:
+            raise HTTPException(404, 'Run not found')
+        return sign_authority(grant, get_settings().customer_secret.get_secret_value())
     except ActionDenied:
-        raise HTTPException(409,'Runtime action is not authorized') from None
+        raise HTTPException(409, 'Runtime action is not authorized') from None
     except psycopg.Error:
-        raise HTTPException(503,'Runtime authority unavailable') from None
+        raise HTTPException(503, 'Runtime authority unavailable') from None
 
 
 @router.post('/{run_id}/review-ticket-approval')
-def review_ticket_approval(run_id: UUID, body: TicketApprovalReviewRequest, request: Request, store=Depends(runtime_store)):
+def review_ticket_approval(run_id: UUID, body: TicketApprovalReviewRequest,
+                           request: Request, store=Depends(runtime_store)):
     if not get_settings().runtime_approval_review_enabled:
         raise HTTPException(503, 'Runtime approval review is disabled')
     # The customer service signs the reviewer identity after its own role and session checks.
@@ -253,7 +258,8 @@ def ticket_approval_preview(run_id: UUID, body: TicketApprovalSource, request: R
 
 
 @router.post('/ticket-approval-active')
-def active_ticket_approval(body: TicketApprovalSession, request: Request, response: Response, store=Depends(runtime_store)):
+def active_ticket_approval(body: TicketApprovalSession, request: Request,
+                           response: Response, store=Depends(runtime_store)):
     if not get_settings().runtime_approval_review_enabled:
         raise HTTPException(503, 'Runtime approval review is disabled')
     try:
@@ -308,7 +314,7 @@ def cancel_ticket_approval(run_id: UUID, body: TicketApprovalCancellation, reque
         raise HTTPException(503, 'Runtime approval review is disabled')
     try:
         result = TicketApprovals(store).cancel_approved(request.state.runtime_tenant, run_id, UUID(body.source_event_id),
-                                                         UUID(body.snapshot_id), body.reviewer_ref)
+                                                        UUID(body.snapshot_id), body.reviewer_ref)
     except RuntimeConflict:
         raise HTTPException(409, 'Approved ticket task is unavailable for cancellation') from None
     except psycopg.Error:

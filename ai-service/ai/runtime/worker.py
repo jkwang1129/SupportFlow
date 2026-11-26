@@ -10,11 +10,12 @@ from ..core.trace import bind_trace_id
 from .store import RuntimeStore
 from .types import (ActionDenied, Lease, LostLease, BudgetExceeded, ModelCapacityBusy, ModelTokenQuotaExceeded,
                     ModelCostRejected, RuntimeConflict, identifier, fingerprint, reference, tenant_code)
-from .payloads import SCHEMAS,encode as encode_payload
+from .payloads import SCHEMAS, encode as encode_payload
 
 
 class TransientFailure(Exception):
     """A classified retryable failure; never pass provider exception text as its code."""
+
     def __init__(self, code, *, delay_seconds=1):
         self.code = identifier(code)
         if type(delay_seconds) is not int or not 0 <= delay_seconds <= 300:
@@ -54,17 +55,17 @@ class ExecutionContext:
         Each external attempt reserves a new fenced step and consumes shared budget.
         The caller must use business references to reload any larger result payload.
         """
-        return self._step(key,kind,effect,intent_ref,execute)
+        return self._step(key, kind, effect, intent_ref, execute)
 
-    def payload_step(self,key,kind,effect,intent_ref,schema,execute: Callable):
+    def payload_step(self, key, kind, effect, intent_ref, schema, execute: Callable):
         """Reuse an atomically persisted model/read/internal value after restart.
 
         Values are untrusted data; callers must reauthorize business resources
         before using them. WRITE outcomes use business receipts, never this API.
         """
-        if not isinstance(schema,str) or SCHEMAS.get(schema)!=(kind,effect):
+        if not isinstance(schema, str) or SCHEMAS.get(schema) != (kind, effect):
             raise ValueError('Payload schema does not match execution kind')
-        return self._step(key,kind,effect,intent_ref,execute,payload_schema=schema)
+        return self._step(key, kind, effect, intent_ref, execute, payload_schema=schema)
 
     def prior_step_intent(self, key):
         """Read a previously reserved logical step's immutable intent under the current lease."""
@@ -86,22 +87,32 @@ class ExecutionContext:
                     if step['step_key'].startswith(prefix)]
         return prefix, previous
 
-    def _value(self,result,step_no,schema):
-        if schema is None:return result
+    def _value(self, result, step_no, schema):
+        if schema is None:
+            return result
         try:
-            if set(result)!={'resource_ref'} or not result['resource_ref'].startswith('payload:'):raise ValueError()
-            raw=result['resource_ref'].removeprefix('payload:');payload_id=UUID(raw)
-            if str(payload_id)!=raw:raise ValueError()
-        except (ValueError,TypeError,KeyError,AttributeError):raise PermanentFailure('PAYLOAD_REFERENCE_INVALID') from None
-        try:payload=self.store.payload(self.lease.tenant,self.lease.run_id,payload_id)
-        except RuntimeConflict:raise PermanentFailure('PAYLOAD_INVALID') from None
-        if payload is None:raise PermanentFailure('PAYLOAD_UNAVAILABLE')
-        if payload.step_no!=step_no:raise PermanentFailure('PAYLOAD_REFERENCE_INVALID')
-        if payload.schema!=schema:raise PermanentFailure('PAYLOAD_SCHEMA_MISMATCH')
+            if set(result) != {'resource_ref'} or not result['resource_ref'].startswith('payload:'):
+                raise ValueError()
+            raw = result['resource_ref'].removeprefix('payload:')
+            payload_id = UUID(raw)
+            if str(payload_id) != raw:
+                raise ValueError()
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise PermanentFailure('PAYLOAD_REFERENCE_INVALID') from None
+        try:
+            payload = self.store.payload(self.lease.tenant, self.lease.run_id, payload_id)
+        except RuntimeConflict:
+            raise PermanentFailure('PAYLOAD_INVALID') from None
+        if payload is None:
+            raise PermanentFailure('PAYLOAD_UNAVAILABLE')
+        if payload.step_no != step_no:
+            raise PermanentFailure('PAYLOAD_REFERENCE_INVALID')
+        if payload.schema != schema:
+            raise PermanentFailure('PAYLOAD_SCHEMA_MISMATCH')
         self.check_active()
         return payload.value
 
-    def _step(self,key,kind,effect,intent_ref,execute,payload_schema=None):
+    def _step(self, key, kind, effect, intent_ref, execute, payload_schema=None):
         intent_ref = reference(intent_ref)
         self.check_active()
         prefix, previous = self._step_history(key)
@@ -110,7 +121,7 @@ class ExecutionContext:
             raise RuntimeConflict('Logical step intent changed across attempts')
         for step in reversed(previous):
             if step['state'] == 'SUCCEEDED':
-                return self._value(step['result_ref'],step['step_no'],payload_schema)
+                return self._value(step['result_ref'], step['step_no'], payload_schema)
             if step['effect'] == 'WRITE' and step['state'] in ('RESERVED', 'UNKNOWN'):
                 raise PermanentFailure('SIDE_EFFECT_UNKNOWN')
         physical_key = prefix + str(self.lease.fence)
@@ -121,11 +132,14 @@ class ExecutionContext:
             raise RuntimeConflict('Step attempt has already been reserved')
         try:
             self.check_active()
-            output=execute()
-            if payload_schema is None:result=reference(output)
+            output = execute()
+            if payload_schema is None:
+                result = reference(output)
             else:
-                try:encode_payload(payload_schema,output)
-                except ValueError:raise PermanentFailure('PAYLOAD_FORMAT_INVALID') from None
+                try:
+                    encode_payload(payload_schema, output)
+                except ValueError:
+                    raise PermanentFailure('PAYLOAD_FORMAT_INVALID') from None
         except LostLease:
             raise
         except Exception:
@@ -134,13 +148,14 @@ class ExecutionContext:
             self.store.complete_step(self.lease, physical_key, 'UNKNOWN', {'error_code': 'CALL_FAILED'})
             raise
         self.check_active()
-        if payload_schema is None:self.store.complete_step(self.lease, physical_key, 'SUCCEEDED', result)
+        if payload_schema is None:
+            self.store.complete_step(self.lease, physical_key, 'SUCCEEDED', result)
         else:
             # This commit can succeed even if its acknowledgement is lost. It
             # is outside the execution-exception handler: never downgrade an
             # already atomically SUCCEEDED step back to UNKNOWN.
-            result=self.store.complete_payload_step(self.lease,physical_key,payload_schema,output)
-        return self._value(result,step['step_no'],payload_schema)
+            result = self.store.complete_payload_step(self.lease, physical_key, payload_schema, output)
+        return self._value(result, step['step_no'], payload_schema)
 
 
 class RuntimeWorker:
@@ -150,6 +165,7 @@ class RuntimeWorker:
     require bounded external I/O; Python cannot forcibly cancel a blocked thread.
     The FastAPI app does not auto-start this worker before business integration.
     """
+
     def __init__(self, store: RuntimeStore, handlers: Mapping[str, Callable], owner, *, lease_seconds=30,
                  tenant=None, approval_mode='any'):
         self.store = store
@@ -217,12 +233,12 @@ class RuntimeWorker:
                 return self._transition(context, 'fail', 'MODEL_TOKEN_QUOTA_EXCEEDED')
             except ModelCostRejected as failure:
                 return self._transition(context, 'fail', failure.code)
-            except (psycopg.OperationalError,psycopg.InterfaceError):
+            except (psycopg.OperationalError, psycopg.InterfaceError):
                 # No DB/provider detail enters persistence. retry() retains all
                 # counters, reuses committed steps, and holds uncertain WRITE.
                 # If the DB is still unavailable, propagate rather than invent
                 # a successful transition; lease takeover remains authoritative.
-                return self._transition(context,'retry','RUNTIME_PERSISTENCE_UNAVAILABLE',delay_seconds=0)
+                return self._transition(context, 'retry', 'RUNTIME_PERSISTENCE_UNAVAILABLE', delay_seconds=0)
             except TransientFailure as failure:
                 return self._transition(context, 'retry', failure.code, delay_seconds=failure.delay_seconds)
             except PermanentFailure as failure:
